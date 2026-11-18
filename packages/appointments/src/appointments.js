@@ -1700,7 +1700,7 @@ export async function rescheduleAppointment(context, request) {
       pushError = Object.freeze({ code });
     }
   }
-  return Object.freeze({ appointment, moved, push, pushError });
+  return Object.freeze({ appointment, moved, push, pushError, occurrences: Object.freeze([...occurrences]) });
 }
 
 /**
@@ -1714,6 +1714,13 @@ export async function rescheduleAppointment(context, request) {
  * rewritten), and the re-read and the write run serialized per
  * appointment. The cancelled row stays stored with its status and reason —
  * the customer's history still shows it — and frees the slot.
+ *
+ * Series scope (backlog:6acf0a73bfc3): an explicit `scope` (`single` /
+ * `following` / `all`) cancels one occurrence, this and the following, or
+ * the whole local series. A scoped cancel never pushes to Google: a series
+ * with a Google link refuses 409 before the first grid write («Le serie di
+ * Google Calendar si modificano da Google, per ora»), and a wide scope on a
+ * local-only series cancels every in-scope row grid-only, all-or-nothing.
  *
  * Idempotent: a row already cancelled answers itself with
  * `cancelled: false` and writes nothing — a retry after a lost answer, a
@@ -1749,15 +1756,32 @@ export async function cancelAppointment(context, request) {
     });
   }
   const reason = safeText(record.reason, 'reason', MAX_REASON);
+  // An explicit series scope is validated before any row is touched, like
+  // the move path: the spaceId it is gated on is required up front, so a
+  // missing or foreign space never takes the local-only path. A scoped
+  // cancel never pushes to Google (grid-only); a linked series refuses 409
+  // below, before the first grid write.
+  const scope = validateSeriesScope(record.scope);
+  const scoped = record.scope !== undefined && record.scope !== null;
+  let spaceId = null;
+  if (scoped) {
+    spaceId = requireSeriesScopeSpaceId(record, 'cancel');
+    if (record.calendar !== undefined && record.calendar !== null) {
+      throw new ValidationError('calendar cannot ride a scoped series cancel: scoped series writes are grid-only', {
+        field: 'calendar',
+      });
+    }
+  }
   const calendarSync = context?.calendarSync ?? null;
   let calendarId = null;
-  let spaceId = null;
   let calendarPush = null;
   if (record.calendar !== undefined && record.calendar !== null) {
-    if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
-      throw new ValidationError('spaceId is required: a calendar cancellation is gated on the space switch', { field: 'spaceId' });
+    if (spaceId === null) {
+      if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+        throw new ValidationError('spaceId is required: a calendar cancellation is gated on the space switch', { field: 'spaceId' });
+      }
+      spaceId = record.spaceId;
     }
-    spaceId = record.spaceId;
     calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
     if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
       throw new AppError(
@@ -1791,9 +1815,70 @@ export async function cancelAppointment(context, request) {
     return row;
   };
   const first = await lookup();
+  // An explicit scope resolves its rows and probes the Google link before
+  // the first write: a linked series refuses 409 here, the grid never
+  // changes. The probe covers the head and every in-scope row, so one
+  // occurrence can never cancel the whole Google series behind the grid.
+  let scopePlan = null;
+  if (scoped) {
+    scopePlan = await seriesScopePlan(appointments, first, scope);
+    await refuseLinkedSeriesScope(
+      context?.calendarSync ?? null,
+      [scopePlan.head?.sourceKey, ...scopePlan.targets.map((row) => row?.sourceKey)],
+      scope,
+      spaceId,
+    );
+  }
+  // A wide scope on a local-only series cancels every in-scope row,
+  // all-or-nothing: a row the lifecycle already closed for good (done,
+  // no-show) refuses 409 before the first write, so the series never
+  // cancels halfway. Already-cancelled rows are skipped, never blocking.
   let appointment = first;
   let cancelled = false;
-  if (first.status !== CANCELLED_STATE) {
+  let occurrences = null;
+  if (scoped && scope !== 'single') {
+    const fresh = new Map();
+    for (const target of scopePlan.targets) {
+      fresh.set(target.id, await appointments.get(target.id));
+    }
+    for (const target of scopePlan.targets) {
+      const row = fresh.get(target.id) ?? target;
+      if (row.status === CANCELLED_STATE) continue;
+      const allowed = APPOINTMENT_TRANSITIONS[row.status] ?? [];
+      if (!allowed.includes(CANCELLED_STATE)) {
+        throw new AppError(
+          `An appointment in state "${row.status}" cannot be cancelled as part of a series scope; it is terminal and stays where it is`,
+          { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: row.status, to: null } },
+        );
+      }
+    }
+    occurrences = [];
+    for (const target of scopePlan.targets) {
+      const row = fresh.get(target.id) ?? target;
+      if (row.status === CANCELLED_STATE) {
+        occurrences.push(row);
+        continue;
+      }
+      try {
+        occurrences.push(await advanceAppointment(
+          { appointments, actor: who, now: context.now },
+          row,
+          CANCELLED_STATE,
+          reason,
+        ));
+        cancelled = true;
+      } catch (error) {
+        // A concurrent wide cancel won this row between the pre-check and
+        // the write: its row is the answer, never a 409 on the operator's
+        // own intent — the same rule as the single path above.
+        if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
+          throw error;
+        }
+        occurrences.push(await appointments.get(target.id));
+      }
+    }
+    appointment = occurrences.find((row) => row && row.id === first.id) ?? first;
+  } else if (first.status !== CANCELLED_STATE) {
     try {
       appointment = await advanceAppointment(
         { appointments, actor: who, now: context.now },
@@ -1811,6 +1896,9 @@ export async function cancelAppointment(context, request) {
       appointment = await lookup();
     }
   }
+  if (scoped && scope === 'single') {
+    occurrences = [appointment];
+  }
   // The push rides the idempotent path on a replay too: a first attempt
   // whose push failed converges Google on the retry.
   let push = null;
@@ -1824,7 +1912,8 @@ export async function cancelAppointment(context, request) {
         : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
       pushError = Object.freeze({ code });
     }
-  } else if (typeof calendarSync?.readAppointmentDetail === 'function'
+  } else if (!scoped
+    && typeof calendarSync?.readAppointmentDetail === 'function'
     && typeof calendarSync?.pushAppointment === 'function') {
     // backlog:27923678 — no calendar named: the appointment's own sync
     // link names it. Resolved server-side after the commit, never from
@@ -1853,7 +1942,9 @@ export async function cancelAppointment(context, request) {
       pushError = Object.freeze({ code });
     }
   }
-  return Object.freeze({ appointment, cancelled, push, pushError });
+  return Object.freeze(occurrences === null
+    ? { appointment, cancelled, push, pushError }
+    : { appointment, cancelled, push, pushError, occurrences: Object.freeze([...occurrences]) });
 }
 
 /**

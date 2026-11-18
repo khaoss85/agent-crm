@@ -140,7 +140,9 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   `calendar: { calendarId }` named, `spaceId` is required (the push is
   space-gated, like the confirm path) and the linked Google event is
   converged after the commit through the calendar-sync push handle
-  (`push` / `pushError` as data, like the confirm path).
+  (`push` / `pushError` as data, like the confirm path). The same `scope`
+  rule as the cancel path applies: a Google-linked series refuses 409 before
+  any write, a local series shifts grid-only.
 - `cancelAppointment({ id | sourceKey, reason, spaceId?, calendar? })`
   (backlog `5346ab531538`) cancels a `booked`/`confirmed` booking — the
   governed write behind «Annulla appuntamento» in the calendar popover. It
@@ -151,6 +153,12 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   `calendar: { calendarId }` named the linked Google event is cancelled after
   the commit (calendar-sync's «cancellation wins»), answered as data like
   the reschedule path; without it the next two-way sync converges it.
+  With `scope` (`single` / `following` / `all`, backlog `6acf0a73bfc3`) the
+  call addresses one occurrence, this and the following ones, or the whole
+  local series (rows sharing `seriesKey`): a series linked to Google refuses
+  409 `APPOINTMENTS_SERIES_SCOPE_GOOGLE` («Le serie di Google Calendar si
+  modificano da Google, per ora») before the first grid write, and a scoped
+  write never pushes to Google — local-only series converge grid-only.
 
 `tests/appointments-booking-flow.test.js` proves the flow with fakes and no
 application boot, including the ten-racer link race. The backoffice UI
