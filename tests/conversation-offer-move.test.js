@@ -217,6 +217,73 @@ test('accepting a move to perso carries spaceId and the close reason move-stage 
   assert.equal(applied.move.reason, 'il cliente ha disdetto');
 });
 
+// P1 (giro 2): without overrideRows the road is always a proposal (fail-closed),
+// even though the documented permission defaults would auto-apply.
+test('a reply without override rows never auto-applies', () => {
+  const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
+  const suggestion = fakeSuggestStage(body, 'prova');
+  assert.ok(suggestion, 'the fake AI reads a step in this reply');
+  const base = {
+    spaceId: SPACE,
+    opportunityId: OPPORTUNITY,
+    messageId: 'wa:msg:40',
+    messageBody: body,
+    fromStage: 'prova',
+    toStage: suggestion.toStage,
+    quote: suggestion.quote,
+    suggestedBy: AI,
+  };
+  const omitted = routeOfferMoveFromReply({ ...base });
+  assert.equal(omitted.decision, 'proposal');
+  const nulled = routeOfferMoveFromReply({ ...base, messageId: 'wa:msg:41', overrideRows: null });
+  assert.equal(nulled.decision, 'proposal');
+
+  // Explicit rows still decide: empty rows mean the defaults (move-offers on).
+  const explicit = routeOfferMoveFromReply({ ...base, messageId: 'wa:msg:42', overrideRows: [] });
+  assert.equal(explicit.decision, 'apply');
+});
+
+// P1 (giro 2): confirm re-validates stages and ids — an unknown stage is
+// refused, never coerced into a lost move; empty ids are refused too.
+test('confirm refuses unknown stages and empty ids instead of coercing them', () => {
+  const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
+  const routed = route(body, 'prova', { messageId: 'wa:msg:43' });
+  assert.equal(routed.decision, 'proposal');
+
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, toStage: 'ghost' },
+      { actor: PERSON, decision: 'accept', reason: 'prova' },
+    ),
+    /proposal toStage must be one of the accordo-sales pipeline stages/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, fromStage: 'ghost' },
+      { actor: PERSON, decision: 'accept', reason: 'prova' },
+    ),
+    /proposal fromStage must be one of the accordo-sales pipeline stages/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, opportunityId: '' },
+      { actor: PERSON, decision: 'accept', reason: 'prova' },
+    ),
+    /opportunityId must be a non-empty string/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, spaceId: '' },
+      { actor: PERSON, decision: 'accept', reason: 'prova' },
+    ),
+    /spaceId must be a non-empty string/,
+  );
+
+  // A valid proposal still confirms with the validated ids.
+  const { move } = confirmOfferMoveProposal(routed.proposal, { actor: PERSON, decision: 'accept' });
+  assert.deepEqual(move, { opportunityId: OPPORTUNITY, spaceId: SPACE, fromStage: 'prova', toStage: 'proposta' });
+});
+
 // P1: fromStage/toStage are accordo-sales stage keys; terminal stages never reopen.
 test('unknown stages and moves out of terminal stages are refused at route time', () => {
   const body = 'Quanto è il prezzo del pacchetto?';

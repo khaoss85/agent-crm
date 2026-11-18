@@ -20,7 +20,9 @@
  *
  * Everything here is pure and storage-agnostic: callers persist proposals
  * and decisions, pass their stored `space-permission-override` rows as
- * `overrideRows`, and move the offer. The auto-apply gate lives inside this
+ * `overrideRows`, and move the offer. When `overrideRows` is omitted every
+ * reply stays a proposal (fail-closed): only explicitly passed rows may
+ * auto-apply. The auto-apply gate lives inside this
  * module and always honors the master `ai-enabled` switch together with the
  * `move-offers` switch (`space-permissions` `isAiActionAllowed`): callers
  * must NOT pre-resolve with `effectivePermission`, which ignores the master
@@ -144,7 +146,11 @@ export function routeOfferMoveFromReply(args = {}) {
     );
   }
 
-  const overrideRows = args.overrideRows ?? [];
+  // Fail-closed: without the space's own override rows the gate cannot know
+  // the space switched move-offers on (the documented defaults are on), so
+  // the road is always a proposal. Only explicitly passed rows may auto-apply.
+  const hasOverrideRows = args.overrideRows !== undefined && args.overrideRows !== null;
+  const overrideRows = hasOverrideRows ? args.overrideRows : [];
   if (!Array.isArray(overrideRows)) {
     throw new ValidationError('overrideRows must be an array of space-permission-override rows when provided', {
       field: 'overrideRows',
@@ -152,7 +158,7 @@ export function routeOfferMoveFromReply(args = {}) {
   }
   // The master ai-enabled switch gates everything: with the master off every
   // reply stays a proposal, whatever the move-offers switch says.
-  if (isAiActionAllowed(spaceId, 'move-offers', overrideRows)) {
+  if (hasOverrideRows && isAiActionAllowed(spaceId, 'move-offers', overrideRows)) {
     if (needsCloseReason && !closeReason) {
       throw new ValidationError('reason is required when moving to the lost stage', { field: 'reason' });
     }
@@ -232,8 +238,25 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   // A confirmed move to the lost stage must satisfy the move-stage contract:
   // move-stage refuses a lost move with no reason, so the accept carries the
   // close reason — supplied at confirm time, or suggested with the proposal.
+  // The proposal is untrusted input (the caller persists it): its ids and
+  // stages are re-checked against the same accordo-sales pipeline the route
+  // uses. An unknown stage is refused, never coerced into a lost move.
+  const confirmedSpaceId = requireSpaceId(proposal.spaceId);
+  const confirmedOpportunityId = requireText(proposal.opportunityId, 'opportunityId', ID_MAX);
+  if (!findStage(accordoSalesPipeline, proposal.fromStage)) {
+    throw new ValidationError('proposal fromStage must be one of the accordo-sales pipeline stages', {
+      field: 'proposal.fromStage',
+      allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
+    });
+  }
   const targetStage = typeof proposal.toStage === 'string' ? findStage(accordoSalesPipeline, proposal.toStage) : null;
-  const needsCloseReason = proposal.needsCloseReason === true || targetStage === null || targetStage.type === 'lost';
+  if (!targetStage) {
+    throw new ValidationError('proposal toStage must be one of the accordo-sales pipeline stages', {
+      field: 'proposal.toStage',
+      allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
+    });
+  }
+  const needsCloseReason = targetStage.type === 'lost';
   const acceptReason = typeof reason === 'string' && reason !== ''
     ? reason
     : (typeof proposal.closeReason === 'string' && proposal.closeReason !== '' ? proposal.closeReason : null);
@@ -251,8 +274,8 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
     proposal: decided,
     move: decision === 'accept'
       ? Object.freeze({
-        opportunityId: proposal.opportunityId,
-        spaceId: proposal.spaceId,
+        opportunityId: confirmedOpportunityId,
+        spaceId: confirmedSpaceId,
         fromStage: proposal.fromStage,
         toStage: proposal.toStage,
         ...(needsCloseReason ? { reason: acceptReason } : {}),
