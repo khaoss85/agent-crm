@@ -544,6 +544,33 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
+   * The grant gate behind the series link probe (backlog:6acf0a73bfc3):
+   * proven before any link is read, so a foreign space meets the same
+   * refusal for an exported key and a never-exported one. A deployment
+   * with no bound grant anywhere resolves globally, as on main — the gate
+   * only binds once grants exist. Otherwise the caller's space must hold
+   * at least one binding (else `CALENDAR_GRANT_UNKNOWN`), and when every
+   * binding it holds is revoked it answers `CALENDAR_GRANT_REVOKED`.
+   */
+  async function requireProbeGrant(space) {
+    const states = await stateService(context).listWhere({});
+    const bound = (Array.isArray(states) ? states : []).filter(
+      (row) => row && row.spaceId !== null && row.spaceId !== undefined && row.spaceId !== '',
+    );
+    if (bound.length === 0) return null;
+    const mine = bound.filter((row) => row.spaceId === space);
+    if (mine.length === 0) {
+      throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
+        'this space has no calendar grant: bind a calendar before probing linked series');
+    }
+    if (mine.every((row) => row.grantStatus === 'revoked')) {
+      throw syncError('CALENDAR_GRANT_REVOKED', 409,
+        'this space holds only revoked calendar grants: re-bind a calendar before probing linked series');
+    }
+    return mine;
+  }
+
+  /**
    * Resolve the calendar's space grant for one call, through the same
    * custody edge the channel connections use. Resolved per call into a
    * local only — never cached, never stored — so revoking the binding
@@ -1536,11 +1563,16 @@ export function createCalendarSyncOperations(options = {}) {
      * (backlog:6acf0a73bfc3): read-only, never a provider call. A missing
      * space refuses before any lookup — a foreign or absent space never
      * reads the series as never-exported, so the grid cannot mutate alone
-     * while Google keeps the linked master. No link reads `{ linked: false }`;
-     * a link resolves the grant for the caller's space first (a foreign
-     * space answers `CALENDAR_GRANT_UNKNOWN`, a revoked grant answers
-     * `CALENDAR_GRANT_REVOKED`), so the answer never depends on the named
-     * key. Deployments with no bound grant resolve globally, as on main.
+     * while Google keeps the linked master. The caller's grant is proven
+     * BEFORE the link lookup (a space with no binding answers
+     * `CALENDAR_GRANT_UNKNOWN`, a space with only revoked grants answers
+     * `CALENDAR_GRANT_REVOKED`), so an unknown key and an exported key
+     * refuse identically from a foreign space — never a cross-space
+     * oracle. No link reads `{ linked: false }`; a link resolves the
+     * grant for the caller's space as well (a foreign space answers
+     * `CALENDAR_GRANT_UNKNOWN`, a revoked grant answers
+     * `CALENDAR_GRANT_REVOKED`). Deployments with no bound grant resolve
+     * globally, as on main.
      */
     async seriesScopeLink(headSourceKey, { spaceId } = {}) {
       if (typeof spaceId !== 'string' || spaceId.trim() === '') {
@@ -1549,9 +1581,11 @@ export function createCalendarSyncOperations(options = {}) {
       if (typeof headSourceKey !== 'string' || headSourceKey === '') {
         throw new ValidationError('seriesScopeLink needs a head sourceKey', { field: 'headSourceKey' });
       }
+      const space = canonicalSpaceIdOrAbsent(spaceId);
+      await requireProbeGrant(space);
       const link = await findLinkBySource(headSourceKey);
       if (!link) return { linked: false };
-      await requireLiveGrant(link.calendarId, spaceId);
+      await requireLiveGrant(link.calendarId, space);
       return { linked: true, calendarId: link.calendarId };
     },
 

@@ -233,6 +233,47 @@ test('reschedule: all on a local series shifts every occurrence, grid-only', asy
   assert.equal(out.push, null);
 });
 
+test('reschedule: all refuses when a stationary terminal occurrence holds the target slot', async () => {
+  const service = fakeAppointments(seriesRows([{ status: 'done' }, {}, {}]));
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-2', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z',
+        scope: 'all', spaceId: SPACE,
+      },
+    ),
+    (caught) => {
+      assert.equal(caught.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(caught.status, 409);
+    },
+  );
+  assert.deepEqual(service.rows, before, 'the done occurrence keeps its slot: no occurrence moves onto it');
+  assert.equal(service.writes.length, 0);
+});
+
+test('reschedule: a malformed spaceId refuses naming spaceId before any lookup', async () => {
+  const service = fakeAppointments(seriesRows());
+  const calendarSync = fakeCalendarSync();
+  await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-2', startsAt: '2026-10-21T18:00:00.000Z', endsAt: '2026-10-21T19:00:00.000Z',
+        scope: 'single', spaceId: 'NOT A SPACE!',
+      },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof ValidationError);
+      assert.equal(caught.details?.field, 'spaceId');
+    },
+  );
+  assert.equal(calendarSync.calls.probe.length, 0, 'no link is read with a malformed space');
+  assert.equal(service.writes.length, 0);
+});
+
 test('reschedule: a wide scope on a row with no series refuses naming scope', async () => {
   const service = fakeAppointments([occurrence(0, { seriesKey: undefined, occurrenceIndex: undefined, sourceKey: 'gym:single:1' })]);
   const calendarSync = fakeCalendarSync();
@@ -440,6 +481,73 @@ test('cancel: a scoped cancel naming a calendar refuses grid-only before any wri
   assert.equal(service.writes.length, 0);
 });
 
+function attachMemoryTransaction(service) {
+  const state = { open: false };
+  service.database = {
+    storage: { activeTransaction: () => null },
+    transactionAsync: async (critical) => {
+      if (state.open) return critical();
+      state.open = true;
+      const snapshot = service.rows.map((row) => ({ ...row }));
+      try {
+        return await critical();
+      } catch (error) {
+        service.rows.length = 0;
+        for (const row of snapshot) service.rows.push(row);
+        throw error;
+      } finally {
+        state.open = false;
+      }
+    },
+  };
+  return service;
+}
+
+test('cancel: all rolls back every occurrence when a late write fails', async () => {
+  const service = attachMemoryTransaction(fakeAppointments(seriesRows()));
+  let calls = 0;
+  const storedApply = service.applyManaged.bind(service);
+  service.applyManaged = async (id, patch, options) => {
+    calls += 1;
+    if (calls === 2) {
+      throw new AppError('storage unavailable', { code: 'APPOINTMENTS_STORAGE_INVALID', status: 500 });
+    }
+    return storedApply(id, patch, options);
+  };
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    cancelAppointment(
+      contextFor(service, calendarSync),
+      { id: 'a-1', reason: 'Non serve piu', scope: 'all', spaceId: SPACE },
+    ),
+    (caught) => {
+      assert.equal(caught.code, 'APPOINTMENTS_STORAGE_INVALID');
+    },
+  );
+  assert.deepEqual(service.rows, before, 'a failure on the second write rolls back the first: never half-cancelled');
+});
+
+test('cancel: a scoped cancel from a foreign space refuses on a local-only series and writes nothing', async () => {
+  const service = fakeAppointments(seriesRows());
+  // The fake models a deployment with the owning space bound, like the
+  // real probe: a foreign space meets the grant refusal before any write,
+  // linked series or not.
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    cancelAppointment(
+      contextFor(service, calendarSync),
+      { id: 'a-1', reason: 'Non serve piu', scope: 'all', spaceId: OTHER_SPACE },
+    ),
+    (caught) => {
+      assert.equal(caught.code, 'CALENDAR_GRANT_UNKNOWN');
+    },
+  );
+  assert.deepEqual(service.rows, before);
+  assert.equal(service.writes.length, 0);
+});
+
 test('cancel: single scope on a local row cancels like the unscoped path', async () => {
   const service = fakeAppointments([occurrence(0, { seriesKey: undefined, occurrenceIndex: undefined, sourceKey: 'gym:single:9' })]);
   const calendarSync = fakeCalendarSync();
@@ -530,11 +638,27 @@ test('seriesScopeLink: the owning space sees the link, a foreign space cannot re
   assert.ok(foreignLinked, 'a foreign space refuses the exported key');
   assert.equal(foreignLinked.code, 'CALENDAR_GRANT_UNKNOWN');
 
-  const foreignUnknown = await ctx.sync.seriesScopeLink(foreign, { spaceId: OTHER_SPACE });
-  assert.equal(foreignUnknown.linked, false, 'an unknown key reads the same from any space: no cross-space oracle');
+  let foreignUnknown = null;
+  try {
+    await ctx.sync.seriesScopeLink(foreign, { spaceId: OTHER_SPACE });
+  } catch (caught) {
+    foreignUnknown = caught;
+  }
+  assert.ok(foreignUnknown, 'an unknown key refuses from a foreign space, like the exported one: no cross-space oracle');
+  assert.equal(foreignUnknown.code, 'CALENDAR_GRANT_UNKNOWN');
 
   const unknown = await ctx.sync.seriesScopeLink(foreign, { spaceId: SPACE });
   assert.equal(unknown.linked, false, 'an unknown key reads as unlinked from the owning space');
+
+  await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
+  let revoked = null;
+  try {
+    await ctx.sync.seriesScopeLink(foreign, { spaceId: SPACE });
+  } catch (caught) {
+    revoked = caught;
+  }
+  assert.ok(revoked, 'a space with only revoked grants refuses before any lookup');
+  assert.equal(revoked.code, 'CALENDAR_GRANT_REVOKED');
 
   let missing = null;
   try {

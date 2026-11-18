@@ -1313,7 +1313,15 @@ function requireSeriesScopeSpaceId(record, what) {
   if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
     throw new ValidationError(`spaceId is required: a scoped series ${what} is gated on the space switch`, { field: 'spaceId' });
   }
-  return record.spaceId;
+  // Presence alone never gates: a malformed space refuses here, before any
+  // row is read, so a forged switch value never takes the local-only path.
+  const spaceId = record.spaceId.trim();
+  if (!isSpaceId(spaceId)) {
+    throw new ValidationError('spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter) or a workspace id', {
+      field: 'spaceId',
+    });
+  }
+  return spaceId;
 }
 
 function orderSeriesSiblings(rows) {
@@ -1606,9 +1614,19 @@ export async function rescheduleAppointment(context, request) {
     if (deltaMs === 0) {
       return { appointment: anchorFresh, moved: false, occurrences: plan.targets.map((target) => fresh.get(target.id) ?? target) };
     }
+    // A terminal occurrence stays where it is while the rest shifts, so its
+    // slot stays protected: only the rows that will actually move leave the
+    // overlap witnesses. A done or no-show occurrence keeps its slot
+    // occupied, and a move onto it refuses 409 instead of double-booking
+    // the member behind the grid. A cancelled row stays out either way —
+    // the overlap check skips cancelled rows, freed slots, wherever they sit.
+    const moverIds = new Set();
+    for (const target of plan.targets) {
+      const row = fresh.get(target.id);
+      if (row && !APPOINTMENT_TERMINAL.includes(row.status)) moverIds.add(target.id);
+    }
     const held = await appointments.listWhere({ teamMemberId: anchor.teamMemberId });
-    const inScopeIds = new Set(plan.targets.map((row) => row?.id));
-    const others = held.filter((row) => row && !inScopeIds.has(row.id));
+    const others = held.filter((row) => row && !moverIds.has(row.id));
     const moves = [];
     for (const target of plan.targets) {
       const row = fresh.get(target.id);
@@ -1832,11 +1850,15 @@ export async function cancelAppointment(context, request) {
   // A wide scope on a local-only series cancels every in-scope row,
   // all-or-nothing: a row the lifecycle already closed for good (done,
   // no-show) refuses 409 before the first write, so the series never
-  // cancels halfway. Already-cancelled rows are skipped, never blocking.
+  // cancels halfway, and the pre-check and every write commit inside one
+  // shared transaction on real storage — a failure on a later write rolls
+  // back the earlier ones instead of leaving the series half-cancelled.
+  // Already-cancelled rows are skipped, never blocking.
   let appointment = first;
   let cancelled = false;
   let occurrences = null;
-  if (scoped && scope !== 'single') {
+  const runInTransaction = bookingTransaction(appointments);
+  const scopedCancelCritical = async () => {
     const fresh = new Map();
     for (const target of scopePlan.targets) {
       fresh.set(target.id, await appointments.get(target.id));
@@ -1852,21 +1874,22 @@ export async function cancelAppointment(context, request) {
         );
       }
     }
-    occurrences = [];
+    const done = [];
+    let wrote = false;
     for (const target of scopePlan.targets) {
       const row = fresh.get(target.id) ?? target;
       if (row.status === CANCELLED_STATE) {
-        occurrences.push(row);
+        done.push(row);
         continue;
       }
       try {
-        occurrences.push(await advanceAppointment(
+        done.push(await advanceAppointment(
           { appointments, actor: who, now: context.now },
           row,
           CANCELLED_STATE,
           reason,
         ));
-        cancelled = true;
+        wrote = true;
       } catch (error) {
         // A concurrent wide cancel won this row between the pre-check and
         // the write: its row is the answer, never a 409 on the operator's
@@ -1874,9 +1897,19 @@ export async function cancelAppointment(context, request) {
         if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
           throw error;
         }
-        occurrences.push(await appointments.get(target.id));
+        done.push(await appointments.get(target.id));
       }
     }
+    return { rows: done, cancelled: wrote };
+  };
+  if (scoped && scope !== 'single') {
+    // Each advance reuses the enclosing transaction when one is open (its
+    // envelope proves the caller transaction first), so on real storage
+    // the scope commits once; without a storage handle the section runs
+    // as it does today, pre-check first, then writes.
+    const scopedOutcome = await (runInTransaction ? runInTransaction(scopedCancelCritical) : scopedCancelCritical());
+    occurrences = scopedOutcome.rows;
+    cancelled = scopedOutcome.cancelled;
     appointment = occurrences.find((row) => row && row.id === first.id) ?? first;
   } else if (first.status !== CANCELLED_STATE) {
     try {
