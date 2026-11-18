@@ -283,6 +283,67 @@ test('Conferma poi annullo: nessun blocco fantasma al ricaricamento (backlog:134
   assert.equal(mount.querySelector('.cal-event-pop'), null, 'the detail popover closes with its block');
 });
 
+/**
+ * backlog:134f3ed7 (repro P1 review Muse #1001 giro 2, arbitrato 17/11) —
+ * tabella della fonte unica carryBookedRow: la settimana ricaricata del
+ * server vince sempre quando l'id c'è già; la copia locale si aggiunge SOLO
+ * quando l'id manca (ritardo di lettura).
+ * - riga assente → la copia locale dipinge il blocco (test «filtro svuotato»);
+ * - riga presente booked → vince il server, una sola riga (test «poi annullo»);
+ * - riga presente cancelled → resta annullata, MAI prenotata (questo test).
+ * Rosso sul codice prima della cura (la copia locale sostituiva la riga del
+ * server e il blocco dipingeva prenotato ed evidenziato), verde dopo.
+ */
+test('primo reload con riga annullata: la riga del server vince (backlog:134f3ed7)', async () => {
+  const server = { appointments: [] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = retireClient(server);
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await settle();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento')).dispatch('click');
+  mount.querySelector('.bo-clienti-menu').findAll('button').find((node) => node.textContent.includes('Compila manualmente')).dispatch('click');
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ada';
+  search.dispatch('input');
+  await settle(7);
+  mount.findAll('button').find((node) => node.textContent === 'Ada').dispatch('click');
+  await settle(2);
+  const byName = () => Object.fromEntries(
+    mount.findAll('input').map((node) => [node.getAttribute('name'), node])
+      .concat(mount.findAll('select').map((node) => [node.getAttribute('name'), node])),
+  );
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.teamMemberId.dispatch('change');
+  form.serviceKey.value = 'taglio';
+  form.serviceKey.dispatch('change');
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '10:00';
+  form.end.value = '10:30';
+  // Il server annulla la riga prima che il reload dopo Conferma la rilegga.
+  server.appointments = [{
+    id: 'b1', status: 'cancelled',
+    startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:30:00.000Z',
+    teamMemberId: 'marco',
+  }];
+  mount.querySelector('.cal-manual').findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await settle(14);
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1, 'the booking is sent');
+  // La griglia salta le righe annullate (isCancelledRow): con la cura il
+  // blocco annullato esce e nessun fantasma prenotato lo sostituisce.
+  const blocks = () => mount.findAll('button').filter((node) => node.getAttribute('data-event-id') === 'b1');
+  assert.equal(blocks().length, 0, 'the cancelled server row wins: no booked phantom paints');
+  assert.equal(mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-selected')).length, 0, 'nothing stays highlighted');
+  assert.equal(mount.querySelector('.cal-event-pop'), null, 'the detail popover closes with its block');
+});
+
 test('bozza giorno senza ora: propone il primo slot libero (backlog:134f3ed7)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

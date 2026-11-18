@@ -4703,8 +4703,9 @@ export function createCalendarioView(deps) {
    * backlog:134f3ed7 — the just-booked row rides the painted week: the new
    * block shows on the next paint, even before the reload lands or when the
    * reloaded week does not carry the id yet. Only the booked day inside the
-   * painted week and its existing member group, replaced by id — never an
-   * invented row, never another member's lane.
+   * painted week and its existing member group, added only when the id is
+   * missing — never an invented row, never another member's lane, and never
+   * replacing the authoritative server row when the id is already there.
    */
   function carryBookedRow() {
     const booked = state.confirmed;
@@ -4717,11 +4718,15 @@ export function createCalendarioView(deps) {
     const group = state.week.members.find((entry) => entry?.teamMemberId === member);
     if (!group || !Array.isArray(group.appointments)) return;
     const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
+    // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
+    // reloaded server week is authoritative: when the id is already there
+    // the server row wins and this function changes nothing (a row cancelled
+    // elsewhere must never paint booked again). The local copy rides only
+    // when the id is still missing (read lag).
+    if (at >= 0) return;
     // Never mutate the loaded week in place (tests share the stub object):
     // rebuild the group, so only the painted state changes.
-    const appointments = at >= 0
-      ? group.appointments.map((row, index) => (index === at ? booked : row))
-      : [...group.appointments, booked];
+    const appointments = [...group.appointments, booked];
     state.week = {
       ...state.week,
       members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
