@@ -6862,8 +6862,13 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
-    else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    // Backlog 4cfa30c164ca: no skeleton — the section may well hide itself
+    // once read (no offers), so a pending skeleton would be a phantom box
+    // that vanishes and jumps the right column. Like the custom fields
+    // above: nothing while pending, the offer card only when there is one.
+    if (waits('profile', 'pipelines')) {
+      // Nothing: the offer card paints only from settled reads.
+    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — a grey skeleton while the services read is in flight, never
     // the slug words first.

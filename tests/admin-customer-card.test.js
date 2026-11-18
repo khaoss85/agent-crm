@@ -6101,9 +6101,13 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca: no phantom «Offerta» skeleton — the section may
+  // hide itself once read, so nothing paints for it while the profile is
+  // out (like the custom fields).
+  assert.equal(sectionTitled(mount, 'Offerta'), undefined, 'no Offerta box while the profile is out');
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
