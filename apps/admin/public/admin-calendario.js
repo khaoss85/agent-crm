@@ -212,11 +212,20 @@ export function missingBookingFields(values, hasCustomerPick) {
  * leaves the form (the detail hangs the link on the label), and a link the
  * server would refuse never leaves either. Null when the place is fine.
  * Pure and DOM-free so it is unit-tested without a browser.
- * @param {{location?: unknown, locationUrl?: unknown}} claim
+ * @param {unknown} value
  */
 export function isWebLink(value) {
-  const link = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return link.startsWith('http://') || link.startsWith('https://');
+  if (typeof value !== 'string') return false;
+  const link = value.trim();
+  const lower = link.toLowerCase();
+  const schemeLen = lower.startsWith('https://') ? 8 : lower.startsWith('http://') ? 7 : 0;
+  if (schemeLen === 0) return false;
+  // A bare scheme ('https://' with no host) is not a meeting link: the
+  // popover would paint a clickable anchor to nowhere and the write would
+  // fail late. The host carries at least a dotted name, no whitespace.
+  const host = link.slice(schemeLen);
+  if (host === '' || host.includes('.') === false) return false;
+  return /^\S+$/.test(host);
 }
 
 export function placeRefusal(claim) {
@@ -5718,7 +5727,9 @@ export function bookingClaim(input) {
   const member = input.teamMemberId;
   // backlog:9ff9a9ee1fea — the place rides every claim (manual form,
   // phrase Conferma, scheda window): trimmed here so every caller sends
-  // the same shape the server validates, empty meaning absent.
+  // the same shape the server validates. An absent place omits the keys
+  // entirely, so the wire shape without a place is the one from before
+  // (the /bo bridge refuses fields it does not know: revert #1021).
   const location = typeof input.location === 'string' && input.location.trim() !== '' ? input.location.trim() : null;
   const locationUrl = typeof input.locationUrl === 'string' && input.locationUrl.trim() !== '' ? input.locationUrl.trim() : null;
   return {
@@ -5731,8 +5742,8 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
-    location,
-    locationUrl,
+    ...(location === null ? {} : { location }),
+    ...(locationUrl === null ? {} : { locationUrl }),
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,
