@@ -108,7 +108,9 @@ test('the phone top bar names the space with its badge and role', () => {
   const { topbar } = mountShell();
   const label = topbar.findAll('div').find((node) => node.getAttribute('class') === 'bo-phonebar-space');
   assert.ok(label, 'the phone space label exists');
-  assert.ok(label.textContent.includes('SP') && label.textContent.includes('Spazio di prova'));
+  // backlog:44f7bfe8a74c: the badge always reads the name rule («Spazio di
+  // prova» → «SD»), never a stored sigla stamped by another path.
+  assert.ok(label.textContent.includes('SD') && label.textContent.includes('Spazio di prova'));
 });
 
 test('a shell repaint keeps the open state on the button', () => {

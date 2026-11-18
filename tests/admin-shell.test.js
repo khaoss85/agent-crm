@@ -237,7 +237,11 @@ test('backlog:ecb26347d12c — space initials read from the name words', () => {
   assert.equal(spaceInitialsFor('X'), 'X');
 });
 
-test('backlog:ecb26347d12c — colliding space initials read differently', () => {
+test('backlog:44f7bfe8a74c — the sigla comes from the name, same from any space', () => {
+  // Stored initials never win: the session profile slices the raw name
+  // («Prova Validazione B1» → «PR») while the word rule reads «PV» — the
+  // menu always shows the name rule, so the same space reads the same
+  // sigla whatever stamped it.
   const rows = spaceMenuItems(
     [
       { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
@@ -245,8 +249,20 @@ test('backlog:ecb26347d12c — colliding space initials read differently', () =>
     ],
     'b1',
   );
-  assert.equal(rows[0].initials, 'PR');
+  assert.equal(rows[0].initials, 'PV');
   assert.equal(rows[1].initials, 'PG');
+  // List order never moves a sigla: reversed input maps the same per id.
+  const flipped = spaceMenuItems(
+    [
+      { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    ],
+    'b1',
+  );
+  assert.deepEqual(
+    flipped.map((row) => [row.id, row.initials]),
+    [['presti-group', 'PG'], ['b1', 'PV']],
+  );
   assert.notEqual(rows[0].color, rows[1].color);
   assert.equal(rows[0].color, spaceBadgeColor('b1'));
   // Two spaces with the very same name still read differently.
