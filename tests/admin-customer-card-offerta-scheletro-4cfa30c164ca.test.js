@@ -163,15 +163,19 @@ test('4cfa30c164ca: a profilo noto e vuoto, nessuno scheletro Offerta mentre res
   // A profilo ignoto lo scheletro copre l'ignoto (contratto 9b28b3bc6003).
   assert.equal(offerBoxes(mount).length, 1, 'un segnaposto Offerta mentre il profilo è in volo');
   assert.ok(isSkeleton(offerBoxes(mount)[0]), 'il segnaposto è uno scheletro, non un riquadro');
-  // Il profilo arriva, vuoto; lo schema resta in volo: il NON PASSA.
+  // Il profilo arriva, vuoto di offerte proprie ma con azienda collegata
+  // (voce 4ec1fe6d): lo schema resta in volo, il NON PASSA resta che nessuno
+  // scheletro fantasma compaia — il riquadro vero con il link azienda sì.
   client.gates.get('profile').release.resolve(EMPTY_PROFILE);
   await flush(5);
   assert.ok(client.gates.has('schema'), 'lo schema è stato chiesto ed è ancora in volo');
-  assert.equal(offerBoxes(mount).length, 0, 'nessun fantasma Offerta a profilo noto e vuoto');
+  assert.equal(offerBoxes(mount).length, 1, 'a profilo noto il riquadro vero, non un fantasma');
+  assert.ok(!isSkeleton(offerBoxes(mount)[0]), 'il riquadro è contenuto finale, non scheletro');
+  assert.ok(offerBoxes(mount)[0].textContent.includes('Presti Group'), 'il riquadro collega l’azienda');
   client.gates.get('schema').release.resolve({ pipelines: [] });
   await shown;
   await flush(3);
-  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta per chi non ha offerte');
+  assert.equal(offerBoxes(mount).length, 1, 'resta il link alle offerte azienda, non sparisce');
 });
 
 test('4cfa30c164ca: con un’offerta vera il segnaposto diventa il riquadro a profilo arrivato', async () => {

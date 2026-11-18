@@ -5136,6 +5136,30 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
+  /**
+   * Voce 4ec1fe6d (verifica Mac 13/11 17:49Z): il link alle offerte
+   * dell'azienda collegata per una scheda persona senza offerte proprie.
+   * Il profilo dietro la scheda persona tiene solo i record del contatto
+   * (voce 1e89d516cfc3: un'offerta dell'azienda su ogni scheda persona
+   * mostrerebbe a tre contatti la stessa riga), così l'offerta dell'azienda
+   * si apre dalla scheda dell'azienda — un click, mai una riga inventata
+   * qui. Solo persona con azienda vera (il profilo nasconde già «Senza
+   * azienda» e i segnaposto: identity.company null): id o nome vuoti,
+   * scheda azienda e profilo illeggibile non collegano niente.
+   * @param {any} profile @param {{ resource?: string } | null} offerCtx
+   */
+  function companyOfferLink(profile, offerCtx) {
+    if (!offerCtx || offerCtx.resource !== 'contact') return null;
+    const company = profile?.identity?.company;
+    const id = typeof company?.id === 'string' && company.id !== '' ? company.id : null;
+    const name = typeof company?.name === 'string' && company.name.trim() !== '' ? company.name.trim() : null;
+    if (id === null || name === null) return null;
+    const link = el('a', 'bo-scheda-offer-link');
+    link.setAttribute('href', `#/customer-card/company/${encodeURIComponent(id)}`);
+    link.appendChild(el('span', 'bo-scheda-offer-company-name', `Offerte di ${name}`));
+    return link;
+  }
+
   function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no offer".
@@ -5161,13 +5185,23 @@ export function createCustomerCardView(deps) {
     const fromQuote = (quotes ?? []).length > 0;
     const first = fromQuote ? quotes[0] : ((opportunities ?? [])[0] ?? null);
     if (!first) {
+      // Voce 4ec1fe6d: una persona senza offerte proprie ma con azienda
+      // collegata collega le offerte dell'azienda (un link alla scheda
+      // azienda, dove l'offerta si apre con il suo link) invece di
+      // nascondere il riquadro: prima non mostrava né collegava niente.
+      const companyLink = companyOfferLink(profile, offerCtx);
       // No linked offer: when BOTH commercial sections were readable (even
       // empty) the customer plainly has none, and the card stays hidden —
       // the scheda reads an offer only when one exists. An empty
       // opportunities read never proves there are no quotes when the quotes
       // read itself failed — the unavailable reason reads instead, never a
       // confirmed absence.
-      if (quotes !== null && opportunities !== null) return false;
+      if (quotes !== null && opportunities !== null) {
+        if (companyLink === null) return false;
+        box.appendChild(el('h4', undefined, 'Offerta'));
+        box.appendChild(companyLink);
+        return true;
+      }
       box.appendChild(el('h4', undefined, 'Offerta'));
       // The unavailable reason stays in the API response and the logs, never
       // on screen: production reasons are English system phrases, and the

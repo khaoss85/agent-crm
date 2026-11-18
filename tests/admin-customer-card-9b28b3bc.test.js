@@ -127,6 +127,11 @@ test('9b28b3bc6003: senza canali, le azioni dicono che non ce ne sono', async ()
 });
 
 test('9b28b3bc6003: senza offerte, niente scheletro Offerta mentre si aspetta solo lo schema', async () => {
+  // Voce 4ec1fe6d (supervisore 17/11): il contatto c1 non ha offerte proprie
+  // ma ha l'azienda collegata (co1), così il riquadro Offerta resta — non uno
+  // scheletro, il contenuto finale con il link alla scheda azienda — invece
+  // di sparire. Resta vero il contratto di questa voce: a profilo noto e
+  // schema in volo nessuno scheletro fantasma.
   let releaseSchema;
   const schemaGate = new Promise((resolve) => { releaseSchema = resolve; });
   const doc = createFakeDocument();
@@ -136,12 +141,19 @@ test('9b28b3bc6003: senza offerte, niente scheletro Offerta mentre si aspetta so
   });
   const opening = view.renderCard('contact', 'c1');
   await flush(20);
-  assert.equal(
-    offerCards(mount).length, 0,
-    'il profilo è letto e vuoto: nessuno scheletro Offerta mentre resta in volo solo lo schema',
+  assert.equal(offerCards(mount).length, 1, 'il profilo è letto: un riquadro Offerta con il link azienda');
+  assert.notEqual(
+    offerCards(mount)[0].getAttribute('data-loading'), 'true',
+    'a profilo noto niente scheletro, il contenuto finale anche con lo schema in volo',
+  );
+  assert.ok(
+    offerCards(mount)[0].textContent.includes('Palestra Esempio'),
+    'il riquadro nomina l’azienda collegata',
   );
   releaseSchema({ pipelines: [] });
   await opening;
   await flush();
-  assert.equal(offerCards(mount).length, 0, 'a lettura finita nessuna card offerta per chi non ne ha');
+  assert.equal(offerCards(mount).length, 1, 'a lettura finita resta il link alle offerte azienda');
+  const link = offerCards(mount)[0].findAll('a')[0] ?? null;
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'il link apre la scheda azienda');
 });
