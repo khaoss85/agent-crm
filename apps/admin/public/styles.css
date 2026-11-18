@@ -1555,6 +1555,8 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .bo-clienti-fact[data-column="prossimo"] { color: var(--agent-ink); line-height: 1.35; }
 .bo-clienti-status:empty { display: none; }
+/* backlog:5af848afdb63: the failed-read Riprova sits in the status line, like the chips clear. */
+.bo-clienti-retry.ui-btn { margin-left: 8px; font-size: 12px; border: 0; background: transparent; color: var(--accent); }
 .bo-clienti-tiles { display: flex; gap: 4px; flex-wrap: wrap; }
 .bo-clienti-tile { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-family: var(--mono); font-size: 8.5px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-tile-whatsapp { background: var(--accent-soft); color: var(--accent); }
