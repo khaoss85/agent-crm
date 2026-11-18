@@ -40,8 +40,10 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     timeout-minutes: 20
     steps:
-      # Clean checkout every job (backlog:f16911e3): no workspace reuse, so the
-      # render always sees exactly the checked-out ref.
+      # Clean checkout every job (backlog:f16911e3): no checkout reuse, so the
+      # render always sees exactly the checked-out ref (clean:true wipes the
+      # worktree only, never the runner's `.git`; fresh dir per job is a
+      # follow-up).
       - uses: actions/checkout@v4
         with:
           clean: true

@@ -84,10 +84,11 @@ jobs:
     steps:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
-      # Clean checkout every job (backlog:f16911e3, no workspace reuse on this
-      # public repo's self-hosted runner): each job starts from a fresh tree
-      # so no `.git/hooks`, `.git/info/attributes` or `.git/config` key from
-      # a previous job can survive into this one's checkout.
+      # Clean checkout every job (backlog:f16911e3, no checkout reuse on this
+      # public repo's self-hosted runner): clean:true wipes the worktree only,
+      # never `.git`, so `.git/hooks`, `.git/info/attributes` or `.git/config`
+      # keys from a previous job can persist on the runner dir — fresh dir per
+      # job stays a follow-up; the saving lives only on the npm cache below.
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -215,8 +216,10 @@ jobs:
       # `node --test` runs (the PR gate, the pre-push hook) still run only
       # the slices' wiring. Same backlog as the slicing above.
     steps:
-      # Clean checkout every job (backlog:f16911e3): no workspace reuse, the
-      # disk saving lives only on the read-only npm cache below.
+      # Clean checkout every job (backlog:f16911e3): no checkout reuse;
+      # clean:true wipes the worktree only, never the runner's `.git`
+      # (fresh dir per job stays a follow-up). The disk saving lives only
+      # on the npm cache below.
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -409,7 +412,9 @@ jobs:
       cancel-in-progress: true
     if: ${{ github.event_name == 'push' }}
     steps:
-      # Clean checkout every job (backlog:f16911e3): no workspace reuse.
+      # Clean checkout every job (backlog:f16911e3): no checkout reuse;
+      # clean:true wipes the worktree only, never the runner's `.git`
+      # (fresh dir per job stays a follow-up).
       - uses: actions/checkout@v4
         with:
           clean: true

@@ -12,9 +12,12 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 // round opened a new way for one job's code to survive into the next
 // (.git/hooks, .git/info/attributes, .git/config keys acting during the
 // checkout itself). The arbitration (supervisor 17/11) closed that road: no
-// checkout reuse at all — every job checks out clean, and the disk saving
-// lives ONLY on dependencies, through a read-only cache outside the work
-// dir that npm itself verifies against the lockfile. This file locks that
+// checkout reuse at all — every job checks out with clean:true, and the disk
+// saving lives ONLY on dependencies, through the npm cache outside the work
+// dir that npm itself verifies against the lockfile. clean:true wipes the
+// worktree only, never the runner's `.git` (hooks, info/attributes, config
+// keys can persist there): per-job fresh dirs stay a follow-up, so this file
+// promises worktree-only cleaning, not a fresh `.git`. This file locks that
 // contract:
 //   1. every checkout in scope declares `clean: true` explicitly;
 //   2. no `clean: false` anywhere in scope (no workspace reuse, no sanitize
