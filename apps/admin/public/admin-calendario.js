@@ -1178,7 +1178,13 @@ export function aiBlockOf(error) {
  * the name: it is stripped before matching, so a phrase echoing the Team
  * label still finds a unique person, while two real homonyms stay
  * unresolved. The match also reads the painted label base, so a team known
- * only by a differently-cased id («MARCO») is still recognised.
+ * only by a differently-cased id («MARCO») is still recognised — but never
+ * the generic «Membro del team» fallback, which names nobody (review #1017
+ * giro 1, P2). Only the painted ordinal shape is stripped: one space,
+ * digits, end (« (2)»); «Marco(2)» or «Marco  (2)» stay part of the
+ * searched name. A literal roster name wins before any stripping, so a
+ * real «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * giro 1, P2 regression).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
@@ -1186,11 +1192,25 @@ export function resolveDraftMemberIds(draftMember, named, members) {
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
   if (exact) return [...exact.ids];
-  const stripOrdinal = (text) => String(text).trim().toLowerCase().replace(/\s*\(\d+\)\s*$/, '');
-  const wanted = stripOrdinal(draftMember);
-  if (wanted === '') return [];
-  const byName = rows.filter((row) => [row.name, row.label]
-    .some((name) => typeof name === 'string' && stripOrdinal(name) === wanted));
+  const fold = (text) => String(text).trim().toLowerCase();
+  const stripOrdinal = (text) => fold(text).replace(/ \(\d+\)$/, '');
+  // A row without a person name only lends its painted label when the
+  // label is a real signal (slug words like «Marco Rossi»); the generic
+  // fallback (with or without a painted ordinal) matches nothing.
+  const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
+  const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
+  const wanted = fold(draftMember);
+  // The raw step reads person names only, never painted labels: a draft
+  // echoing a homonym ordinal («Marco (1)») stays unresolved with the two
+  // real homonyms instead of picking one through its label.
+  const raw = rows.filter((row) => matchable(row)
+    && typeof row.name === 'string' && fold(row.name) === wanted);
+  if (raw.length === 1) return [...raw[0].ids];
+  if (raw.length > 1) return [];
+  const stripped = stripOrdinal(draftMember);
+  if (stripped === '') return [];
+  const byName = rows.filter((row) => matchable(row)
+    && namesOf(row).some((name) => stripOrdinal(name) === stripped));
   if (byName.length === 1) return [...byName[0].ids];
   return [];
 }
