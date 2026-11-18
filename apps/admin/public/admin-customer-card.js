@@ -3826,8 +3826,12 @@ export function createCustomerCardView(deps) {
             // without messages flies under the same single-flight guard as
             // the extract run — otherwise a repaint in flight lets two
             // reload()s race and lands the first answer in a detached box.
+            // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: the reload is not
+            // an extract — it is tagged so the flying indicator never reads
+            // «Estraggo…» for it, and the flight is released before any
+            // landing paint, like the extract run below.
             const painted = lastShown;
-            const flight = {};
+            const flight = { kind: 'reload' };
             if (runKey !== null) enrichmentRuns.set(runKey, flight);
             try {
               let fresh;
@@ -3836,6 +3840,7 @@ export function createCustomerCardView(deps) {
               } catch (error) {
                 if (isExtractionTimeout(error)) {
                   toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
                   if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
                     paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
                   }
@@ -3846,6 +3851,7 @@ export function createCustomerCardView(deps) {
               }
               const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
               const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
               if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
                 paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
               } else {
@@ -3865,8 +3871,9 @@ export function createCustomerCardView(deps) {
         // a repaint detached this box while the run flew.
         const painted = lastShown;
         // One POST per customer, however many paints happen while the run
-        // flies; only the run that set it deletes it.
-        const flight = {};
+        // flies; only the run that set it deletes it. Tagged as an extract
+        // so the flying indicator reads «Estraggo…» only for a real run.
+        const flight = { kind: 'extract' };
         if (runKey !== null) enrichmentRuns.set(runKey, flight);
         const release = () => {
           busy = false;
@@ -3961,7 +3968,11 @@ export function createCustomerCardView(deps) {
         });
       });
       box.appendChild(refresh);
-      if (runKey !== null && enrichmentRuns.has(runKey)) {
+      // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: only a real extract run
+      // reads «Estraggo…» — a no-message re-read in flight (kind 'reload')
+      // never promises an extraction it did not start.
+      const flyingFlight = runKey !== null ? enrichmentRuns.get(runKey) : undefined;
+      if (flyingFlight !== undefined && flyingFlight.kind !== 'reload') {
         // A run this button did not start is still flying (a repaint
         // detached its box): the section still reads «Estraggo…», and the
         // button above no-ops until it lands.
