@@ -278,6 +278,14 @@ export function recalcCommitments({ commitments = [], messages = [], dismissed =
  */
 export function recordCommitmentDismissal(dismissals, key, reason) {
   const safeKey = boundedKey(key, 'dismissal.key');
+  // Review #1019 P1: `__proto__` as a key would set the object's
+  // prototype instead of an own property, so the «Ignora» never sticks
+  // and every later lookup is polluted. `constructor` and `prototype`
+  // shadow built-ins the same way lookups rely on, so they are refused
+  // too — real keys always start with `commit:`, never with these names.
+  if (safeKey === '__proto__' || safeKey === 'constructor' || safeKey === 'prototype') {
+    throw new ValidationError('dismissal.key must not be a reserved object key', { field: 'dismissal.key' });
+  }
   const safeReason = cleanLine(reason);
   if (safeReason === '' || safeReason.length > MAX_QUOTE) {
     throw new ValidationError(`dismissal.reason must be text of 1 to ${MAX_QUOTE} characters`, { field: 'dismissal.reason' });

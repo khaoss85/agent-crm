@@ -179,6 +179,14 @@ test('«Ignora» records a dismissal with its reason and the proposal never retu
   assert.throws(() => recordCommitmentDismissal({}, open[0].key, '  '), /dismissal\.reason/);
 });
 
+test('«Ignora» refuses reserved object keys so the prototype is never touched', () => {
+  for (const reserved of ['__proto__', 'constructor', 'prototype']) {
+    assert.throws(() => recordCommitmentDismissal({}, reserved, 'motivo'), /dismissal\.key/);
+  }
+  assert.equal(({}).polluted, undefined);
+  assert.equal(Object.getPrototypeOf({}), Object.prototype);
+});
+
 test('malformed rows contribute nothing and never crash', () => {
   const found = extractCommitments({
     messages: [null, {}, { id: 'x' }, { id: 'y', direction: 'sideways', body: 'ti mando tutto domani' }],
