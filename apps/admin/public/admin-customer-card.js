@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -582,6 +582,45 @@ export function extractionSourcesFromTimeline(timeline) {
 const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 'object'
   && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
     || /** @type {any} */ (error).status === 503);
+
+export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
+ * spins without end — a run that answers nothing within the timeout refuses
+ * with the retry code instead of hanging the section. The caller names the
+ * wait in Italian («Non ha risposto in tempo: riprova.»). The clock is the
+ * view's injectable `wait` seam, so tests fire it without real time.
+ * @param {Promise<any>} promise @param {number} [ms] @param {(wms: number) => Promise<any>} [waitFn]
+ * @returns {Promise<any>}
+ */
+export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
+  if (typeof waitFn === 'function') {
+    const timeout = Promise.resolve(waitFn(ms)).then(() => {
+      throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
+    });
+    return Promise.race([promise, timeout]);
+  }
+  // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
+  // leak one 60s timer per fast run — the losing timeout was never cleared.
+  // The guard below clears it as soon as the wrapped promise settles.
+  // No unref: an unref'd short timer lets the event loop drain before it
+  // fires (CI: 'Promise resolution is still pending but the event loop has
+  // already resolved'). Fast runs clear the timer below, so no 60s hang.
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
+    }, ms);
+  });
+  const guarded = Promise.resolve(promise).then(
+    (value) => { if (timer !== null) clearTimeout(timer); return value; },
+    (error) => { if (timer !== null) clearTimeout(timer); throw error; },
+  );
+  return Promise.race([guarded, timeout]);
+}
+/** The Italian line for a run the timeout above refused. @param {any} error */
+const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
+  && /** @type {any} */ (error).code === 'ENRICHMENT_EXTRACT_TIMEOUT';
 
 /**
  * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
@@ -1205,7 +1244,13 @@ export function createCustomerCardView(deps) {
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
-    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    : (ms) => new Promise((resolve) => {
+      // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the extraction
+      // deadline below outlives a fast run — unref'd so the leftover 60s
+      // never holds the loop (the race already ignored its late refusal).
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
   // load backstop never sits among the screen's pauses above. Unref'd
   // where the host allows it, so an idle process never waits on it.
@@ -1679,7 +1724,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function header(panel, card, resource, id) {
+  function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
     // NOT rendered: no record holds it yet (the contact record has no city,
@@ -1687,6 +1732,11 @@ export function createCustomerCardView(deps) {
     // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
     // the origin is the earliest-observed identity the card reports; city
     // and referente have no record yet, so those segments are left out.
+    // Voce 714433c2 (correction liveprobe-20261113, riga 2026-11-07.md:73):
+    // the Cliente/Contatto pill stays a derived indicator (customer-status.js,
+    // shared with the list: the two views cannot disagree), never a menu —
+    // but it now carries its Italian reason as a tooltip, so the derivation
+    // is observable where the verifier looked for the menu.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -1701,7 +1751,10 @@ export function createCustomerCardView(deps) {
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
-    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const badge = el('span', 'bo-scheda-badge', statusLabel(card?.status?.value));
+    const badgeReason = statusMicrocopy(card, profile);
+    if (badgeReason !== null) badge.setAttribute('title', badgeReason);
+    meta.appendChild(badge);
     // C3, as the prototype reads it: `<città> · via <canale> · la segue
     // <referente>`. Only what a record holds is shown: a missing segment is
     // left out, never written as `Da raccogliere` three times in a row
@@ -1911,23 +1964,29 @@ export function createCustomerCardView(deps) {
     // Voce 2f2d22f2: the prototype names its channels — «WhatsApp» and
     // «Email» open the same composer with their channel preselected
     // (backlog:e9b4fc2f: no mailto: anywhere, Invia sends through the
-    // outbox worker). A channel tile stays honest: it opens the composer
-    // even when its own channel is off, and the composer says so there.
-    const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
-    if (writable.length === 0) {
+    // outbox worker).
+    // backlog:9b28b3bc6003: each channel tile needs its own recipient — a
+    // customer with an email but no phone reads Email only, never
+    // WhatsApp, and vice versa. «Chiama» stays always (Dan 11/11: with no
+    // number it opens the number window instead of calling).
+    const channels = composerChannelsFor(card, null);
+    let shownChannels = 0;
+    for (const channel of ['whatsapp', 'email']) {
+      const entry = channels.find((row) => row.channel === channel);
+      if (entry?.recipient === null || entry?.recipient === undefined) continue;
+      const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+      const channelTile = tile(label, 'messaggio');
+      channelTile.setAttribute('type', 'button');
+      channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
+      channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
+      channelTile.addEventListener('click', () => {
+        openComposer(card, navCtx, channel);
+      });
+      row.appendChild(channelTile);
+      shownChannels += 1;
+    }
+    if (shownChannels === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
-    } else {
-      for (const channel of ['whatsapp', 'email']) {
-        const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
-        const channelTile = tile(label, 'messaggio');
-        channelTile.setAttribute('type', 'button');
-        channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
-        channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
-        channelTile.addEventListener('click', () => {
-          openComposer(card, navCtx, channel);
-        });
-        row.appendChild(channelTile);
-      }
     }
   /**
    * «Chiama» without a number, or with several (Dan 11/11): the number
@@ -3710,7 +3769,10 @@ export function createCustomerCardView(deps) {
     // Backlog e5e3e886 (supera C13): the ghost `Aggiorna` button STARTS one
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
-    // when it lands the section re-reads the facts and lists the stored
+    // a run that answers nothing refuses in time with the retry line, never
+    // a wait without end. With no messages the button says so at once under
+    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
     // says the AI is off — `Nessun dato nuovo` now means the run happened
@@ -3735,8 +3797,55 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
-        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return;
+      refresh.addEventListener('click', () => {
+        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
+        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
+        // to extract — the button says so at once and sends nothing, never
+        // «Estraggo…», and never spins without end. The re-read below is the
+        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
+        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
+          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+          return uiBusy(refresh, 'Aggiorno…', async () => {
+            busy = true;
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+            // without messages flies under the same single-flight guard as
+            // the extract run — otherwise a repaint in flight lets two
+            // reload()s race and lands the first answer in a detached box.
+            const painted = lastShown;
+            const flight = {};
+            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+            try {
+              let fresh;
+              try {
+                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+              } catch (error) {
+                if (isExtractionTimeout(error)) {
+                  toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+                  }
+                } else {
+                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+                }
+                return;
+              }
+              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              } else {
+                while (box.firstChild) box.removeChild(box.firstChild);
+                enriched(box, fresh, reload, null, ctx, null);
+              }
+              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+            } finally {
+              busy = false;
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            }
+          });
+        }
+        return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
         // The paint this click was painted on: landing anywhere else means
         // a repaint detached this box while the run flew.
@@ -3751,35 +3860,28 @@ export function createCustomerCardView(deps) {
         };
         try {
           const sources = extractionSourcesFromTimeline(sourcesOf);
-          if (sources.length === 0) {
-            // Backlog e5e3e886, arbitrato #853 P1: with zero messages the
-            // run cannot start, but the button still re-reads the facts
-            // like main (voce b9f6a2b58e00) instead of leaving the old
-            // rows on screen — then it says where the AI starts from.
-            let fresh;
-            try {
-              fresh = await reload();
-            } catch (error) {
-              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
-              return;
-            }
-            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-            while (box.firstChild) box.removeChild(box.firstChild);
-            enriched(box, fresh, reload, null, ctx, null);
-            toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-            return;
-          }
           const status = el('p', 'bo-scheda-extracting', 'Estraggo…');
           status.setAttribute('role', 'status');
           box.appendChild(status);
           let answer;
           try {
-            answer = await extract(sources);
+            // Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): a run
+            // that answers nothing refuses in time with the retry line —
+            // «Estraggo…» never spins without end.
+            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
+            } else if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              // Review #989 (P2): a repaint may have detached this box while
+              // the run flew, and its replacement shows the flying
+              // «Estraggo…». The flight is over: release it before the
+              // repaint below, or the new paint shows it again.
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
@@ -3793,9 +3895,21 @@ export function createCustomerCardView(deps) {
           // line — never a silent old screen after a happened run.
           let fresh;
           try {
-            fresh = await reload();
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3848): the re-read
+            // after a landed run flies under the same 60s deadline as the
+            // extract — otherwise a hanging GET holds the flight forever and
+            // every later «Aggiorna» no-ops with no retry line.
+            fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
-            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
@@ -3830,7 +3944,8 @@ export function createCustomerCardView(deps) {
         } finally {
           release();
         }
-      }));
+        });
+      });
       box.appendChild(refresh);
       if (runKey !== null && enrichmentRuns.has(runKey)) {
         // A run this button did not start is still flying (a repaint
@@ -4214,7 +4329,7 @@ export function createCustomerCardView(deps) {
       if (who === null || who === '—') return;
       offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
     };
-    /** @type {'none' | 'pending' | 'done' | 'failed'} */
+    /** @type {'none' | 'pending' | 'stale' | 'done' | 'failed'} */
     let historyState = profilePending ? 'pending' : 'none';
     if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
@@ -4222,7 +4337,16 @@ export function createCustomerCardView(deps) {
         applyHistory(settled);
         historyState = 'done';
       } else {
-        historyState = 'pending';
+        // backlog:fb35de38db49: while the fresh history is in flight (a
+        // «Cambia stato» dropped the live caches), draw the rows already
+        // shown instead of hiding them — the repaint must not jump.
+        const kept = historyKept.get(historyId);
+        if (kept !== undefined) {
+          applyHistory(kept);
+          historyState = 'stale';
+        } else {
+          historyState = 'pending';
+        }
       }
     }
     const drawList = () => {
@@ -4540,13 +4664,16 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (historyState === 'pending' && !profilePending) {
+    if ((historyState === 'pending' || historyState === 'stale') && !profilePending) {
       void readHistory(historyId).then((answer) => {
         historyState = 'done';
         applyHistory(answer);
         drawList();
       }, () => {
-        historyState = 'failed';
+        // backlog:fb35de38db49: a failed refresh keeps the rows already
+        // shown (the shared read still logs its cause through «Storia
+        // stati»); only a history never read says it is unreadable.
+        if (historyState !== 'stale') historyState = 'failed';
         drawList();
       });
     }
@@ -4903,11 +5030,12 @@ export function createCustomerCardView(deps) {
 
   // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
   // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
-  // when the package is not composed.
+  // when the package is not composed. A cancelled step is not a next
+  // action (seguito 17/11: it read as to-do in the block).
   const openTasksOf = (profile) => {
     if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
-    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
+    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed' && item?.status !== 'cancelled');
   };
   // Voce 2c1c0e149cf9: an agent-opened task is an AI suggestion — the
   // prototype's «✦ suggeriti» mark, read from the record's openedByType
@@ -5044,14 +5172,22 @@ export function createCustomerCardView(deps) {
     const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
       && typeof first?.currency === 'string' && first.currency !== ''
       ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
+    // backlog:1e07362849db: the figure reads with its label — a quote row
+    // shows the quote total («preventivo», «preventivo in bozza» for a
+    // draft), an offer row the offer value («valore dell’offerta», like the
+    // offer page hero): never two bare figures that read as the same.
+    const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
+      fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
+      if (amountNote) box.appendChild(amountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
+      if (amountNote) link.appendChild(amountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -5355,13 +5491,18 @@ export function createCustomerCardView(deps) {
       : null;
     const companyName = typeof profile?.identity?.company?.name === 'string'
       && profile.identity.company.name !== '' ? profile.identity.company.name : null;
-    box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
+    const title = el('p', 'bo-scheda-offer-history-title', 'Storia stati');
+    box.appendChild(title);
     const loading = el('p', 'bo-muted', 'Caricamento…');
     // backlog:947260f9f036: a history already read fills at once on a repaint.
     const settled = historySettled.get(targetId);
-    if (settled === undefined) box.appendChild(loading);
+    // backlog:fb35de38db49: while the fresh history is in flight, the rows
+    // already shown stay — the fill below replaces them when it lands.
+    const kept = settled === undefined ? historyKept.get(targetId) : undefined;
+    if (settled === undefined && kept === undefined) box.appendChild(loading);
     const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
+      while (title.nextSibling) box.removeChild(title.nextSibling);
       const rows = [];
       for (const entry of Array.isArray(items) ? items : []) {
         const move = stageMoveOf(entry);
@@ -5395,7 +5536,8 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
-    if (settled !== undefined) {
+    if (kept !== undefined) fill(kept.items, kept.people);
+    else if (settled !== undefined) {
       fill(settled.items, settled.people);
       return;
     }
@@ -5758,10 +5900,10 @@ export function createCustomerCardView(deps) {
    * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
    * AZIONI lists the open server tasks, the only copy on the scheda. A failed
    * read fails its vista (or the azioni block) like the card it replaces,
-   * never vanishing as empty. DECISION (to be confirmed): the panel always
-   * paints with honest vista states; only an empty azioni list hides its own
-   * block — the review left the empty state undecided, and hiding the whole
-   * panel would drop the failure contract.
+   * never vanishing as empty. DECISION (supervisore 17/11, verifier back su
+   * 84ebe9e5 AC-3): the block always paints — with no open step it keeps its
+   * title and an honest empty state, never hiding; only an uncomposed
+   * package (null) hides the block, like every uncomposed section.
    */
   function recapPanel(box, parts) {
     const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
@@ -5804,8 +5946,14 @@ export function createCustomerCardView(deps) {
       readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
       return true;
     }
-    if (tasks === null || tasks.length === 0) return true;
+    if (tasks === null) return true;
     box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    // Seguito 17/11: with no open step the block stays with an honest empty
+    // state — the prototype holds PROSSIME AZIONI, never a missing block.
+    if (tasks.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'Nessuna azione aperta.'));
+      return true;
+    }
     for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
     return true;
   }
@@ -5894,6 +6042,7 @@ export function createCustomerCardView(deps) {
     const startSeq = { ...partSeq };
     historyReads.clear();
     historySettled.clear();
+    historyKept.clear();
     rosterRead = null;
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
@@ -6091,6 +6240,14 @@ export function createCustomerCardView(deps) {
    */
   const historySettled = new Map();
   /**
+   * backlog:fb35de38db49: the last settled answer by offer id, kept after a
+   * write drops the live caches so a repaint (a «Cambia stato» re-read)
+   * draws the rows already shown until the fresh answer lands, instead of a
+   * gap. Cleared with the live caches on a full read.
+   * @type {Map<string, any>}
+   */
+  const historyKept = new Map();
+  /**
    * The offer's stage history with the roster that names its actors —
    * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
    * a repaint after a note or a Dettagli save reuses it; a full re-read or a
@@ -6105,7 +6262,11 @@ export function createCustomerCardView(deps) {
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
       const mine = read;
-      void read.then((answer) => { if (historyReads.get(targetId) === mine) historySettled.set(targetId, answer); }, () => {});
+      void read.then((answer) => {
+        if (historyReads.get(targetId) !== mine) return;
+        historySettled.set(targetId, answer);
+        historyKept.set(targetId, answer);
+      }, () => {});
       historyReads.set(targetId, read);
       // A failed read is not kept: the next paint asks again (after the
       // sections of a first read have landed, backlog:1a96094db71d).
@@ -6481,9 +6642,14 @@ export function createCustomerCardView(deps) {
   }
   /** The roster name of a team subject, or null. @param {string} id */
   function rosterName(id) {
-    // The same person lookup as «Storia stati» (subject or person key).
+    // The same person lookup as «Storia stati» (subject or person key),
+    // reading the author's profile word like cronologia/«Creata da» do
+    // (backlog:3f3c143b seguito): never the Team ordinal («daniele
+    // pelleri (2)»), never «dal team». A writer nobody names still reads
+    // unnamed («Nota · 10:00»).
     const person = rosterPeople === null ? null : personOf(id, rosterPeople);
-    return person !== null && typeof person.name === 'string' && person.name.trim() !== '' ? person.label : null;
+    const name = person !== null ? authorName(person) : null;
+    return typeof name === 'string' && name.trim() !== '' ? name : null;
   }
   /** Who wrote a note or a message: the roster name, else the readable handle, else null. @param {unknown} id */
   function writerName(id) {
@@ -6675,7 +6841,7 @@ export function createCustomerCardView(deps) {
       }
       panel.appendChild(head);
     } else {
-      header(panel, card, resource, id);
+      header(panel, card, resource, id, profile);
     }
     const grid = el('div', 'bo-scheda-grid');
     // Dan 06/11: the side columns stay put while the conversation scrolls.
@@ -6746,7 +6912,12 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    // backlog:9b28b3bc6003: the offer section hides itself when the customer
+    // has none, so the skeleton only covers the unknown — while the profile
+    // is still in flight. The pipelines only name the stage (the line falls
+    // back to the core stage without them), so a slow schema read never
+    // paints an «Offerta» skeleton over a customer with no offer.
+    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — a grey skeleton while the services read is in flight, never

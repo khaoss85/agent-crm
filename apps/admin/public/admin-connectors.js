@@ -25,7 +25,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
-import { channelState, CHANNEL_STATE_LABELS, NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
+import { channelMark, channelState, CHANNEL_STATE_LABELS, NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { googleConnectionsCard, metaConnectionsCard } from './admin-profilo.js';
@@ -166,25 +166,29 @@ export const CONNECTOR_CATALOG = Object.freeze([
  * 2–3 letter tile with a timeline tint (`apps/admin/public/admin-ui.js`
  * names the same tints for the timeline chips; Telegram has no timeline
  * tile yet, so it shares the data tint family — see `.ui-chip-tg`).
+ * Tiles come from the one table in admin-channels-count.js
+ * (`channelMark`, backlog:6d0df351) — the tint stays local to this list.
  * @typedef {{ tile: string, tint: string }} ConnectorBadge
  */
 export const CONNECTOR_BADGES = Object.freeze({
-  whatsapp: Object.freeze({ tile: 'WA', tint: 'ui-chip-wa' }),
-  instagram: Object.freeze({ tile: 'IG', tint: 'ui-chip-ig' }),
-  telegram: Object.freeze({ tile: 'TG', tint: 'ui-chip-tg' }),
-  facebook: Object.freeze({ tile: 'FB', tint: 'ui-chip-fb' }),
-  tiktok: Object.freeze({ tile: 'TT', tint: 'ui-chip-tt' }),
-  sms: Object.freeze({ tile: 'S', tint: 'ui-chip-s' }),
-  email: Object.freeze({ tile: '@', tint: 'ui-chip-at' }),
-  voice: Object.freeze({ tile: 'TEL', tint: 'ui-chip-tel' }),
-  'site-form': Object.freeze({ tile: 'WEB', tint: 'ui-chip-web' }),
+  whatsapp: Object.freeze({ tile: channelMark('whatsapp'), tint: 'ui-chip-wa' }),
+  instagram: Object.freeze({ tile: channelMark('instagram'), tint: 'ui-chip-ig' }),
+  telegram: Object.freeze({ tile: channelMark('telegram'), tint: 'ui-chip-tg' }),
+  facebook: Object.freeze({ tile: channelMark('facebook'), tint: 'ui-chip-fb' }),
+  tiktok: Object.freeze({ tile: channelMark('tiktok'), tint: 'ui-chip-tt' }),
+  sms: Object.freeze({ tile: channelMark('sms'), tint: 'ui-chip-s' }),
+  email: Object.freeze({ tile: channelMark('email'), tint: 'ui-chip-at' }),
+  voice: Object.freeze({ tile: channelMark('voice'), tint: 'ui-chip-tel' }),
+  'site-form': Object.freeze({ tile: channelMark('site-form'), tint: 'ui-chip-web' }),
 });
 
 // Direction from the channel matrix of packages/channels/README.md (BO-F1-01):
 // the five channels that send through the outbox, and the three catalog
 // channels that are inbound-only by contract (CHANNEL_SEND_UNSUPPORTED).
 // `sms` has no dedicated adapter in packages/channels, so its direction is
-// undeclared here — the detail says so instead of guessing.
+// undeclared here — the detail says so instead of guessing. The painted
+// direction *lines* live in one table in admin-channels-count.js
+// (`channelDirectionLine`, backlog:6d0df351), never here.
 export const DIRECTION_BY_CHANNEL = Object.freeze({
   whatsapp: 'in-out',
   instagram: 'in-out',

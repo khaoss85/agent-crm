@@ -689,7 +689,7 @@ test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', 
   assert.ok(rows[0].textContent.includes('5.000' + NBSP + '€'), 'the importo stays');
 });
 
-test('47b89e19: the detail links stay in the router too (offer, scheda, version)', async () => {
+test('47b89e19: the detail links stay in the router too (offer, scheda, list, version)', async () => {
   const mount = createMount();
   const navigated = [];
   const client = stubClient({
@@ -706,14 +706,14 @@ test('47b89e19: the detail links stay in the router too (offer, scheda, version)
   });
   await createQuoteView({ doc: createFakeDocument(), mount, client, navigate: (hash) => navigated.push(hash) }).renderQuoteDetail('q1');
   const links = mount.findAll('a').filter((node) =>
-    ['quote-offer-link', 'quote-back', 'quote-version-open'].includes(node.getAttribute('class')));
-  assert.equal(links.length, 3, 'offer, back and version links are all present');
+    ['quote-offer-link', 'quote-back', 'quote-list-link', 'quote-version-open'].includes(node.getAttribute('class')));
+  assert.equal(links.length, 4, 'offer, back, list and version links are all present');
   for (const link of links) {
     let prevented = false;
     link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
     assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
   }
-  assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
+  assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/quotes', '#/modules/quote-version/v1'],
     'every link goes through navigate(), setting only the hash');
 });
 
@@ -964,4 +964,48 @@ test('d56122ee2844 arbitrato giro 2 P1: a failed keep re-read re-enables every e
   for (const button of buttons) {
     assert.equal(button.disabled, false, `control «${button.textContent}» is enabled again`);
   }
+});
+
+// backlog:3234cc917e0a (verifica Mac 17/11, #/quotes sul live d34bcbc): the
+// list named «Crea preventivo» while the offer button reads «Nuovo
+// preventivo» — text and button share one name now — and the list had no
+// link from anywhere.
+test('3234cc917e0a: the list names the same create button as the offer page', async () => {
+  const { mount, render } = listView();
+  await render();
+  const text = mount.textContent;
+  assert.ok(text.includes('«Nuovo preventivo»'), 'the list names the offer button by its name');
+  assert.ok(!text.includes('Crea preventivo'), 'no second name for the same button');
+});
+
+test('3234cc917e0a: the detail links to the quote list through the router', async () => {
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT', stage: 'proposal',
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client, navigate: (hash) => navigated.push(hash) }).renderQuoteDetail('q1');
+  const list = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(list, 'a link to the quote list is shown');
+  assert.equal(list.getAttribute('href'), '#/quotes', 'the link targets the list route');
+  assert.equal(list.textContent, 'Tutti i preventivi', 'the link names the list');
+  let prevented = false;
+  list.listeners.click[0]({ preventDefault: () => { prevented = true; } });
+  assert.ok(prevented, 'the default navigation is stopped');
+  assert.deepEqual(navigated, ['#/quotes'], 'the list opens through navigate(), setting only the hash');
+});
+
+test('3234cc917e0a: the list link paints even without a customer to go back to', async () => {
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client: stubClient() }).renderQuoteDetail('q1');
+  const list = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(list, 'the list link stays when back and offer links are missing');
+  assert.equal(list.getAttribute('href'), '#/quotes');
 });

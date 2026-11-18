@@ -571,7 +571,26 @@ test('57e3d1685e58: the chi line shows the contact address, never the user one',
     {},
     [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
   );
-  assert.equal(named[0].who, 'Marco Ferri', 'a real team name still reads first');
+  assert.equal(named[0].who, 'Marco Ferri', 'team name reads only without a contact address');
+});
+
+test('57e3d1685e58: the chi line prefers the contact address over a known team name', () => {
+  // VERIFIER_BACK 2026-11-17 (failed delivery 24d7bde1): live «Prova
+  // verifica 40» read «daniele pelleri» (the roster name of the operator
+  // holding the slot) in the grey line under the contact, instead of the
+  // contact's own channel/email. A synced invitee keeps its email in the
+  // stored subject label, so the contact address must win over the team
+  // name whenever both are known.
+  const roster = [{ subject: 'op-1', displayName: 'daniele pelleri', email: 'operatore@esempio.it' }];
+  const appt = {
+    ...APPT_TODAY, id: 'appt-live-40', teamMemberId: 'op-1',
+    subjectLabel: 'ospite@esempio.it', notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([appt], OGGI_NOW, {}, roster)[0].who,
+    'ospite@esempio.it',
+    'the contact email, never the known team name',
+  );
 });
 
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
@@ -781,7 +800,7 @@ test('agenda rows carry the chi line from the team member or the notes', () => {
   const withTeam = { ...APPT_TODAY, id: 'appt-team', teamMemberId: 'Marco' };
   const withNotesOnly = { ...APPT_TODAY, id: 'appt-notes' };
   const agenda = buildTodayAgenda([withTeam, withNotesOnly], OGGI_NOW);
-  assert.equal(agenda[0].who, 'Marco', 'team member first');
+  assert.equal(agenda[0].who, 'Marco', 'team member as fallback without a contact address');
   assert.ok(
     agenda[1].who.includes('Vuole la scheda'),
     'notes cue when no team member is stored',
@@ -2182,7 +2201,7 @@ function slowOggiClient(clock, ms, appointment = APPT_TODAY) {
   };
 }
 
-test('2a075e2d9250 (production fc3fa62): the independent reads start together — reads of 2 s each finish in about 2 s, not N×2', async () => {
+test('2a075e2d9250 (production fc3fa62) + 57994a8c7287: the independent reads start together — the essentials still paint after one read time, the capped second wave settles after', async () => {
   const clock = virtualClock();
   const client = slowOggiClient(clock, 2000);
   let essentialsAt = null;
@@ -2190,12 +2209,13 @@ test('2a075e2d9250 (production fc3fa62): the independent reads start together �
   let data = null;
   void loadOggiData(client, OGGI_NOW, { onEssentials: () => { essentialsAt = clock.now; } }).then((value) => { data = value; done = true; });
   const finishedAt = await clock.runUntil(() => done);
-  // Six independent reads (open tasks, appointments, channels, profile,
-  // inbox messages, conversations): one wave of 2 s, then one wave for what
-  // depends on them (customer names, the call recap). Before: one after the
-  // other, 16 s on this client.
+  // Voce 57994a8c7287: three waves of 2 s now — the essentials burst, then
+  // the capped second wave (profile, roster, the two customer views), then
+  // what depends on them (customer names, the call recap). Before: 16 s one
+  // after the other; with the first-wave parallel start: two waves. The
+  // first paint never moved: it still lands after the essentials burst.
   assert.equal(essentialsAt, 2000, 'agenda and Da rispondere are in after one read time');
-  assert.equal(finishedAt, 4000, 'everything is in after two read times');
+  assert.equal(finishedAt, 6000, 'everything is in after three read times');
   assert.equal(data.appointmentsAvailable, true);
   assert.equal(data.inboxAvailable, true);
   assert.equal(data.interactionsAvailable, true, 'the call recap is read');
@@ -2207,10 +2227,11 @@ test('2a075e2d9250 (production fc3fa62): the independent reads start together �
     'each read still runs once');
 });
 
-// Voce 785aeb28bd18: the roster launches with the profile, not after the
-// first wave — the member step settles with the wave (under 1 s on a warm
-// server), and `timings` says where the load time went.
-test('785aeb28bd18: memberships launches beside profile, before any read resolves', async () => {
+// Voce 57994a8c7287 (supera 785aeb28bd18 su questo punto): il profilo e i
+// membri non partono più accanto allo schema ma nella seconda ondata, dopo
+// le essenziali — il picco resta dentro il limite del pilota. Il primo
+// disegno non li ha mai aspettati: `timings` dice ancora dove va il tempo.
+test('57994a8c7287: profile and memberships launch after the essentials, never beside the schema', async () => {
   const asked = [];
   let resolveSchema = null;
   const schemaGate = new Promise((resolve) => { resolveSchema = resolve; });
@@ -2221,18 +2242,16 @@ test('785aeb28bd18: memberships launches beside profile, before any read resolve
       if (path === '/api/schema') return schemaGate;
       if (path === '/api/profile') return {};
       if (path === '/api/spine/memberships') return { items: [] };
-      return {};
+      return { items: [] };
     },
   };
-  const pending = loadOggiData(client, OGGI_NOW);
+  const pending = loadOggiData(client, OGGI_NOW, { spaceId: 'spazio-test' });
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
-  assert.ok(asked.includes('/api/profile'), 'the profile read left at once');
-  assert.ok(asked.includes('/api/spine/memberships'),
-    'the roster left with the profile, not after the first wave');
-  assert.ok(!asked.some((path) => path.startsWith('/api/modules/')),
-    'no module read resolves before the schema lands');
+  assert.deepEqual(asked, ['/api/schema'], 'the schema opens alone: nothing starts beside it');
   resolveSchema({ domains: {} });
   const data = await pending;
+  assert.ok(asked.includes('/api/profile'), 'the profile still joins the load, after the essentials');
+  assert.ok(asked.includes('/api/spine/memberships'), 'the roster still joins the load, after the essentials');
   assert.deepEqual(data.members, [], 'the empty roster travels, fail-soft');
   assert.equal(typeof data.timings?.members, 'number', 'the member step is measured');
 });
@@ -2282,6 +2301,8 @@ test('2a075e2d9250: the day paints on the essentials; names and the call recap f
   let rendered = false;
   void view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW }).then(() => { rendered = true; });
   const paintedAt = await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
+  // Voce 57994a8c7287: the first paint never moved — it still lands after
+  // the essentials burst, one read time on this client.
   assert.equal(paintedAt, 2000, 'the day is on screen after one read time');
   assert.ok(!mount.textContent.includes('Carico la tua giornata'), 'no loading line over the day');
   const brief = () => mount.querySelector('section[data-oggi-section="brief"]');
@@ -2291,7 +2312,9 @@ test('2a075e2d9250: the day paints on the essentials; names and the call recap f
   execute.focus();
 
   const filledAt = await clock.runUntil(() => rendered);
-  assert.equal(filledAt, 4000);
+  // Voce 57994a8c7287: the full load costs one more read time — the capped
+  // second wave settles between the essentials and the names.
+  assert.equal(filledAt, 6000);
   assert.ok(brief().textContent.includes('Interessata, richiama dopo il preventivo'), 'the recap filled in');
   assert.ok(!brief().textContent.includes('Carico'), 'no loading line left');
   assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('Giulia Romano'), 'the inbox names the customer');
@@ -2552,4 +2575,85 @@ test('6d0df351: loadOggiData carries the schema adapters to the invite', async (
   assert.deepEqual(served.channelAdapters, adapters, 'named adapters reach the invite');
   const unknown = await loadOggiData(clientFor({ domains: { channels: {} } }), OGGI_NOW, { spaceId: 'spazio-b' });
   assert.equal(unknown.channelAdapters, null, 'no adapters metadata stays unknown');
+});
+
+// Voce 57994a8c7287 (pin pilota #690 rosso: il picco di letture in volo di
+// Oggi supera il limite): il carico apre prima lo schema da solo, poi una
+// sola ondata larga di essenziali, e solo dopo — mai in parallelo alle
+// essenziali — profilo, membri e le due viste cliente. Il picco resta
+// dentro il limite del pilota (sei letture), senza togliere il primo
+// disegno veloce di ca53e443db44.
+test('57994a8c7287: loadOggiData keeps the in-flight peak within the pilot limit', async () => {
+  let inFlight = 0;
+  let peakInFlight = 0;
+  const seen = [];
+  const tick = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      inFlight += 1;
+      if (inFlight > peakInFlight) peakInFlight = inFlight;
+      try {
+        await tick();
+        if (path === '/api/schema') {
+          return {
+            domains: {
+              work: {},
+              appointments: {},
+              channels: {},
+              interactions: {},
+              'customer-data': {},
+              'site-forms': {},
+            },
+          };
+        }
+        if (path === '/api/profile') return { member: { email: 'op@palestra-esempio.it' } };
+        if (path === '/api/spine/memberships') return { items: [] };
+        if (path.startsWith('/api/customer-data/customers?')) {
+          return { items: [], total: 0, totalIsExact: true, views: [] };
+        }
+        if (path.startsWith('/api/modules/')) return { items: [] };
+        throw new Error(`unexpected read: ${path}`);
+      } finally {
+        inFlight -= 1;
+      }
+    },
+  };
+  const data = await loadOggiData(client, OGGI_NOW, { spaceId: 'spazio-test' });
+  assert.ok(data.workAvailable, 'essentials still load');
+  assert.ok(data.appointmentsAvailable, 'essentials still load');
+  assert.ok(data.channelsAvailable, 'essentials still load');
+  assert.ok(data.inboxAvailable, 'essentials still load');
+  assert.ok(data.profile !== null, 'the profile still joins the load, after the paint');
+  assert.ok(data.replies !== null, 'the server view still joins the load, after the paint');
+  assert.ok(peakInFlight <= 6, `the in-flight peak stays within the pilot limit (peak ${peakInFlight})`);
+  const firstProfile = seen.indexOf('/api/profile');
+  const essentials = seen.filter((path) => path.startsWith('/api/modules/'));
+  assert.ok(firstProfile > -1, 'the profile is read');
+  for (const path of essentials) {
+    assert.ok(seen.indexOf(path) < firstProfile, `${path} starts before the profile`);
+  }
+});
+
+// Voce 57994a8c7287: con lo schema rifiutato non parte nessun'altra
+// lettura — nessun profilo, nessun membro, nessuna vista resta in volo
+// dietro il ritorno d'errore.
+test('57994a8c7287: a refused schema starts no other read', async () => {
+  const seen = [];
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') {
+        const error = new Error('Request failed (403)');
+        error.status = 403;
+        throw error;
+      }
+      throw new Error(`unexpected read after a refused schema: ${path}`);
+    },
+  };
+  const data = await loadOggiData(client, OGGI_NOW, { spaceId: 'spazio-test' });
+  assert.deepEqual(seen, ['/api/schema'], 'only the schema is attempted');
+  assert.ok(data !== null, 'the day still answers, honest about every section');
 });

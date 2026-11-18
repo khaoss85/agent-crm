@@ -785,6 +785,22 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
+// backlog:ed6bae5e5c0d (verifica Mac 17/11: la colonna «PREVENTIVI» della
+// tabella Team conta le offerte aperte ma non lo dice): l'intestazione
+// nomina ciò che conta davvero, e la riga mostra vinte e tasso del periodo.
+test('ed6bae5e5c0d: the team column reads «Preventivi aperti», won and rate stay period-based', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const heads = mount.findAll('th').map((node) => node.textContent);
+  assert.ok(heads.includes('Preventivi aperti'), `the column names what it counts, got: ${heads.join(' | ')}`);
+  assert.ok(!heads.includes('Preventivi'), 'no bare «Preventivi» header stays ambiguous');
+  const cells = mount.findAll('td').map((node) => node.textContent);
+  // MODEL: alice 2 open, 1 won (9000 minor = 90 €) and 1 lost in the period → 50%.
+  assert.ok(cells.includes('2'), 'alice open count renders');
+  assert.ok(cells.includes('1 (90 €)'), `alice won count renders, got: ${cells.join(' | ')}`);
+  assert.ok(cells.includes('50%'), 'alice period rate renders');
+});
+
 // 35c3c897d696: a malformed first or last week reads the count only, never throws.
 test('channelsLede with a malformed week never throws', async () => {
   const { channelsLede } = await import('../apps/admin/public/admin-reporting.js');
