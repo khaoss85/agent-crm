@@ -407,17 +407,15 @@ function redactedShareResult(result) {
 }
 
 /**
- * The operator's cronologia row for one link creation (backlog:bf1bc20a):
- * the Cronologia reads `opportunity` audit, so every fresh mint and every
- * regenerate records one `opportunity.quote_link_*` row — even when the
- * answer to the browser is later lost, because the action writes the row
- * before answering. A reuse writes nothing: the
- * winner's call already wrote the row. The payload carries no bearer and
- * no hash — only the quote, version and expiry the operator already sees.
+ * The link history row needs a place to land: an `opportunity` audit that
+ * can record and a quote that names its opportunity. Check this BEFORE the
+ * mint or the rotation commits (backlog:bf1bc20a, review #995 P1): refusing
+ * here leaves no live bearer behind, while refusing after the commit leaves
+ * a working link with no Cronologia row — and the retry only reuses it.
  *
  * @param {any} shares the quote-share managed service
  */
-async function recordOpportunityLinkRow(shares, quote, { action, share, actor }) {
+function requireLinkHistoryTarget(shares, quote) {
   if (!shares || typeof shares.audit?.record !== 'function') {
     throw new AppError('quote-share storage cannot record the link history row', {
       code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
@@ -429,6 +427,22 @@ async function recordOpportunityLinkRow(shares, quote, { action, share, actor })
       code: 'COMMERCIAL_STATE_CORRUPT', status: 409,
     });
   }
+}
+
+/**
+ * The operator's cronologia row for one link creation (backlog:bf1bc20a):
+ * the Cronologia reads `opportunity` audit, so every fresh mint and every
+ * regenerate records one `opportunity.quote_link_*` row — even when the
+ * answer to the browser is later lost, because the action writes the row
+ * before answering. A reuse writes nothing: the
+ * winner's call already wrote the row. The payload carries no bearer and
+ * no hash — only the quote, version and expiry the operator already sees.
+ *
+ * @param {any} shares the quote-share managed service
+ */
+async function recordOpportunityLinkRow(shares, quote, { action, share, actor }) {
+  requireLinkHistoryTarget(shares, quote);
+  const opportunityId = quote.opportunityId;
   await shares.audit.record({
     actor,
     action,
@@ -608,6 +622,9 @@ export function buildShareLinkAction(config) {
       // A transient serialization conflict is not that case: the fence lost
       // a same-row contest, so this transaction is doomed — rethrow and let
       // the outer runtime retry fresh, where the re-check sees the winner.
+      // Review #995 P1: the history row must have a place to land before
+      // the mint commits — never after, when the bearer is already live.
+      requireLinkHistoryTarget(shares, quote);
       const minted = await withVersionMintLock(quote.currentVersionId, async () => {
         await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);
@@ -666,6 +683,9 @@ export function buildRegenerateLinkAction(config) {
       // Same exclusion as the mint: a concurrent share-link or regenerate-link
       // for this version serializes here in-process and on the quote-row
       // fence across processes, so the loser decides on the winner's row.
+      // Review #995 P1: same rule as share-link — refuse before the
+      // rotation commits, never after the new bearer is already live.
+      requireLinkHistoryTarget(shares, quote);
       const outcome = await withVersionMintLock(quote.currentVersionId, async () => {
         await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);

@@ -283,7 +283,7 @@ function baseStaticRequest(request) {
   };
 }
 
-test('bf1bc20a: a share answer landing after regeneration never paints the revoked link (Codex #995 P2)', async () => {
+test('bf1bc20a: a regeneration waits while a send runs — one shared in-flight guard (review #995 P2)', async () => {
   let releaseShare;
   const shareWait = new Promise((resolve) => { releaseShare = resolve; });
   const request = baseStaticRequest(async (path, { method }) => {
@@ -300,18 +300,28 @@ test('bf1bc20a: a share answer landing after regeneration never paints the revok
     if (path.startsWith('/api/audit')) return { items: [] };
     return { items: [] };
   });
-  const { mount } = await openOfferPageWith(request);
+  const { mount, client } = await openOfferPageWith(request);
+  const regenCalls = () => client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/modules/quote/records/q1/actions/regenerate-link');
   shareButton(mount).dispatch('click');
   await flushAll(2);
+  assert.equal(shareButton(mount).getAttribute('disabled'), 'disabled', 'the send disables itself in flight');
+  assert.equal(regenButton(mount).getAttribute('disabled'), 'disabled', 'the send disables the regeneration too');
   regenButton(mount).dispatch('click');
   await flushAll(2);
-  regenButton(mount).dispatch('click');
-  await flushAll();
-  assert.ok(mount.textContent.includes(URL2), 'the regenerated link paints first');
+  assert.equal(regenButton(mount).textContent, 'Crea un nuovo link', 'a regeneration press in flight arms nothing');
+  assert.equal(regenCalls().length, 0, 'a regeneration press in flight sends nothing');
   releaseShare();
   await flushAll();
-  assert.ok(mount.textContent.includes(URL2), 'the regenerated link stays on screen');
-  assert.ok(!mount.textContent.includes(URL), 'the late revoked mint never comes back on screen');
+  assert.ok(mount.textContent.includes(URL), 'the send paints its link first');
+  assert.equal(regenButton(mount).getAttribute('disabled'), null, 'the regeneration is back after the send');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  assert.equal(regenCalls().length, 1, 'one confirmed press after the send mints one fresh link');
+  assert.ok(mount.textContent.includes(URL2), 'the regenerated link paints');
+  assert.ok(!mount.textContent.includes(URL), 'the revoked mint never comes back on screen');
 });
 
 test('bf1bc20a: an uncertain regeneration forgets the cached link — the next press asks for a new one (Codex #995 P2)', async () => {

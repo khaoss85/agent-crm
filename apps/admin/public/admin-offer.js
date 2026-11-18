@@ -1101,10 +1101,11 @@ export function createOfferDetail(deps) {
     /** @type {null | {key: string}} */
     let pending = null;
     let busy = false;
-    // Codex review on #995 (P2): «Invia offerta» and «Crea un nuovo link»
-    // share one link, so they share one epoch: every link operation takes
-    // the next number, and only the newest one may paint. A mint answer
-    // that lands after a regeneration won is discarded, never painted.
+    // Review #995 (Muse P2, Codex P2): «Invia offerta» and «Crea un nuovo
+    // link» never run together — one shared in-flight guard: send waits
+    // while a regeneration runs and a regeneration waits while a send
+    // runs, with both buttons disabled meanwhile. The epoch stays only
+    // as a stale-answer guard for answers that were already superseded.
     let linkOp = 0;
     const showLink = (url, expiresAt, reused) => {
       line.setAttribute('class', 'bo-muted offer-share-line');
@@ -1121,7 +1122,11 @@ export function createOfferDetail(deps) {
       state.textContent = reused ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.';
     };
     const send = async () => {
-      if (busy) return;
+      // Review #995 P2: one shared in-flight guard — a regeneration that
+      // is still running keeps this send out, and this send keeps a
+      // regeneration out, so a late share answer can never paint over a
+      // fresh regeneration.
+      if (busy || regenBusy) return;
       busy = true;
       const myOp = ++linkOp;
       // One key per link being minted: a double press, a retry after an
@@ -1130,6 +1135,8 @@ export function createOfferDetail(deps) {
       if (pending === null) pending = { key: submissions.issueKey() };
       button.setAttribute('disabled', 'disabled');
       button.setAttribute('aria-busy', 'true');
+      regenButton.setAttribute('disabled', 'disabled');
+      regenButton.setAttribute('aria-busy', 'true');
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = 'Creo il link…';
       try {
@@ -1171,6 +1178,10 @@ export function createOfferDetail(deps) {
         busy = false;
         button.removeAttribute('disabled');
         button.setAttribute('aria-busy', 'false');
+        if (!regenBusy) {
+          regenButton.removeAttribute('disabled');
+          regenButton.setAttribute('aria-busy', 'false');
+        }
       }
     };
     button.addEventListener('click', () => { void send(); });
@@ -1204,7 +1215,9 @@ export function createOfferDetail(deps) {
       }
     };
     const runRegen = async () => {
-      if (regenBusy) return;
+      // Review #995 P2: the other half of the shared guard — a send that
+      // is still running keeps this regeneration out.
+      if (regenBusy || busy) return;
       regenBusy = true;
       const myOp = ++linkOp;
       // One key per link being minted: a double press mints one link,
@@ -1212,6 +1225,8 @@ export function createOfferDetail(deps) {
       if (regenPending === null) regenPending = { key: submissions.issueKey() };
       regenButton.setAttribute('disabled', 'disabled');
       regenButton.setAttribute('aria-busy', 'true');
+      button.setAttribute('disabled', 'disabled');
+      button.setAttribute('aria-busy', 'true');
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = 'Creo il nuovo link…';
       try {
@@ -1266,10 +1281,14 @@ export function createOfferDetail(deps) {
         regenBusy = false;
         regenButton.removeAttribute('disabled');
         regenButton.setAttribute('aria-busy', 'false');
+        if (!busy) {
+          button.removeAttribute('disabled');
+          button.setAttribute('aria-busy', 'false');
+        }
       }
     };
     regenButton.addEventListener('click', () => {
-      if (regenBusy) return;
+      if (regenBusy || busy) return;
       if (!regenArmed) {
         regenArmed = true;
         regenButton.textContent = 'Sì, crea un nuovo link';

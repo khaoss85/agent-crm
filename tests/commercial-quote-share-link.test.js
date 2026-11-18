@@ -851,3 +851,34 @@ test('bf1bc20a: every link creation writes its cronologia row, a reuse writes no
   });
   assert.equal(opened.result.accepted, true, 'the new link works');
 });
+
+test('bf1bc20a: a quote without an opportunity refuses before the mint — no live link without a cronologia row (review #995 P1)', async () => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-NOOPP', cents: 10000 });
+  // A legacy/manual/stub quote shape: approved and versioned, but naming no
+  // offer for the link history row.
+  await app.modules.get('quote').service.applyManaged(quote.id, { opportunityId: null }, { actor: ACTOR });
+  const shares = app.modules.get('quote-share').service;
+  let mints = 0;
+  const originalCreateManaged = shares.createManaged.bind(shares);
+  shares.createManaged = async (...args) => {
+    mints += 1;
+    return originalCreateManaged(...args);
+  };
+  try {
+    const refused = await refusal(app.runAction({
+      module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+    }));
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'COMMERCIAL_STATE_CORRUPT', 'the mint is refused, not committed-then-failed');
+    const refusedRegen = await refusal(app.runAction({
+      module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+    }));
+    assert.equal(refusedRegen.ok, false);
+    assert.equal(refusedRegen.code, 'COMMERCIAL_STATE_CORRUPT', 'the rotation is refused before it commits too');
+  } finally {
+    shares.createManaged = originalCreateManaged;
+  }
+  assert.equal(mints, 0, 'no mint runs when the history row has nowhere to land');
+  assert.deepEqual(await shares.listWhere({ quoteId: quote.id }), [], 'no bearer is left live');
+});
