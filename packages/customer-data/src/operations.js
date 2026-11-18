@@ -1384,7 +1384,14 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // its type, anything else through the canonical stage.
     const openOffers = myOffers.filter((row) => {
       const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
-      if (key !== null && opportunityPipeline !== null && findStage(opportunityPipeline, key) !== null) {
+      // Review giro 1 (agent-crm#1038, P2): a stage key belongs to the
+      // pipeline that defines it — a row filed under another pipeline
+      // (pipelineKey names it) reads through the canonical stage, never
+      // through the composed pipeline's types.
+      const rowPipeline = typeof row?.pipelineKey === 'string' && row.pipelineKey !== '' ? row.pipelineKey : null;
+      if (key !== null && opportunityPipeline !== null
+        && (rowPipeline === null || rowPipeline === opportunityPipeline.name)
+        && findStage(opportunityPipeline, key) !== null) {
         return isOpenOfferStage(opportunityPipeline, key);
       }
       return isOpenOfferStage(null, row?.stage);
