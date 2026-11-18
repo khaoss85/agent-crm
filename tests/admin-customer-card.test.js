@@ -6775,3 +6775,29 @@ test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, 
   assert.ok(suggested.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
   assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
 });
+
+// backlog:a5fb07706bff verifier-back su 59c2c14 (EVIDENCE_LINE_NOT_PASS 2026-11-17):
+// la riga Email di Fio Neri leggeva «→ in uscita» con Gmail collegato anche
+// quando la stessa casella aveva messaggi in entrata. Repro: rosso sul codice
+// prima della cura (nome visualizzato «Fio Neri <fio@...>» non unisce con
+// «fio@...»), verde dopo.
+test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce entrata e uscita', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'Fio Neri <Fio@PrestiGroup.it>', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'e-out', conversationId: 't5', channel: 'email', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'fio@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
+  assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
+});

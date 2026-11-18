@@ -476,7 +476,13 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
 function normalizeIdentityHandle(system, handle) {
   const value = String(handle ?? '');
   if (PHONE_LIKE_SYSTEMS.includes(system)) return value.replace(/[ .\-()/]/g, '');
-  if (system === 'email' || system === 'gmail' || system === 'outlook') return value.toLowerCase();
+  if (system === 'email' || system === 'gmail' || system === 'outlook') {
+    // Voce a5fb07706bff verifier-back su 59c2c14: la stessa casella arriva
+    // con il nome visualizzato («Fio Neri <fio@...>») o senza — l'unione
+    // legge l'indirizzo nudo, maiuscole a parte.
+    const bracket = value.match(/<([^<>@]+@[^<>@]+)>/);
+    return (bracket ? bracket[1] : value).trim().toLowerCase();
+  }
   return value;
 }
 
