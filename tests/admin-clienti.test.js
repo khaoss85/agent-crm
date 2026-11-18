@@ -1787,3 +1787,52 @@ test('backlog:2262771da550 repro review rev-agent-crm-938-1443ea09: real plus-ad
   assert.ok(!cal.includes('·'), 'an unknown state reads date-only, with no state suffix');
   assert.ok(cal.includes('giu'), 'an unknown state still names the date');
 });
+
+test('5af848afdb63: a failed rinnovi read keeps the other views\u2019 numbers, names the view and offers Riprova', async () => {
+  // The live 409 CUSTOMER_LIST_UNAVAILABLE (subscriptions not readable in
+  // the space) wiped every pill — «Da leggere» and «Da rispondere» lost
+  // their numbers too — and the screen never named the view.
+  const views = [
+    ...MENUS.views.map((view, index) => ({ ...view, count: (index + 1) * 3 })),
+    { id: 'da-leggere', label: 'Da leggere', count: 4 },
+    { id: 'da-rispondere', label: 'Da rispondere', count: 5 },
+  ];
+  let failRinnovi = false;
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      const query = new URL(path, 'http://localhost').searchParams;
+      if (failRinnovi && query.get('vista') === 'rinnovi-30-giorni') {
+        throw Object.assign(
+          new Error('the rinnovi-30-giorni view needs the subscription records, which are not readable here'),
+          { status: 409, code: 'CUSTOMER_LIST_UNAVAILABLE' },
+        );
+      }
+      return {
+        customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS, views,
+      };
+    },
+  };
+  const { mount } = await render(client);
+  const tabs = () => buttons(mount).filter((node) => node.getAttribute('role') === 'tab').map((node) => node.textContent);
+  assert.ok(tabs().includes('Rinnovi entro 30 giorni 15'), `the rinnovi pill reads its number first: ${JSON.stringify(tabs())}`);
+  // The rinnovi list refuses: subscriptions are not readable in this space.
+  failRinnovi = true;
+  byAttr(mount, 'button', 'data-view', 'rinnovi-30-giorni').dispatch('click');
+  await flush();
+  const after = tabs();
+  assert.ok(after.includes('Da leggere 4'), `one failing list keeps «Da leggere»: ${JSON.stringify(after)}`);
+  assert.ok(after.includes('Da rispondere 5'), `one failing list keeps «Da rispondere»: ${JSON.stringify(after)}`);
+  assert.ok(mount.textContent.includes('\u00abRinnovi entro 30 giorni\u00bb'), 'the error names the view that failed');
+  const retry = byAttr(mount, 'button', 'data-action', 'clienti-retry');
+  assert.ok(retry, 'the error offers Riprova');
+  assert.equal(retry.textContent, 'Riprova');
+  // Riprova reads again and the list recovers.
+  failRinnovi = false;
+  retry.dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the list reads again after Riprova');
+  assert.ok(tabs().includes('Rinnovi entro 30 giorni 15'), 'the numbers are still there after the retry');
+});
