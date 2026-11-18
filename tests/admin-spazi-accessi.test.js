@@ -2379,3 +2379,31 @@ test('71a6574a review giro 2 (P2): a click while the post-invite re-read is out 
   const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
   assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth keeps the invited person');
 });
+
+test('71a6574a review giro 3 (P1): a render while the post-invite re-read is out keeps the chosen team, never «Team non disponibile.»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell’invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and the membership re-read is still held: any render in
+  // between (here a switch click, like the reviewer scenario) must keep the
+  // just-painted team instead of «Team non disponibile.».
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Team non disponibile/, 'no unavailable team while the re-read is out');
+  assert.ok(byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent).includes('nuova@esempio.it'), 'the chosen team stays painted');
+  gate.free();
+  await done;
+  await flush();
+  const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth replaces the optimistic team');
+});

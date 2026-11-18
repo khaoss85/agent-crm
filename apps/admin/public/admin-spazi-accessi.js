@@ -1038,7 +1038,7 @@ export function createSpaziAccessiView(deps) {
    * the pre-two-phase `load()` the refusal paths called: same reset, same
    * reads, no render.
    */
-  async function reload({ keepOverrides = null } = {}) {
+  async function reload({ keepOverrides = null, keepMembers = null } = {}) {
     const space = readActiveSpace().trim();
     if (!resetLoadState(space)) return;
     if (Array.isArray(keepOverrides)) {
@@ -1046,6 +1046,13 @@ export function createSpaziAccessiView(deps) {
       // confirmed keeps its values while the re-read is out. The GET in
       // loadCore still replaces this with the server truth (or its error).
       state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
+    if (Array.isArray(keepMembers)) {
+      // backlog:71a6574a review giro 3 (P1): the just-painted team stays in
+      // state while the re-read is out — any render then paints the chosen
+      // team, never «Team non disponibile.». The membership GET in loadCore
+      // still replaces this with the server truth (or its error).
+      state.members = keepMembers.map((row) => ({ ...row }));
     }
     // backlog:2de01913d276: one load reads once — the post-write reread
     // shares one coalescing wrapper like the entry load above.
@@ -1085,6 +1092,15 @@ export function createSpaziAccessiView(deps) {
     );
     if (found !== undefined) found.enabled = to === true;
     else state.overrides.push({ spaceId, permission: key, enabled: to === true });
+  }
+  /**
+   * The team rows a 200 just confirmed, copied for the re-read: refresh()
+   * and reload() reset the state first, and the copy paints until the
+   * membership GET replaces it (backlog:71a6574a review giro 3, P1).
+   * @returns {Array<any>|null}
+   */
+  function snapshotMembers() {
+    return Array.isArray(state.members) ? state.members.map((row) => ({ ...row })) : null;
   }
   function applyInvite(subject, role, status) {
     if (!Array.isArray(state.members)) return;
@@ -1509,8 +1525,11 @@ export function createSpaziAccessiView(deps) {
             const confirmedRemoval = Array.isArray(state.overrides)
               ? state.overrides.map((row) => ({ ...row }))
               : null;
+            // backlog:71a6574a review giro 3 (P1): the suspended team paints
+            // on while the re-read is out.
+            const keptRemovalMembers = snapshotMembers();
             render();
-            await refresh({ keepOverrides: confirmedRemoval });
+            await refresh({ keepOverrides: confirmedRemoval, keepMembers: keptRemovalMembers });
             return;
           }
           const total = row.removable.length;
@@ -1536,8 +1555,11 @@ export function createSpaziAccessiView(deps) {
           const confirmedPartial = Array.isArray(state.overrides)
             ? state.overrides.map((row) => ({ ...row }))
             : null;
+          // backlog:71a6574a review giro 3 (P1): the partly suspended team
+          // paints on while the re-read is out.
+          const keptPartialMembers = snapshotMembers();
           render();
-          await reload({ keepOverrides: confirmedPartial });
+          await reload({ keepOverrides: confirmedPartial, keepMembers: keptPartialMembers });
           // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
@@ -1611,8 +1633,11 @@ export function createSpaziAccessiView(deps) {
         const confirmedInvite = Array.isArray(state.overrides)
           ? state.overrides.map((row) => ({ ...row }))
           : null;
+        // backlog:71a6574a review giro 3 (P1): the invited team paints on
+        // while the re-read is out.
+        const keptInviteMembers = snapshotMembers();
         render();
-        await refresh({ keepOverrides: confirmedInvite });
+        await refresh({ keepOverrides: confirmedInvite, keepMembers: keptInviteMembers });
         return;
       } catch (error) {
         const failure = errorOf(error);
@@ -1623,7 +1648,10 @@ export function createSpaziAccessiView(deps) {
         const confirmedInviteRefusal = Array.isArray(state.overrides)
           ? state.overrides.map((row) => ({ ...row }))
           : null;
-        await reload({ keepOverrides: confirmedInviteRefusal });
+        // backlog:71a6574a review giro 3 (P1): the refused invite changed
+        // nothing, so the team in state is the truth to keep.
+        const keptInviteRefusalMembers = snapshotMembers();
+        await reload({ keepOverrides: confirmedInviteRefusal, keepMembers: keptInviteRefusalMembers });
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
@@ -1724,6 +1752,7 @@ export function createSpaziAccessiView(deps) {
         if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
           let confirmed = null;
+          let keptMembers = null;
           try {
             await mutate('/api/space-permissions/set-permission', {
               spaceId: space.id,
@@ -1741,6 +1770,9 @@ export function createSpaziAccessiView(deps) {
             confirmed = Array.isArray(state.overrides)
               ? state.overrides.map((row) => ({ ...row }))
               : null;
+            // backlog:71a6574a review giro 3 (P1): the team paints on while
+            // the flip re-read is out, like the confirmed switches above.
+            keptMembers = snapshotMembers();
             render();
           } catch (error) {
             const failure = errorOf(error);
@@ -1750,7 +1782,11 @@ export function createSpaziAccessiView(deps) {
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
             // One message, under the switch that failed; a toast only if it cannot show.
-            await reload();
+            // backlog:71a6574a review giro 3 (P1): the refused flip changed
+            // nothing, so the team in state is the truth to keep — only the
+            // overrides snapshot stays out (review P2, seguito).
+            keptMembers = snapshotMembers();
+            await reload({ keepMembers: keptMembers });
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
@@ -1758,7 +1794,7 @@ export function createSpaziAccessiView(deps) {
             return;
           }
           state.confirmFlip = null;
-          await refresh({ keepOverrides: confirmed });
+          await refresh({ keepOverrides: confirmed, keepMembers: keptMembers });
           // backlog 3136d15da7bd: a flipped switch may be the space AI
           // master — the top AI bar re-reads it at once instead of naming
           // questions while the AI is off (or hiding that it is back on).
@@ -1861,7 +1897,7 @@ export function createSpaziAccessiView(deps) {
     }
   }
 
-  async function refresh({ skeleton = false, keepOverrides = null } = {}) {
+  async function refresh({ skeleton = false, keepOverrides = null, keepMembers = null } = {}) {
     const mine = (generation += 1);
     const space = readActiveSpace().trim();
     // A space change drops the previous space's count before anything
@@ -1886,6 +1922,13 @@ export function createSpaziAccessiView(deps) {
       // confirmed values, never «Permessi non disponibili.». The GET in
       // loadCore still replaces this with the server truth (or its error).
       state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
+    if (Array.isArray(keepMembers)) {
+      // backlog:71a6574a review giro 3 (P1): same promise for the team — the
+      // just-painted rows stay in state while the re-read is out, never
+      // «Team non disponibile.». The membership GET in loadCore still
+      // replaces this with the server truth (or its error).
+      state.members = keepMembers.map((row) => ({ ...row }));
     }
     const reads = hasSpace ? beginReads(space, readsClient) : null;
     // A statistic that already landed paints as data, never as pending:
