@@ -4,16 +4,20 @@
 // objective, metric, members, phases and spending cap. One screen under
 // `#/squadre`, in the shell menu next to Agenti.
 //
+// Read-only on purpose (supervisor 18/11): `POST /api/squads/create` exists
+// in agent-crm (apps/server/src/http-server.js) but the /bo bridge of the
+// pilot (accordo-arvo-pilot src/shared/bo-crm-writes.js) maps no «squads»
+// write, so «Crea da modello» would answer 4xx in production (rule S344,
+// cases #1005/#1016). The creation form returns with the bridge mapping
+// plus its shell→bridge contract test — until then this screen reads.
+//
 // What it reuses, never duplicates (MEM_ACC_REUSE):
 // - reads: the checked-in catalogue at `GET /api/squads/catalog` (whose 404
 //   means «the agents package is not composed here») and the managed
 //   `teammate-squad` module at `GET /api/modules/teammate-squad/records`,
 //   scoped with `filter.spaceId` — zero rows is the true empty state, said
-//   out loud, never a fake list;
-// - writes: `POST /api/squads/create` (create-teammate-squad: a template
-//   slug, the caller key derived from the given name), posted through the
-//   bound submission client so the Admin mutation gate sees an
-//   Idempotency-Key. Nothing else writes from here.
+//   out loud, never a fake list.
+// - writes: none from here (see above).
 //
 // Honest gaps, said on screen and never faked (follow-ups, named in the PR):
 // - backlog A (assignments to do), backlog B (runs to verify), routines and
@@ -24,41 +28,16 @@
 //
 // Conventions follow apps/admin/public/admin-agenti.js: pure DOM-free model
 // builders (unit-tested under node:test with the fake DOM), and a renderer
-// with createElement + textContent only — hostile squad names, objectives
-// or template words stay inert text.
+// with createElement + textContent only — hostile squad names or objectives
+// stay inert text.
 
-import { bindAdminMutations } from './admin-submission.js';
-import { humanWriteError } from './admin-core.js';
-import { el, uiButton, uiEmpty, uiHold, uiLoading } from './admin-ui.js';
+import { el, uiButton, uiEmpty, uiLoading } from './admin-ui.js';
 
 /** The true empty state: the server read ran and answered zero squads. */
 export const SQUADRE_EMPTY_TITLE = 'Nessuna squadra per ora';
 
 /** One page of squad rows: said out loud, like Agenti does. */
 export const SQUADRE_READ_LIMIT = 200;
-
-/**
- * A safe caller key from a free name: lowercase alphanumerics, dots and
- * dashes, 8 to 80 chars (the server rule in packages/agents/src/squads.js).
- * Null when the name cannot make one — the form says so, never guessing.
- * @param {unknown} name @param {unknown} templateSlug
- */
-export function squadCallerKey(name, templateSlug) {
-  const words = String(name ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((part) => part !== '');
-  const slug = String(templateSlug ?? '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((part) => part !== '')
-    .join('-');
-  const key = [...words, slug].filter((part) => part !== '').join('-').slice(0, 80);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{7,79}$/.test(key)) return null;
-  return key;
-}
 
 /**
  * The Italian line under one squad: objective and advisor metric, each
@@ -82,9 +61,8 @@ export function squadDetailLine(row) {
 /**
  * @param {{ doc?: any, mount: any, client: { request: (path: string, options?: any) => Promise<any> }, submissions?: any, storage?: any, spaceId?: string | (() => string | null), navigate?: (hash: string) => void }} options
  */
-export function createSquadreView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {} } = {}) {
+export function createSquadreView({ doc = null, mount, client, spaceId, navigate = () => {} } = {}) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
-  const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => (typeof spaceId === 'string' ? spaceId : null);
   let renderToken = 0;
 
@@ -105,68 +83,6 @@ export function createSquadreView({ doc = null, mount, client, submissions, stor
     const line = el(documentNode, 'p', 'ui-note', text);
     mount.appendChild(line);
     return line;
-  }
-
-  function paintForm(catalog) {
-    const form = el(documentNode, 'form', 'squadre-create');
-    const label = el(documentNode, 'label', 'squadre-create-label', 'Nuova squadra da un modello');
-    const select = documentNode.createElement('select');
-    select.setAttribute('name', 'modello');
-    for (const entry of catalog) {
-      const slug = typeof entry?.slug === 'string' ? entry.slug : '';
-      if (slug === '') continue;
-      const option = documentNode.createElement('option');
-      option.setAttribute('value', slug);
-      const name = typeof entry?.name === 'string' && entry.name.trim() !== '' ? entry.name.trim() : slug;
-      const objective = typeof entry?.objective === 'string' && entry.objective.trim() !== '' ? ` — ${entry.objective.trim()}` : '';
-      option.textContent = `${name}${objective}`;
-      select.appendChild(option);
-    }
-    const nameInput = documentNode.createElement('input');
-    nameInput.setAttribute('type', 'text');
-    nameInput.setAttribute('name', 'nome');
-    nameInput.setAttribute('maxlength', '80');
-    nameInput.setAttribute('placeholder', 'Nome della squadra');
-    nameInput.setAttribute('aria-label', 'Nome della squadra');
-    const create = uiButton(documentNode, { label: 'Crea squadra', variant: 'primary' });
-    const complaint = el(documentNode, 'p', 'ui-note');
-    complaint.setAttribute('aria-live', 'polite');
-    form.appendChild(label);
-    form.appendChild(select);
-    form.appendChild(nameInput);
-    form.appendChild(create);
-    form.appendChild(complaint);
-    form.addEventListener('submit', (event) => {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      void submit(select.value, nameInput.value, create, complaint);
-    });
-    mount.appendChild(form);
-  }
-
-  async function submit(templateSlug, name, button, complaint) {
-    const space = readSpace();
-    const key = squadCallerKey(name, templateSlug);
-    if (!space || !key) {
-      complaint.textContent = space
-        ? 'Scegli un nome di almeno 8 lettere o numeri: diventa la chiave della squadra.'
-        : 'Scegli prima uno spazio di lavoro.';
-      return;
-    }
-    const release = uiHold(button, 'Creo…');
-    try {
-      await bound.request('/api/squads/create', {
-        method: 'POST',
-        body: { spaceId: space, key, templateSlug, name: String(name).trim() },
-      });
-      release();
-      await render();
-    } catch (error) {
-      release();
-      complaint.textContent = humanWriteError(error, {
-        failed: 'Non sono riuscito a creare la squadra, riprova.',
-        notComposed: 'Le squadre non sono attive in questo spazio.',
-      });
-    }
   }
 
   function paintSquads(rows) {
@@ -192,7 +108,6 @@ export function createSquadreView({ doc = null, mount, client, submissions, stor
       return;
     }
     mount.appendChild(uiLoading(documentNode, { label: 'squadre' }));
-    let catalog = null;
     let rows = null;
     try {
       const [catalogAnswer, recordsAnswer] = await Promise.all([
@@ -204,7 +119,7 @@ export function createSquadreView({ doc = null, mount, client, submissions, stor
         })(),
       ]);
       if (mine !== renderToken) return;
-      catalog = Array.isArray(catalogAnswer?.squads) ? catalogAnswer.squads : [];
+      void catalogAnswer; // read for its 404 (not composed), never painted while read-only
       const items = Array.isArray(recordsAnswer?.items) ? recordsAnswer.items : [];
       rows = items.slice(0, SQUADRE_READ_LIMIT);
     } catch (error) {
@@ -233,12 +148,11 @@ export function createSquadreView({ doc = null, mount, client, submissions, stor
     if (rows.length === 0) {
       mount.appendChild(uiEmpty(documentNode, {
         title: SQUADRE_EMPTY_TITLE,
-        text: 'Crea la prima squadra da un modello qui sotto: obiettivo, agenti, fasi e tetto di spesa arrivano dal modello.',
+        text: 'In questo spazio non c\u2019è ancora nessuna squadra. La creazione dai modelli torna quando il ponte /bo del pilota accetta la scrittura.',
       }));
     } else {
       paintSquads(rows);
     }
-    paintForm(catalog);
   }
 
   return { render, invalidate };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseModuleRoute, shellNavInput } from '../apps/admin/public/admin-core.js';
 import { buildShellNav, shellScreenFor } from '../apps/admin/public/admin-shell.js';
 import { createSquadreView, SQUADRE_EMPTY_TITLE } from '../apps/admin/public/admin-squadre.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -14,11 +14,15 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * `#/squadre` routes to the Squadre screen, the shell names the voice in
  * the menu, and the screen paints the true empty state (never a fake
  * list, never a dead link).
+ *
+ * Read-only note (supervisor 18/11, regola S344): POST /api/squads/create
+ * is not mapped in the pilot /bo bridge, so this screen never writes
+ * until the bridge maps it. The empty state says so out loud.
  */
 
 const SPACE = 'spazio-di-prova';
 
-function viewClient({ catalog = [], records = [], catalogStatus = 200 } = {}) {
+function viewClient({ records = [], catalogStatus = 200 } = {}) {
   return {
     async request(path, options = {}) {
       if (path === '/api/squads/catalog') {
@@ -28,14 +32,14 @@ function viewClient({ catalog = [], records = [], catalogStatus = 200 } = {}) {
           error.code = catalogStatus === 404 ? 'SQUAD_NOT_COMPOSED' : 'SQUAD_READ_FAILED';
           throw error;
         }
-        return { squads: catalog };
+        return { squads: [] };
       }
       if (path.startsWith('/api/modules/teammate-squad/records')) {
         assert.ok(path.includes(`filter.spaceId=${SPACE}`), `the read is space-scoped: ${path}`);
         return { items: records };
       }
-      if (path === '/api/squads/create' && (options.method ?? 'GET') === 'POST') {
-        return { squad: { sourceKey: `squad:${SPACE}:nuova`, name: 'Nuova' } };
+      if (path === '/api/squads/create') {
+        throw new Error(`read-only screen must never write: ${(options.method ?? 'GET')} ${path}`);
       }
       throw new Error(`unexpected request: ${options.method ?? 'GET'} ${path}`);
     },
@@ -62,23 +66,28 @@ test('la voce Squadre sta nel menu quando il pacchetto agenti è composto', () =
   assert.equal(muted.route, null);
 });
 
-test('zero squadre dipinge lo stato vuoto vero, con i modelli tra cui scegliere', async () => {
+test('la voce Squadre segue create-squad, non create-agent da solo', () => {
+  const squadOnly = shellNavInput({ domains: { agents: { operations: [{ name: 'create-squad' }] } } });
+  assert.equal(squadOnly.squadsAvailable, true);
+  const agentOnly = shellNavInput({ domains: { agents: { operations: [{ name: 'create-agent' }] } } });
+  assert.equal(agentOnly.squadsAvailable, false);
+  const none = shellNavInput({ domains: { agents: { operations: [] } } });
+  assert.equal(none.squadsAvailable, false);
+});
+
+test('zero squadre dipinge lo stato vuoto vero, senza scritture', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const catalog = [
-    { slug: 'lead-generation', name: 'Acquisizione lead', objective: 'Più lead buoni' },
-    { slug: 'social-posting', name: 'Post social', objective: 'Presenza costante' },
-  ];
   const view = createSquadreView({
     doc,
     mount,
-    client: viewClient({ catalog, records: [] }),
+    client: viewClient({ records: [] }),
     spaceId: () => SPACE,
   });
   await view.render();
   assert.ok(mount.textContent.includes(SQUADRE_EMPTY_TITLE), mount.textContent);
-  assert.ok(mount.textContent.includes('Acquisizione lead'), mount.textContent);
   assert.ok(!mount.textContent.includes('Questa pagina non esiste'), 'never the unknown-route panel');
+  assert.ok(!mount.textContent.includes('Crea squadra'), 'read-only: no creation button until the bridge maps it');
 });
 
 test('una squadra esistente si legge per nome e obiettivo', async () => {
@@ -88,7 +97,6 @@ test('una squadra esistente si legge per nome e obiettivo', async () => {
     doc,
     mount,
     client: viewClient({
-      catalog: [],
       records: [{ sourceKey: `squad:${SPACE}:lead-1`, name: 'Acquisizione lead', objective: 'Più lead buoni' }],
     }),
     spaceId: () => SPACE,

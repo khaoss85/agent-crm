@@ -248,7 +248,7 @@ export function shellNavInput(envelope) {
   // backlog:0d2d8f2e: Squadre ride the same agents package (the server
   // answers /api/squads/* only when it is composed), so the voice follows
   // it too — the same rule as Agenti, never a link to a blank screen.
-  const squadsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-teammate-squad' || op?.name === 'create-agent');
+  const squadsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-squad');
   return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, modulesSupported };
 }
 
