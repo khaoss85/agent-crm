@@ -262,7 +262,7 @@ export function createQuoteView(deps) {
       const recurringSummary = quoteTotals.recurringTotals
         .map((group) => `${money(group.netAmountCents, quote.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`)
         .join(' + ') || 'nessuna ricorrenza';
-      const link = el('a', undefined,
+      const link = el('a', 'quote-row-link',
         `Preventivo · ${quoteStatusLabel(quote.status)} · una tantum ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
       link.setAttribute('href', `#/quotes/${quote.id}`);
       row.appendChild(link);

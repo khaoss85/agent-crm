@@ -407,6 +407,20 @@ test('owner reading: status only, plain line, single-component breakdown hidden,
   assert.equal(components.getAttribute('hidden'), '', 'a single fixed component is not repeated');
 });
 
+test('195568752d35: the quote list rows exit to the detail with a styled link', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient() }).renderQuoteList();
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-row');
+  assert.equal(rows.length, 1, 'one row per quote');
+  assert.equal(rows[0].getAttribute('data-quote'), 'q1', 'the row carries the quote id');
+  const links = rows[0].findAll('a');
+  assert.equal(links.length, 1, 'the row exits through a single link');
+  assert.equal(links[0].getAttribute('class'), 'quote-row-link', 'the link carries the row-link style hook');
+  assert.equal(links[0].getAttribute('href'), '#/quotes/q1', 'the link exits to the quote detail');
+  assert.ok(links[0].textContent.includes('Bozza'), 'the link still names the state');
+});
+
 test('percentReason turns basis points into Italian percentages and keeps other text', () => {
   assert.equal(percentReason('max line discount 2000bps exceeds limit'), 'max line discount 20% exceeds limit');
   assert.equal(percentReason('sconto 1250 bps'), 'sconto 12,5%');

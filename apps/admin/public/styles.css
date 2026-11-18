@@ -344,6 +344,13 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 8px 0; }
 .quote-fact { margin: 0; font-size: 13px; }
 .quote-line, .quote-version-row, .quote-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
+/* Preventivi, vista Lista: la riga esce al dettaglio — il link nella lingua
+   delle righe offerta (pipeline-row-link), righe più ariose e ultimo bordo
+   mai penzolante. */
+.quote-list .quote-row { padding: 12px 0; }
+.quote-list .quote-row:last-child { border-bottom: 0; }
+.quote-row-link { color: inherit; font-weight: 600; text-decoration: none; }
+.quote-row-link:hover, .quote-row-link:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 .quote-approved { margin: 12px 0; padding: 10px 12px; background: var(--accent-soft); border-radius: 6px; font-size: 13px; }
 /* Dettaglio offerta (Dan 06/11): stessa lingua visiva del preventivo — scheda con chi, fase e valore, fatti in una striscia, preventivi come schede, cronologia a timeline. */
 .bo-offer { display: flex; flex-direction: column; gap: 18px; max-width: 960px; }
