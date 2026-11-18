@@ -588,19 +588,22 @@ export function grantExpiring(iso, nowMs = Date.now()) {
 /**
  * The one synced rule both views share (backlog:9790f4df7a93): a channel
  * counts as synchronized only with an active binding behind it AND a first
- * event already received. Either side alone lies — a linked binding with
- * zero events (the Stato sync «0 eventi» case) is «in attesa del primo
- * evento», never «sincronizzato». The scheda's «Identità collegate» must
- * consult this before printing «↔ sincronizzato»; the Stato sync pill and
- * hero below already read it through `channelPill`.
+ * event already received. Recency alone lies — a quiet poll, a failed send
+ * or a reset counter stamps a fresh update instant with zero events (Mac
+ * 18/11: «0 eventi ricevuti · Attivo» beside «aggiornato 1 min fa»), so
+ * only a counted event syncs: `lastAt` stays accepted in the input so
+ * callers keep passing what they have, but it is intentionally not
+ * consulted. A linked binding with zero events (the Stato sync «0 eventi»
+ * case) is «in attesa del primo evento», never «sincronizzato». The
+ * scheda's «Identità collegate» claims «↔ sincronizzato» only on observed
+ * two-way traffic through a linked channel, never on recency; the Stato
+ * sync pill and hero below read this rule through `channelPill`.
  * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
  */
 export function channelSynced(input = {}) {
-  const { linked = false, received = 0, lastAt = null } =
+  const { linked = false, received = 0 } =
     input !== null && typeof input === 'object' ? input : {};
-  const moved = (typeof lastAt === 'string' && lastAt !== '')
-    || (Number.isSafeInteger(received) && received > 0);
-  return linked === true && moved;
+  return linked === true && Number.isSafeInteger(received) && received > 0;
 }
 
 /**

@@ -966,6 +966,52 @@ test('d56122ee2844 arbitrato giro 2 P1: a failed keep re-read re-enables every e
   }
 });
 
+test('d56122ee2844 AC-1 repro: the detail reads only this quote rows, server-filtered', async () => {
+  // The live failure (ricaricando, 8-10 s): the detail downloads whole tables
+  // (up to LIST_LIMIT rows each) and filters them in the browser. The offer
+  // page (backlog d8175e1c3495) reads the same collections index-backed with
+  // filter.<field>: this quote page must do the same, or every paint and every
+  // post-write re-read stays slow. Red while the reads are unfiltered scans.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const stub = stubClient({ lines: [LINE], entries: [ENTRY] });
+  await createQuoteView({ doc, mount, client: stub }).renderQuoteDetail('q1');
+  const gets = stub.calls.filter((call) => call.method === 'GET').map((call) => call.path);
+  const first = (prefix) => gets.find((path) => path.startsWith(prefix));
+  const lineRead = first('/api/modules/quote-line/records');
+  assert.ok(lineRead.includes('filter.quoteId=q1'), `lines read index-backed, not scanned (got ${lineRead})`);
+  const versionRead = first('/api/modules/quote-version/records');
+  assert.ok(versionRead.includes('filter.quoteId=q1'), `versions read index-backed, not scanned (got ${versionRead})`);
+  const offerRead = first('/api/modules/offer/records');
+  assert.ok(offerRead.includes('filter.priceBookId=pb1'), `offers read index-backed, not scanned (got ${offerRead})`);
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the line still paints');
+});
+
+test('d56122ee2844 AC-1 repro: the signature section reads only this quote evidence', async () => {
+  // Same slow cause on an approved quote: five serial whole-table reads, even
+  // when there is no envelope at all. Filtered and parallel after the cure,
+  // and nothing downstream without an envelope. Red while unfiltered.
+  const doc = createFakeDocument();
+  const signedSchema = { ...SCHEMA, signature: { providers: [{ name: 'demo', version: 1, label: 'Demo' }] } };
+  const inner = stubClient({ quoteRecord: quote({ status: 'approved' }) });
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (path === '/api/schema') return signedSchema;
+      return inner.request(path, options);
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  const gets = inner.calls.filter((call) => call.method === 'GET').map((call) => call.path);
+  const first = (prefix) => gets.find((path) => path.startsWith(prefix));
+  assert.ok(first('/api/modules/signature-envelope/records').includes('filter.quoteId=q1'), 'envelopes read index-backed');
+  assert.ok(first('/api/modules/signed-artifact/records').includes('filter.quoteId=q1'), 'artifacts read index-backed');
+  assert.ok(first('/api/modules/order/records').includes('filter.quoteId=q1'), 'orders read index-backed');
+  assert.equal(first('/api/modules/signature-signer/records'), undefined, 'no signer read without an envelope');
+  assert.equal(first('/api/modules/order-total/records'), undefined, 'no totals read without an order');
+  assert.ok(mount.textContent.includes('Richiedi firma'), 'the request form still paints');
+});
 // backlog:3234cc917e0a (verifica Mac 17/11, #/quotes sul live d34bcbc): the
 // list named «Crea preventivo» while the offer button reads «Nuovo
 // preventivo» — text and button share one name now — and the list had no

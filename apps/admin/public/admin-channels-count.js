@@ -219,9 +219,10 @@ export function mergeProfileConnections(rows, profile = null) {
       channel,
       account: typeof item.account === 'string' && item.account !== '' ? item.account : null,
       status: 'active',
-      // The profile says this link is connected: Stato sync paints it
-      // `Attivo`, never `In attesa` beside a count that calls it linked
-      // (review #680 P2-1). No grant, no import, no tally is implied.
+      // The profile says this link is connected: it counts as linked,
+      // but with no event yet Stato sync paints it `in attesa del primo
+      // evento`, never `Attivo` (backlog:9790f4df7a93: zero events never
+      // read synced). No grant, no import, no tally is implied.
       health: 'ok',
       source: 'profile',
     }));
