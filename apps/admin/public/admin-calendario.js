@@ -1174,6 +1174,11 @@ export function aiBlockOf(error) {
  * An exact identity wins; then one display-name match (case-insensitive).
  * Homonyms and strangers resolve to nothing — the caller keeps the drafted
  * words on the outsider path instead of booking as the wrong human.
+ * backlog:a16726b5ea76 — the painted homonym ordinal («Rossi (2)») is not
+ * the name: it is stripped before matching, so a phrase echoing the Team
+ * label still finds a unique person, while two real homonyms stay
+ * unresolved. The match also reads the painted label base, so a team known
+ * only by a differently-cased id («MARCO») is still recognised.
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
@@ -1181,8 +1186,11 @@ export function resolveDraftMemberIds(draftMember, named, members) {
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
   if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
+  const stripOrdinal = (text) => String(text).trim().toLowerCase().replace(/\s*\(\d+\)\s*$/, '');
+  const wanted = stripOrdinal(draftMember);
+  if (wanted === '') return [];
+  const byName = rows.filter((row) => [row.name, row.label]
+    .some((name) => typeof name === 'string' && stripOrdinal(name) === wanted));
   if (byName.length === 1) return [...byName[0].ids];
   return [];
 }

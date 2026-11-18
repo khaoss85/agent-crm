@@ -3490,6 +3490,27 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
 
+test('resolveDraftMemberIds strips the painted ordinal and reads the label (backlog:a16726b5ea76)', () => {
+  const solo = [{ subject: 'coach-rossi', displayName: 'Marco Rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], solo),
+    ['coach-rossi'],
+    'painted ordinal is not the name',
+  );
+  const labelOnly = [{ subject: 'marco-rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('MARCO ROSSI', [], labelOnly),
+    ['marco-rossi'],
+    'label base matches across cases',
+  );
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco (1)', [], homonyms), [], 'two real homonyms stay unresolved');
+  assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
+});
+
 // backlog:d1e4d90e — the server answers per booking identity, so one human
 // with two identities needs the intersection: a step held under coach-guido
 // must not be offered as free under google|g1.
