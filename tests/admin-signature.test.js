@@ -248,8 +248,8 @@ test('a project without signature enabled degrades to a clear message', async ()
     },
   };
   const mount = await render(client);
-  // backlog:bfc070243427: plain words, never «progetto».
-  assert.ok(mount.textContent.includes('La firma non è attiva qui.'));
+  // backlog:bfc070243427: plain words, never «progetto» — and what to do.
+  assert.ok(mount.textContent.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'));
   assert.equal(anyByClass(mount, 'signature-request'), null);
   assert.ok(!client.calls.some((call) => call.path.includes('signature-envelope')), 'no signature records are fetched');
 });

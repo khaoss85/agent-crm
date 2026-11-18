@@ -188,7 +188,7 @@ test('bfc070243427: inactive commercial functions speak plain words without «pr
   const src = readFileSync(new URL('../apps/admin/public/admin-quotes.js', import.meta.url), 'utf8');
   assert.ok(!src.includes('non è attiva in questo progetto'), 'no «progetto» in inactive messages');
   assert.ok(src.includes('La parte commerciale non è attiva qui.'), 'commercial off message is plain');
-  assert.ok(src.includes('La firma non è attiva qui.'), 'signature off message is plain');
+  assert.ok(src.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'), 'signature off message says what to do');
 });
 
 /**
@@ -299,4 +299,24 @@ test('bfc070243427 repro: a history entry with an unknown actor paints no «da �
   assert.ok(!mount.textContent.includes('da —'), 'no empty author tail in the history');
   assert.ok(mount.textContent.includes('Creata'), 'the creation fact stays');
   assert.ok(!mount.textContent.includes('Creata da'), 'no empty author row in the facts either');
+});
+
+/**
+ * backlog:bfc070243427 (acceptance «nessun campo vuoto»): an owner the reads
+ * cannot name paints no «Referente —» row either — like «Creata da» above.
+ * RED before the cure (the row paints «Referente —»), GREEN after. What the
+ * cure does not cover: naming an existing-but-unresolved owner stays with
+ * backlog:a2ea75f705fd and the person-identifier family (backlog:91f4e2f0d650).
+ */
+test('bfc070243427 repro: an unknown owner paints no «Referente» row, never «—»', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20', createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: null,
+  };
+  const mount = createMount();
+  await createOfferDetail({ doc: createFakeDocument(), mount, client: reproClient({ record, quotes: [], audit: [] }) }).renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(!mount.textContent.includes('Referente'), 'no empty owner field');
+  assert.ok(mount.textContent.includes('Stato'), 'the other facts stay');
 });

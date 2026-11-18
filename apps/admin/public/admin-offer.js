@@ -594,10 +594,13 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     // backlog:bfc070243427: an unknown close date paints no row — never an
     // empty «Chiusura prevista —» field.
-    const factRows = [
-      ['Referente', personLabel(record.owner, people) ?? '—'],
-      ['Stato', stageLabel(schema, record)],
-    ];
+    // backlog:bfc070243427: like «Creata da» below, an owner the reads
+    // cannot name paints no row — never an empty «Referente —» field.
+    // personLabel returns null (never a dash) for an unknown owner.
+    const referente = personLabel(record.owner, people);
+    const factRows = [];
+    if (referente !== null && referente !== '') factRows.push(['Referente', referente]);
+    factRows.push(['Stato', stageLabel(schema, record)]);
     if (close !== null) factRows.push(['Chiusura prevista', close]);
     // backlog:bfc070243427: an author the reads cannot name paints no row —
     // never an empty «Creata da —» field, named or not. Naming an

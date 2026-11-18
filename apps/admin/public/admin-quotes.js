@@ -944,8 +944,9 @@ export function createQuoteView(deps) {
     panel.appendChild(el('h3', undefined, 'Firma'));
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
-      // backlog:bfc070243427: plain words, never «progetto».
-      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui.'));
+      // backlog:bfc070243427: plain words, never «progetto» — and what to
+      // do, like the AI-off lines («Per accenderla chiedi al titolare»).
+      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui. Per accenderla chiedi al titolare.'));
       return;
     }
     let envelopes;
