@@ -355,3 +355,39 @@ test('bf1bc20a: an uncertain regeneration forgets the cached link — the next p
   assert.ok(mount.textContent.includes('Crea un nuovo link'),
     'after an uncertain regeneration the operator is sent back to a fresh link');
 });
+
+test('bf1bc20a: a lost regeneration contest forgets the cached link — the next press asks for a new one (review #995 P2 giro 2)', async () => {
+  let regens = 0;
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      if (regens === 0) return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+      return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      regens += 1;
+      // Another operator won the race and revoked our bearer: our cached
+      // URL is dead, even though the answer carries a 4xx status.
+      throw Object.assign(new Error('quote link was regenerated concurrently'), {
+        status: 409, code: 'QUOTE_LINK_CONTEST',
+      });
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(!mount.textContent.includes(URL), 'the contested link is never offered as ready');
+  assert.ok(mount.textContent.includes('Crea un nuovo link'),
+    'after a lost contest the operator is sent back to a fresh link');
+});

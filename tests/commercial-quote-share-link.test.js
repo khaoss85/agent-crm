@@ -882,3 +882,120 @@ test('bf1bc20a: a quote without an opportunity refuses before the mint — no li
   assert.equal(mints, 0, 'no mint runs when the history row has nowhere to land');
   assert.deepEqual(await shares.listWhere({ quoteId: quote.id }), [], 'no bearer is left live');
 });
+
+test('bf1bc20a: a live link stays reachable when the quote names no offer — reuse needs no history target (review #995 P1 giro 2)', async () => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-NOOPP-LIVE', cents: 10000 });
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.match(first.result.token, /^[0-9a-f]{64}$/);
+  // A legacy/manual quote shape: approved and live, but naming no offer.
+  await app.modules.get('quote').service.applyManaged(quote.id, { opportunityId: null }, { actor: ACTOR });
+  const shares = app.modules.get('quote-share').service;
+  const resurfaced = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(resurfaced.result.alreadyExisted, true, 'the live link is resurfaced, not refused');
+  assert.equal(resurfaced.result.token, null, 'a reuse never reissues the bearer');
+  assert.equal((await shares.listWhere({ quoteId: quote.id })).length, 1, 'still one live row, no second mint');
+  // Rotating is still a creation: with nowhere to land its row it refuses
+  // before committing, and the live link above keeps working.
+  const refusedRegen = await refusal(app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  }));
+  assert.equal(refusedRegen.ok, false);
+  assert.equal(refusedRegen.code, 'COMMERCIAL_STATE_CORRUPT', 'the rotation refuses before it commits');
+  const opened = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: first.result.token }, actor: PUBLIC,
+  });
+  assert.equal(opened.result.accepted, true, 'the resurfaced link still opens');
+});
+
+test('bf1bc20a: a mint whose history row write fails leaves no live bearer — the mint rolls back with its row (review #995 P1 giro 2)', async () => {
+  const app = await sharedApp();
+  const { quote, opportunityId } = await approvedQuote(app, { sku: 'LINK-LOSTROW', cents: 10000 });
+  const shares = app.modules.get('quote-share').service;
+  // The giro-2 review reads the mint and its cronologia row as two commits
+  // and asks for atomicity: the action runtime already runs the whole
+  // execute inside one database transaction (packages/core/src/
+  // action-runtime.js: transactionAsync wraps definition.execute), so a
+  // failing row write rolls the mint back too. Only the opportunity
+  // history row fails here: the share insert (entityType quote-share)
+  // passes through untouched.
+  const audit = shares.audit;
+  const originalRecord = audit.record.bind(audit);
+  let failOnce = true;
+  audit.record = (event, handle) => {
+    if (failOnce && event?.entityType === 'opportunity') {
+      failOnce = false;
+      throw new Error('audit down');
+    }
+    return originalRecord(event, handle);
+  };
+  let lost;
+  try {
+    lost = await refusal(app.runAction({
+      module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+    }));
+  } finally {
+    delete audit.record;
+  }
+  assert.equal(lost.ok, false, 'the mint without its row answers an error, never a bare link');
+  assert.deepEqual(
+    await shares.listWhere({ quoteId: quote.id }),
+    [],
+    'no bearer is left live without its cronologia row: the rollback takes the mint with it',
+  );
+
+  // The next press mints fresh — with its row this time — instead of
+  // reusing a row-less bearer that can never exist.
+  const retry = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(retry.result.alreadyExisted, false, 'nothing to reuse: the failed mint left nothing behind');
+  assert.match(retry.result.token, /^[0-9a-f]{64}$/);
+  const liveAfter = await shares.listWhere({ quoteId: quote.id });
+  assert.equal(liveAfter.length, 1, 'the retry left exactly one live bearer');
+  const rows = app.audit
+    .list({ entityType: 'opportunity', entityId: opportunityId })
+    .filter((row) => (row.action === 'opportunity.quote_link_shared' || row.action === 'opportunity.quote_link_regenerated')
+      && row.data?.shareId === liveAfter[0].id);
+  assert.equal(rows.length, 1, 'the retry minted with its cronologia row');
+  assert.equal(rows[0].data.backfilled, undefined, 'a first-write row is not marked backfilled');
+});
+
+test('bf1bc20a: a pre-feature live bearer with no row gains its row on reuse — marked backfilled (review #995 P1 giro 2)', async () => {
+  const app = await sharedApp();
+  const { quote, opportunityId } = await approvedQuote(app, { sku: 'LINK-LEGACY', cents: 10000 });
+  const shares = app.modules.get('quote-share').service;
+  // A bearer minted before the cronologia row existed: live, but with no
+  // opportunity.quote_link_* row anywhere — the shape the live incident
+  // left behind.
+  const legacy = await shares.createManaged({
+    quoteId: quote.id,
+    quoteVersionId: quote.currentVersionId,
+    versionNumber: quote.currentVersionNumber,
+    tokenHash: createHash('sha256').update('legacy-bearer', 'utf8').digest('hex'),
+    status: 'active',
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    acceptCount: 0,
+    createdBy: 'legacy-seed',
+  }, { actor: ACTOR });
+  const before = app.audit
+    .list({ entityType: 'opportunity', entityId: opportunityId })
+    .filter((row) => row.action === 'opportunity.quote_link_shared' || row.action === 'opportunity.quote_link_regenerated');
+  assert.equal(before.length, 0, 'the legacy bearer starts with no cronologia row');
+
+  const resurfaced = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(resurfaced.result.alreadyExisted, true, 'the legacy bearer is resurfaced, not refused');
+  assert.equal(resurfaced.result.token, null);
+  const rows = app.audit
+    .list({ entityType: 'opportunity', entityId: opportunityId })
+    .filter((row) => (row.action === 'opportunity.quote_link_shared' || row.action === 'opportunity.quote_link_regenerated')
+      && row.data?.shareId === legacy.id);
+  assert.equal(rows.length, 1, 'the reuse healed the missing cronologia row');
+  assert.equal(rows[0].data.backfilled, true, 'the healed row says it is healed');
+});

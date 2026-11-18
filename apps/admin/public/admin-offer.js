@@ -1263,13 +1263,16 @@ export function createOfferDetail(deps) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) {
           regenPending = null;
-        } else {
-          // Codex review on #995 (P2): this failure is uncertain — the new
-          // link may have committed while its answer was lost. The cached
-          // old URL may already be revoked, so forget it: only a fresh
-          // token may paint a ready link again.
-          shareLinks.delete(quote.id);
         }
+        // Review #995 P2 (giro 2): a lost contest (409 QUOTE_LINK_CONTEST)
+        // means another regeneration won and revoked the bearer behind our
+        // cached URL — forget it, so the next send asks for «Crea un nuovo
+        // link» instead of painting a dead link. The only failure that may
+        // keep the cache is the accepted receipt (QUOTE_LINK_ALREADY_ACCEPTED):
+        // that link stays valid. Every other failure is uncertain — the new
+        // link may have committed while its answer was lost — so only a
+        // fresh token may paint a ready link again.
+        if (code !== 'QUOTE_LINK_ALREADY_ACCEPTED') shareLinks.delete(quote.id);
         disarmRegen();
         line.setAttribute('class', 'field-error offer-share-line');
         if (code === 'QUOTE_LINK_ALREADY_ACCEPTED') {

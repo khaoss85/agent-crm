@@ -458,6 +458,45 @@ async function recordOpportunityLinkRow(shares, quote, { action, share, actor })
 }
 
 /**
+ * Heal a live bearer left without its cronologia row (backlog:bf1bc20a,
+ * review #995 P1 giro 2). The row write runs after the mint in the same
+ * action transaction, so a failing write rolls the mint back too — but a
+ * link minted before this row existed has no row at all, and the retry
+ * reuses the winner while the reuse path writes nothing. When the winner
+ * has no `opportunity.quote_link_*` row for its share id and the quote
+ * names an offer, write that row now, marked `backfilled` (the share row's
+ * own `.created` audit already holds the true provenance). With no offer
+ * there is nowhere to land: report `skipped-no-target` and let the reuse
+ * stand — resurfacing a live link never needs a row.
+ *
+ * @param {any} shares the quote-share managed service
+ * @returns {Promise<'present' | 'written' | 'skipped-no-target'>}
+ */
+async function backfillWinnerLinkRow(shares, quote, { share, actor }) {
+  const opportunityId = quote?.opportunityId;
+  if (typeof opportunityId !== 'string' || opportunityId === '') return 'skipped-no-target';
+  const rows = await shares.audit.list({ entityType: 'opportunity', entityId: opportunityId, limit: 500 });
+  const hasRow = rows.some((row) =>
+    (row.action === 'opportunity.quote_link_shared' || row.action === 'opportunity.quote_link_regenerated')
+    && row.data?.shareId === share.id);
+  if (hasRow) return 'present';
+  await shares.audit.record({
+    actor,
+    action: 'opportunity.quote_link_shared',
+    entityType: 'opportunity',
+    entityId: opportunityId,
+    data: {
+      quoteId: quote.id,
+      versionNumber: share.versionNumber,
+      shareId: share.id,
+      expiresAt: share.expiresAt ?? null,
+      backfilled: true,
+    },
+  });
+  return 'written';
+}
+
+/**
  * Mint one fresh bearer for the version, sharing share-link's exact conflict
  * discipline: a non-transient conflict re-reads and reuses the winner's link
  * instead of leaving a second live row, a transient serialization conflict is
@@ -622,13 +661,17 @@ export function buildShareLinkAction(config) {
       // A transient serialization conflict is not that case: the fence lost
       // a same-row contest, so this transaction is doomed — rethrow and let
       // the outer runtime retry fresh, where the re-check sees the winner.
-      // Review #995 P1: the history row must have a place to land before
-      // the mint commits — never after, when the bearer is already live.
-      requireLinkHistoryTarget(shares, quote);
       const minted = await withVersionMintLock(quote.currentVersionId, async () => {
         await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);
+        // Review #995 P1 (giro 2): a reuse mints no bearer and writes no
+        // row, so it needs no history target — an already-live or accepted
+        // link stays reachable even when the quote names no offer (legacy
+        // or manual quotes predate the offer link). Only the fresh mint
+        // below must have a place to land its cronologia row, and it must
+        // refuse before the bearer commits, never after.
         if (existing) return { reused: existing.share };
+        requireLinkHistoryTarget(shares, quote);
         return mintFreshShare(shares, quote, { days, at, createdBy, actor });
       });
       if (minted.reused) {
@@ -638,6 +681,17 @@ export function buildShareLinkAction(config) {
         // instead of minting a fresh token, is what makes double acceptance
         // of one version impossible.
         step('quote.link-reused', { quoteId: quote.id, versionNumber: minted.reused.versionNumber });
+        // Review #995 P1 (giro 2): heal a winner left without its row. A
+        // heal that fails must never block resurfacing the live link — the
+        // next reuse retries it, and the trace keeps what happened.
+        try {
+          const healed = await backfillWinnerLinkRow(shares, quote, { share: minted.reused, actor });
+          if (healed === 'written') {
+            step('quote.link-row-backfilled', { quoteId: quote.id, versionNumber: minted.reused.versionNumber });
+          }
+        } catch {
+          step('quote.link-row-backfill-failed', { quoteId: quote.id, versionNumber: minted.reused.versionNumber });
+        }
         return { alreadyExisted: true, share: shareSummary(minted.reused), token: null };
       }
       step('quote.link-shared', { quoteId: quote.id, versionNumber: minted.share.versionNumber });
@@ -683,9 +737,12 @@ export function buildRegenerateLinkAction(config) {
       // Same exclusion as the mint: a concurrent share-link or regenerate-link
       // for this version serializes here in-process and on the quote-row
       // fence across processes, so the loser decides on the winner's row.
-      // Review #995 P1: same rule as share-link — refuse before the
-      // rotation commits, never after the new bearer is already live.
-      requireLinkHistoryTarget(shares, quote);
+      // Review #995 P1 (giro 2): same rule as share-link — only a path that
+      // commits a new bearer needs a history target. An accepted link is
+      // terminal and writes no row, so it refuses with no target check; a
+      // live link rotates (new bearer, new row) and a missing link mints
+      // (new bearer, new row), and both refuse before committing, never
+      // after the new bearer is already live.
       const outcome = await withVersionMintLock(quote.currentVersionId, async () => {
         await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);
@@ -695,11 +752,13 @@ export function buildRegenerateLinkAction(config) {
           // Nothing live left to revoke (never shared, or only expired rows):
           // minting here answers exactly what share-link would answer, so
           // the operator always ends with one working link.
+          requireLinkHistoryTarget(shares, quote);
           const minted = await mintFreshShare(shares, quote, { days, at, createdBy, actor });
           if (!('reused' in minted) || !minted.reused) return { share: minted.share, token: minted.token, mintedFresh: true };
           if (minted.reused.status === 'accepted') throw alreadyAcceptedError();
           base = minted.reused;
         }
+        requireLinkHistoryTarget(shares, quote);
         const token = generateShareToken();
         const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
         const rotated = await claimRotatedShare(shares, base, { tokenHash: hashShareToken(token), expiresAt }, actor);
