@@ -15,7 +15,7 @@ import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component
 import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
   BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
-  formatPriceCents, personFreeSlots, personRows, placeRefusal, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
+  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
   suggestSlotsPath,
 } from './admin-calendario.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
@@ -111,16 +111,6 @@ export function openAppointmentPanel(deps) {
   field('service', 'Servizio', service, true);
   field('duration', 'Durata', duration);
   field('person', 'Persona del team', person);
-  // backlog:9ff9a9ee1fea — the place, like the Calendario form and the
-  // Google Calendar event form: a free address, or «Online» with the link.
-  const location = el('input', 'bo-offer-input');
-  location.setAttribute('name', 'appointment-location');
-  location.setAttribute('placeholder', 'Indirizzo oppure Online');
-  field('location', 'Luogo', location, true);
-  const locationUrl = el('input', 'bo-offer-input');
-  locationUrl.setAttribute('name', 'appointment-locationUrl');
-  locationUrl.setAttribute('placeholder', 'Solo se Online: https://…');
-  field('locationUrl', 'Link riunione', locationUrl, true);
   const personHint = el('small', 'bo-muted', '');
   person.parentNode.appendChild(personHint);
   body.appendChild(fields);
@@ -390,16 +380,7 @@ export function openAppointmentPanel(deps) {
       priceCents: picked.priceCents,
       startsAt: slot.startsAt,
       endsAt: slot.endsAt,
-      location: location.value,
-      locationUrl: locationUrl.value,
     });
-    // backlog:9ff9a9ee1fea — a link without its place label never leaves
-    // the window: the detail hangs the link on the label.
-    const placeStop = placeRefusal(claim);
-    if (placeStop !== null) {
-      say(generalError, placeStop);
-      return;
-    }
     const presend = servicePresendError(claim.serviceKey);
     if (presend !== null) {
       say(errors.service, presend);

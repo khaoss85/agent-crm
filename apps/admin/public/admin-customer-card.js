@@ -4349,6 +4349,19 @@ export function createCustomerCardView(deps) {
         }
       }
     }
+    // backlog:fb35de38db49: the newest-first order of «Tutti», shared by
+    // the paint and by the history landing — the fresh moves join the rows
+    // already shown instead of pushing them out of the page.
+    const orderedRows = () => {
+      // The offers' creation waits for their moves: one step, never two.
+      const events = channelFilter === 'all' && historyState !== 'pending' ? [...offerEvents, ...stageEvents] : [];
+      const filtered = [...entries, ...events].filter((item) => {
+        if (channelFilter === 'all') return true;
+        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
+        return String(item?.channel ?? '') === channelFilter;
+      });
+      return [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+    };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
       const movesPending = channelFilter === 'all' && historyState === 'pending';
@@ -4363,20 +4376,13 @@ export function createCustomerCardView(deps) {
       } else if (channelFilter === 'all' && historyState === 'failed') {
         list.appendChild(el('p', 'bo-muted', 'Cambi di stato non leggibili: riprova più tardi.'));
       }
-      // The offers' creation waits for their moves: one step, never two.
-      const events = channelFilter === 'all' && historyState !== 'pending' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
       // a 5.600px page. «Mostra precedenti» opens the next page below.
-      const filtered = [...entries, ...events].filter((item) => {
-        if (channelFilter === 'all') return true;
-        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
-        return String(item?.channel ?? '') === channelFilter;
-      });
-      const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+      const ordered = orderedRows();
       const visible = ordered.slice(0, timelineShown);
-      if (filtered.length === 0) {
+      if (ordered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
         if (channelFilter === 'note') {
@@ -4666,8 +4672,30 @@ export function createCustomerCardView(deps) {
     box.appendChild(list);
     if ((historyState === 'pending' || historyState === 'stale') && !profilePending) {
       void readHistory(historyId).then((answer) => {
+        // backlog:fb35de38db49: the rows already on screen stay — the page
+        // grows so the fresh moves join them instead of pushing shown notes
+        // out (at open the history lands after the notes).
+        const shown = new Set(
+          Array.from(list.childNodes ?? [])
+            .map((row) => row?.getAttribute?.('data-entry'))
+            .filter((id) => typeof id === 'string' && id !== ''),
+        );
         historyState = 'done';
         applyHistory(answer);
+        // Review #1027 (P2): a history that lands after the operator opened
+        // another customer paints a detached list — it must not grow the
+        // shared page, or the new customer's next repaint shows extra rows
+        // nobody asked for.
+        if (shown.size > 0 && mount.contains(list)) {
+          const order = orderedRows();
+          const at = new Map(order.map((item, index) => [String(item?.id ?? ''), index]));
+          let need = timelineShown;
+          for (const id of shown) {
+            const found = at.get(id);
+            if (found !== undefined) need = Math.max(need, found + 1);
+          }
+          timelineShown = need;
+        }
         drawList();
       }, () => {
         // backlog:fb35de38db49: a failed refresh keeps the rows already

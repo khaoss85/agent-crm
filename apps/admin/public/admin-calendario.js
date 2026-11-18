@@ -206,28 +206,6 @@ export function missingBookingFields(values, hasCustomerPick) {
   return missing;
 }
 
-/**
- * backlog:9ff9a9ee1fea — the place fails closed in Italian before any
- * request, like the missing fields above: a link without its label never
- * leaves the form (the detail hangs the link on the label), and a link the
- * server would refuse never leaves either. Null when the place is fine.
- * Pure and DOM-free so it is unit-tested without a browser.
- * @param {{location?: unknown, locationUrl?: unknown}} claim
- */
-export function isWebLink(value) {
-  const link = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return link.startsWith('http://') || link.startsWith('https://');
-}
-
-export function placeRefusal(claim) {
-  const place = typeof claim?.location === 'string' ? claim.location.trim() : '';
-  const link = typeof claim?.locationUrl === 'string' ? claim.locationUrl.trim() : '';
-  if (link === '') return null;
-  if (place === '') return 'Scrivi il luogo («Online») accanto al link: un link da solo non dice dove ci si vede.';
-  if (!isWebLink(link)) return 'Il link della riunione deve iniziare con http(s)://, come un indirizzo web.';
-  return null;
-}
-
 /** Week label for the nav ("19 – 25 ott 2026"), null when unparsable. */
 export function weekLabel(weekKeys) {
   if (!Array.isArray(weekKeys) || weekKeys.length === 0) return null;
@@ -1804,6 +1782,14 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
+      // backlog:134f3ed7 (review Muse #1001 P1) — the confirmed row rides
+      // the fresh week only while the booking handshake is still open
+      // (pendingEventId set): a reload that does not carry the just-booked
+      // id yet (read lag) still paints its block, and the handshake below
+      // selects it. Once the post-booking reload settles, the server week
+      // is authoritative: carrying state.confirmed on every loadWeek would
+      // resurrect a cancelled or moved booking as a highlighted phantom.
+      if (state.pendingEventId !== null) carryBookedRow();
       state.weekError = null;
       state.unavailable = false;
       // backlog:bd5e84545021: the event Oggi asked for opens its detail
@@ -1812,6 +1798,11 @@ export function createCalendarioView(deps) {
         state.selectedId = state.pendingEventId;
         state.pendingEventId = null;
         state.pendingEventMember = null;
+        // backlog:134f3ed7 (review Muse #1001 P1) — the first reload after
+        // the booking reconciles the optimistic row: the server week owns
+        // the id from here, so the confirmed copy retires instead of riding
+        // every later reload as a phantom.
+        state.confirmed = null;
         const asked = selectedRow();
         if (asked === null) state.selectedId = null;
         // The explicit request beats a retained «hide this person»
@@ -3708,26 +3699,6 @@ export function createCalendarioView(deps) {
       person.appendChild(el(doc, 'span', { text: member }));
       pop.appendChild(person);
     }
-    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
-    // detail: the label paints as text, and the meeting link hangs on it
-    // so it stays readable aloud. Only an http(s) link becomes clickable —
-    // anything else paints as plain text, never a scriptable address.
-    const place = typeof row?.location === 'string' ? row.location.trim() : '';
-    if (place !== '') {
-      const placeUrl = typeof row?.locationUrl === 'string' ? row.locationUrl.trim() : '';
-      const placeRow = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-location' } });
-      if (isWebLink(placeUrl)) {
-        placeRow.appendChild(el(doc, 'span', { text: 'Luogo: ' }));
-        placeRow.appendChild(el(doc, 'a', {
-          className: 'cal-pop-link',
-          text: place,
-          attrs: { href: placeUrl, target: '_blank', rel: 'noopener', title: placeUrl },
-        }));
-      } else {
-        placeRow.textContent = `Luogo: ${place}`;
-      }
-      pop.appendChild(placeRow);
-    }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
     if (notes !== '') pop.appendChild(el(doc, 'p', { className: 'cal-pop-row cal-pop-note', text: `Nota: ${notes}` }));
     const origin = originOf(row);
@@ -4422,7 +4393,23 @@ export function createCalendarioView(deps) {
         parseMemberFilter(state.memberFilter),
         state.members,
       );
-      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
+      // every opening proposes a time, so the first free step of the drafted
+      // day rides into the form — a real free slot, never an invented
+      // midnight. Without a free step the hours stay empty and the note says
+      // why («Nessuno slot libero quel giorno»).
+      if (draftDayOnly(fill)) {
+        const key = draftDayKey(fill);
+        const first = key
+          ? state.proposals.find((slot) => romeDayKey(slot?.startsAt) === key && romeTime(slot?.startsAt) && romeTime(slot?.endsAt))
+          : null;
+        if (first) {
+          state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
+          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+        }
+      }
+      fillManual(fill);
     }
   }
 
@@ -4677,8 +4664,6 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      location: manualValue('location') === '' ? null : manualValue('location'),
-      locationUrl: manualValue('locationUrl') === '' ? null : manualValue('locationUrl'),
     });
     state.confirmed = null;
     state.serviceError = '';
@@ -4696,14 +4681,6 @@ export function createCalendarioView(deps) {
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
       state.aiNote = CONFIRM_SERVICE_NOTE;
-      renderAll();
-      return;
-    }
-    // backlog:9ff9a9ee1fea — a link without its place label never leaves
-    // the row either: the detail hangs the link on the label.
-    const slotPlace = placeRefusal(claim);
-    if (slotPlace !== null) {
-      state.aiNote = slotPlace;
       renderAll();
       return;
     }
@@ -4754,6 +4731,40 @@ export function createCalendarioView(deps) {
    * the new event once it paints.
    * @param {any} appointment
    */
+  /**
+   * backlog:134f3ed7 — the just-booked row rides the painted week: the new
+   * block shows on the next paint, even before the reload lands or when the
+   * reloaded week does not carry the id yet. Only the booked day inside the
+   * painted week and its existing member group, added only when the id is
+   * missing — never an invented row, never another member's lane, and never
+   * replacing the authoritative server row when the id is already there.
+   */
+  function carryBookedRow() {
+    const booked = state.confirmed;
+    const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
+    const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
+    if (id === null || member === null) return;
+    if (!state.week || !Array.isArray(state.week.members)) return;
+    const day = romeDayKey(booked?.startsAt);
+    if (!day || !state.weekKeys.includes(day)) return;
+    const group = state.week.members.find((entry) => entry?.teamMemberId === member);
+    if (!group || !Array.isArray(group.appointments)) return;
+    const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
+    // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
+    // reloaded server week is authoritative: when the id is already there
+    // the server row wins and this function changes nothing (a row cancelled
+    // elsewhere must never paint booked again). The local copy rides only
+    // when the id is still missing (read lag).
+    if (at >= 0) return;
+    // Never mutate the loaded week in place (tests share the stub object):
+    // rebuild the group, so only the painted state changes.
+    const appointments = [...group.appointments, booked];
+    state.week = {
+      ...state.week,
+      members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+    };
+  }
+
   function markBooked(appointment) {
     state.confirmed = appointment ?? null;
     state.selection = null;
@@ -4785,12 +4796,28 @@ export function createCalendarioView(deps) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
       state.week = null;
     }
+    // backlog:134f3ed7 — the new block reads highlighted on the next paint:
+    // the selection names it now and its row rides the painted week, so the
+    // grid shows it before the reload lands. The reload reconciles.
+    if (id !== null) {
+      state.selectedId = id;
+      carryBookedRow();
+    }
   }
 
   /** Reload the week after a booking, so the new event paints on the grid. */
-  function reloadAfterBooking() {
+  async function reloadAfterBooking() {
+    if (!state.confirmed) return;
     const members = parseMemberFilter(state.memberFilter);
-    if (members.length > 0 && state.confirmed) void loadWeek(members);
+    if (members.length > 0) {
+      void loadWeek(members);
+      return;
+    }
+    // backlog:134f3ed7 — the filter may read empty (roster unreadable, the
+    // operator cleared it): the booked member still scopes the reload, so
+    // the new block paints and highlights instead of never reloading.
+    if (state.pendingEventMember !== null) void loadWeek([state.pendingEventMember]);
+    else renderAll();
   }
 
   /**
@@ -4805,10 +4832,9 @@ export function createCalendarioView(deps) {
   /**
    * backlog:6e6750ff8163 — every field of «Nuovo appuntamento» carries its
    * visible label (Cliente, Persona del team, Servizio, Prezzo, Giorno,
-   * Inizio, Fine, Luogo, Link riunione, Note): a placeholder alone vanishes
-   * as soon as the field holds a value («1.00» read as nothing). The label
-   * wraps its control, so a click on the words focuses the field and screen
-   * readers name it.
+   * Inizio, Fine, Note): a placeholder alone vanishes as soon as the field
+   * holds a value («1.00» read as nothing). The label wraps its control, so
+   * a click on the words focuses the field and screen readers name it.
    * @param {string} label @param {any} control @param {{wide?: boolean}} [options]
    */
   function fieldBox(label, control, { wide = false } = {}) {
@@ -5123,15 +5149,10 @@ export function createCalendarioView(deps) {
     inputs.serviceKey = renderServiceChoice(form, priceInput);
     form.appendChild(fieldBox('Prezzo (€)', priceInput, { wide: true }));
     inputs.price = priceInput;
-    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
-    // form: a free address, or «Online» with the meeting link beside it.
-    // Both ride the claim and the detail; a link never travels alone.
     const fields = [
       ['date', 'date', 'Giorno', ''],
       ['start', 'time', 'Inizio', ''],
       ['end', 'time', 'Fine', ''],
-      ['location', 'text', 'Luogo', 'Indirizzo oppure Online'],
-      ['locationUrl', 'text', 'Link riunione', 'Solo se Online: https://…'],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
     for (const [name, type, label, placeholder] of fields) {
@@ -5146,9 +5167,9 @@ export function createCalendarioView(deps) {
         state.manualTyped.add(name);
       });
       inputs[name] = input;
-      // Giorno, Luogo, Link and Note take the row; Inizio and Fine sit side
-      // by side, so no date ever gets cut on the 340 px popover.
-      form.appendChild(fieldBox(label, input, { wide: name !== 'start' && name !== 'end' }));
+      // Giorno and Note take the row; Inizio and Fine sit side by side, so
+      // no date ever gets cut on the 340 px popover.
+      form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -5212,11 +5233,6 @@ export function createCalendarioView(deps) {
         } else inputs.serviceKey.value = rawService;
       }
       if (draft.notes) inputs.notes.value = String(draft.notes);
-      // backlog:9ff9a9ee1fea — a proposal draft round-trips the place the
-      // server validated, like the note: confirming from it stores the same
-      // place the draft described.
-      if (draft.location) inputs.location.value = String(draft.location);
-      if (draft.locationUrl) inputs.locationUrl.value = String(draft.locationUrl);
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
       const dayKey = draftDayKey(draft);
@@ -5243,8 +5259,6 @@ export function createCalendarioView(deps) {
       if (dayKey) wrote.date = absorbed.date;
       if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
       if (draft.notes) wrote.notes = absorbed.notes;
-      if (draft.location) wrote.location = absorbed.location;
-      if (draft.locationUrl) wrote.locationUrl = absorbed.locationUrl;
       state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
@@ -5297,8 +5311,6 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
-        location: read('location') === '' ? null : read('location'),
-        locationUrl: read('locationUrl') === '' ? null : read('locationUrl'),
       }),
     };
   }
@@ -5455,15 +5467,6 @@ export function createCalendarioView(deps) {
       // book never leaves the form, on Proponi or Conferma alike.
       state.serviceError = presend;
       state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
-      renderAll();
-      return;
-    }
-    // backlog:9ff9a9ee1fea — a link without its place label never leaves
-    // the form, on Proponi or Conferma alike: the detail hangs the link on
-    // the label, and a bare url would paint as an unreadable link.
-    const placeStop = placeRefusal(claim);
-    if (placeStop !== null) {
-      state.bookingNote = placeStop;
       renderAll();
       return;
     }
@@ -5629,19 +5632,13 @@ export function createCalendarioView(deps) {
  * a start there is no source key yet (the server refuses the claim).
  * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
  *   teamMemberId: string, serviceKey: string, priceCents: number | null,
- *   startsAt: string | null, endsAt: string | null, notes?: string | null,
- *   location?: string | null, locationUrl?: string | null}} input
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
  */
 export function bookingClaim(input) {
   const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
   const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
     ? input.customer.resource : 'contact';
   const member = input.teamMemberId;
-  // backlog:9ff9a9ee1fea — the place rides every claim (manual form,
-  // phrase Conferma, scheda window): trimmed here so every caller sends
-  // the same shape the server validates, empty meaning absent.
-  const location = typeof input.location === 'string' && input.location.trim() !== '' ? input.location.trim() : null;
-  const locationUrl = typeof input.locationUrl === 'string' && input.locationUrl.trim() !== '' ? input.locationUrl.trim() : null;
   return {
     spaceId: input.spaceId,
     subject: { resource, id, owner: 'host' },
@@ -5652,8 +5649,6 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
-    location,
-    locationUrl,
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,

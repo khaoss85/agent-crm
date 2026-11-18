@@ -206,8 +206,6 @@ test('Nuovo appuntamento: Conferma books the Calendario claim for the chosen cus
     startsAt: '2026-11-12T09:00:00.000Z',
     endsAt: '2026-11-12T09:30:00.000Z',
     notes: null,
-    location: null,
-    locationUrl: null,
     sourceKey: 'calendario:google|sara:2026-11-12T09:00:00.000Z:c1',
     source: { package: 'host', action: 'calendar-book' },
     confirmed: true,
@@ -570,32 +568,4 @@ test('9a91d09e: a day with more hours than shown offers «Mostra altri orari» a
   chips(panel)[13].dispatch('click');
   await panel.__submit();
   assert.equal(client.confirms()[0].body.startsAt, '2026-11-12T14:30:00.000Z', 'a revealed late hour books');
-});
-
-// backlog:9ff9a9ee1fea — the scheda window books the place too, like the
-// Calendario form: a free address, or «Online» with the meeting link.
-test('9ff9a9ee1fea: the scheda window has Luogo and Link riunione and books them', async () => {
-  const { panel, client } = await open();
-  const location = panel.findAll('input').find((node) => node.getAttribute('name') === 'appointment-location');
-  const locationUrl = panel.findAll('input').find((node) => node.getAttribute('name') === 'appointment-locationUrl');
-  assert.ok(location, 'the Luogo field paints');
-  assert.ok(locationUrl, 'the Link riunione field paints');
-  await choose(panel);
-  chips(panel)[0].dispatch('click');
-  location.value = 'Online';
-  locationUrl.value = 'https://meet.example.com/abc-def';
-  await panel.__submit();
-  assert.equal(client.confirms().length, 1);
-  assert.equal(client.confirms()[0].body.location, 'Online');
-  assert.equal(client.confirms()[0].body.locationUrl, 'https://meet.example.com/abc-def');
-});
-
-test('9ff9a9ee1fea: the scheda window refuses a link without its place and sends nothing', async () => {
-  const { panel, client } = await open();
-  await choose(panel);
-  chips(panel)[0].dispatch('click');
-  panel.findAll('input').find((node) => node.getAttribute('name') === 'appointment-locationUrl').value = 'https://meet.example.com/abc-def';
-  await panel.__submit();
-  assert.equal(client.confirms().length, 0, 'no write without the place label');
-  assert.match(general(panel), /luogo/i, 'the note names the place in Italian');
 });
