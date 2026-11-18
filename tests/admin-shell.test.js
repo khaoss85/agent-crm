@@ -86,6 +86,15 @@ test('Impostazioni badge lights only from a real count (0 = no badge)', () => {
   assert.equal(settingsBadge(1), '1');
 });
 
+// backlog:f733f95742a1 (read-only check): the bottom nav that hosts the
+// settings voices exposes «Impostazioni» as its accessible name.
+test('the Impostazioni bottom nav names itself to assistive tech', () => {
+  const { sidebar } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const bottom = sidebar.findAll('nav').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-bottom'));
+  assert.ok(bottom, 'the bottom settings nav renders');
+  assert.equal(bottom.getAttribute('aria-label'), 'Impostazioni', 'its accessible name is Impostazioni');
+});
+
 test('countFixes counts open issues and unresolved candidates only', () => {
   assert.equal(countFixes({ issues: [], candidates: [] }), 0);
   assert.equal(countFixes({

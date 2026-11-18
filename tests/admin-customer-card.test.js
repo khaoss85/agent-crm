@@ -5910,6 +5910,21 @@ test('a stage move by an unknown author reads with no «da —»', async () => {
     'the unlabelled move still reads the generic Italian line, with no author');
 });
 
+// backlog:f733f95742a1: a timeline that fits one page shows no
+// «Mostra precedenti»; one row past the page counts the single remainder.
+test('the timeline hides «Mostra precedenti» on a single page and counts one remainder', async () => {
+  const message = (index) => ({
+    entry: 'message', id: `m${index}`, channel: 'email', direction: 'inbound', sync: 'received',
+    body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
+    occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
+  });
+  const older = (mount) => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
+  const full = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 20, truncated: false, items: Array.from({ length: 20 }, (_, index) => message(index)) } } }));
+  assert.equal(older(full), undefined, 'no button when one page holds everything');
+  const plusOne = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 21, truncated: false, items: Array.from({ length: 21 }, (_, index) => message(index)) } } }));
+  assert.equal(older(plusOne)?.textContent, 'Mostra precedenti · 1 di 1', 'the button counts the single remainder');
+});
+
 test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Storia stati names a team actor from the roster, never «utente»', async () => {
   const mount = await renderCard(stubClient({
     profile: PLACED_QUOTE_PROFILE,
