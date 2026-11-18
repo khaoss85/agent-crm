@@ -114,6 +114,19 @@ export function commitmentThreadKey(row) {
 }
 
 /**
+ * The customer a commitment or a message belongs to: notes carry no
+ * conversation, so a note commitment can only meet a later team message
+ * on this key (review #1019 P1).
+ * @param {Record<string, any>} row
+ */
+function commitmentCustomerKey(row) {
+  const subject = cleanLine(row?.customerRef?.subjectId ?? row?.subjectId);
+  if (subject === '') return '';
+  const resource = cleanLine(row?.customerRef?.subjectResource ?? row?.subjectResource) || 'contact';
+  return `${resource}:${subject}`;
+}
+
+/**
  * The first promissory sentence of a text, or null when it promises
  * nothing. Past-tense receipts («ti ho mandato») are not promises.
  * @param {unknown} text @param {ReadonlyArray<RegExp>} signals
@@ -215,7 +228,10 @@ export function extractCommitments({ messages = [], notes = [] } = {}) {
 /**
  * Re-check extracted commitments against the latest messages: a team
  * message (`outbound`) on the same thread after the commitment closes
- * it, and a dismissed key never returns. Closing needs the thread and a
+ * it, and a dismissed key never returns. A note commitment has no
+ * conversation thread, so it closes on a later team message for the
+ * same customer (review #1019 P1) — a message for another customer
+ * never closes it. Closing needs the thread (or the customer) and a
  * newer date — a team message elsewhere, or at the same instant, changes
  * nothing.
  * @param {{ commitments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, dismissed?: Record<string, unknown> }} [input]
@@ -230,12 +246,17 @@ export function recalcCommitments({ commitments = [], messages = [], dismissed =
     if (key === '' || Object.hasOwn(out, key)) continue;
     const thread = cleanLine(commitment?.thread);
     const since = Date.parse(String(commitment?.occurredAt ?? ''));
+    const customer = commitmentCustomerKey(commitment);
+    const subjectKeyed = thread.startsWith('subject:');
     let closedBy = null;
     if (thread !== '' && Number.isFinite(since)) {
       for (const message of Array.isArray(messages) ? messages : []) {
         if (message == null || message?.direction !== 'outbound') continue;
         if (cleanLine(message?.id) === cleanLine(commitment?.source?.id)) continue;
-        if (commitmentThreadKey(message) !== thread) continue;
+        const sameThread = commitmentThreadKey(message) === thread;
+        const sameCustomer = subjectKeyed && customer !== ''
+          && commitmentCustomerKey(message) === customer;
+        if (!sameThread && !sameCustomer) continue;
         const at = Date.parse(String(message?.occurredAt ?? ''));
         if (Number.isFinite(at) && at > since) {
           closedBy = cleanLine(message?.id) || null;

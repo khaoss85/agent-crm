@@ -146,6 +146,29 @@ test('a customer request answered by the team closes too; a team message elsewhe
   assert.equal(untouched.closed.length, 0);
 });
 
+test('a note commitment closes on a later team message for the same customer (review #1019 P1)', () => {
+  const open = extractCommitments({ notes: [teamNote()] });
+  assert.equal(open.length, 1);
+  assert.ok(open[0].thread.startsWith('subject:'));
+  const later = teamMessage({ id: 'm-team-2', body: 'Ecco il listino in allegato', occurredAt: '2026-11-16T10:00:00Z' });
+  const recalculated = recalcCommitments({ commitments: open, messages: [later] });
+  assert.equal(recalculated.open.length, 0);
+  assert.equal(recalculated.closed.length, 1);
+  assert.equal(recalculated.closed[0].closedBy, 'm-team-2');
+});
+
+test('a note commitment stays open on a team message for another customer', () => {
+  const open = extractCommitments({ notes: [teamNote()] });
+  assert.equal(open.length, 1);
+  const other = teamMessage({
+    id: 'm-team-9', subjectId: 'c9', conversationId: 'conv-9',
+    body: 'Ecco qui', occurredAt: '2026-11-16T10:00:00Z',
+  });
+  const untouched = recalcCommitments({ commitments: open, messages: [other] });
+  assert.equal(untouched.open.length, 1);
+  assert.equal(untouched.closed.length, 0);
+});
+
 test('«Ignora» records a dismissal with its reason and the proposal never returns', () => {
   const open = extractCommitments({ messages: [teamMessage()] });
   const dismissed = recordCommitmentDismissal({}, open[0].key, 'Il cliente ha già il listino');
