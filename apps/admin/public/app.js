@@ -105,6 +105,7 @@ async function api(path, options = {}) {
   // dropped read throws coded stale — never a failure on the new screen.
   if (isMutation(method)) return withWakeRetry(run, { method, onWaking: wakingNotice });
   return readWhileWaking(run, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
+}
 
 const submissions = createSubmissionController({
   transport: (path, options) => api(path, {
