@@ -390,6 +390,10 @@ const ROLE_LABELS = Object.freeze({ canonical: 'scheda principale', alias: 'sche
 const roleLabel = (role) => ownLabel(ROLE_LABELS, String(role ?? '').toLowerCase()) ?? null;
 const channelLabel = (channel) => ownLabel(CHANNEL_LABELS, String(channel ?? '').toLowerCase()) ?? String(channel ?? 'canale');
 const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase()) ?? String(sync ?? 'stato ignoto');
+// backlog:acd136b3cd5d: the ` · da <author>` signature on a history line —
+// omitted when the author is unknown (auditActorLabel's '—' or empty), so a
+// move nobody is attributed to never reads «da —».
+const signedBy = (who) => (typeof who === 'string' && who !== '' && who !== '—' ? ` · da ${who}` : '');
 
 /**
  * Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta visibile in
@@ -3750,7 +3754,7 @@ export function createCustomerCardView(deps) {
           // cronologia — a system line with its own mark, never a bubble.
           const when = timeParts(item?.occurredAt);
           const head = item.entry === 'offer-created' ? 'Offerta creata' : 'Cambio di stato';
-          const by = typeof item.who === 'string' && item.who !== '' ? ` · da ${item.who}` : '';
+          const by = signedBy(item.who);
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-event');
           const mark = el('span', 'bo-scheda-chan bo-tile-event', item.entry === 'offer-created' ? '€' : '→');
           mark.setAttribute('aria-hidden', 'true');
@@ -4390,9 +4394,9 @@ export function createCustomerCardView(deps) {
           // the row reads the generic Italian line — never a raw key, and
           // never a false «no moves» message for moves that exist.
           // Backlog 169cd4bc988c: one word for every move, like the offer page.
-          rows.push(`Cambio di stato · da ${who} · ${when}`);
+          rows.push(`Cambio di stato${signedBy(who)} · ${when}`);
         } else {
-          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+          rows.push(`da ${words.from} a ${words.to}${signedBy(who)} · ${when}`);
         }
         if (rows.length >= 5) break;
       }
