@@ -199,6 +199,50 @@ test('two commercial senders reading the same name ignoring case propose the mer
   assert.equal(namesOthers.length, 0, 'no merge names an unrelated card or an email-fallback label');
 });
 
+/**
+ * Review rev-agent-crm-1034-4e5a7669 (P2, backlog:088b639d96a2): the guard
+ * above only drops stored names that read null, so two strangers whose
+ * stored names are machine tokens of their own technical address — or the
+ * materialised «Google —» the lead path stores from it — both read the
+ * email fallback «Google» and pair as duplicates. Rosso prima della cura
+ * (unione proposta tra estranei), verde dopo (nessuna unione).
+ */
+test('two strangers reading the same email-fallback label propose no merge', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+
+  const brand = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const bounce = (local) => `${local}@identity-reachout.bounces.google.com`;
+  // Token-derived stored names: the lead path splits the machine local
+  // part, so readableName(stored) is non-null while contactDisplayName
+  // discards it (isTokenName) and falls back to the domain label.
+  const tokenA = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Aaa111bbb222ccc333', lastName: 'Abc',
+    email: bounce('aaa111bbb222ccc333-abc'),
+  });
+  const tokenB = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Zzz999yyy888xxx777', lastName: 'Def',
+    email: bounce('zzz999yyy888xxx777-def'),
+  });
+  // Materialised form: both stored as «Google —» from different bounce
+  // addresses, reading the same email fallback.
+  const storedA = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Google', lastName: '—',
+    email: bounce('qwer1234tyui5678opas-ghi'),
+  });
+  const storedB = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Google', lastName: '—',
+    email: bounce('mnbv0987lkjh6543zxcv-poi'),
+  });
+
+  const receipt = await app.proposeDataCleanup({ actor: AGENT });
+
+  const ghosts = [tokenA.id, tokenB.id, storedA.id, storedB.id];
+  const ghostMerges = receipt.proposals.filter((proposal) => proposal.rule === 'cleanup-same-name'
+    && (ghosts.includes(proposal.subject?.id) || ghosts.some((id) => proposal.evidence?.includes(id))));
+  assert.equal(ghostMerges.length, 0, 'no merge pairs strangers sharing only the email-fallback label');
+});
+
 test('a card with no phone proposes the completion, with the customer rows untouched', async (t) => {
   const { app, maria, snapshot } = await scene(t);
   const before = await snapshot();

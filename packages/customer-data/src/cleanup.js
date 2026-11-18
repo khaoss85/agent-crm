@@ -4,7 +4,7 @@ import { AppError, normalizeActor } from '../../core/index.js';
 import { CUSTOMER_SCAN_LIMIT, PHONE_BEARING_SYSTEMS } from './customers.js';
 import { emailShape, normalizeCompanyName } from './normalize.js';
 import { isNoCompany, recordCandidatePairs } from './sender.js';
-import { companyDisplayName, contactDisplayName, readableName } from './display-name.js';
+import { companyDisplayName, contactDisplayName, isTechnicalLocalPart, labelFromEmail, readableName } from './display-name.js';
 import {
   deciding,
   optional,
@@ -233,6 +233,14 @@ export function createCleanupProposals({ database, modules, policy, names, follo
       if (stored === '' || readableName(stored) === null) continue;
       const shown = contactDisplayName(contact);
       if (shown === null) continue;
+      // A label lent by a machine address («Google» for every bounce)
+      // names nobody: when the sender's own address is technical and the
+      // shown name is just its email fallback, the subject never pairs
+      // (review rev-agent-crm-1034-4e5a7669: token-stored and materialised
+      // «Google —» strangers paired as duplicates). A real stored name
+      // still pairs: the fallback of a technical address is a domain label
+      // or null, never the person's name.
+      if (isTechnicalLocalPart(contact?.email) && shown === labelFromEmail(contact?.email)) continue;
       const normalized = normalizeCompanyName(shown);
       if (!byName.has(normalized)) byName.set(normalized, []);
       byName.get(normalized).push(subject);
