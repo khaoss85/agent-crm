@@ -2004,15 +2004,20 @@ export function createCustomerCardView(deps) {
    * the card re-reads and the usual «Chiama» flow starts on the number the
    * server holds — the CRM call route dials only that one.
    */
-  function openNumberWindow(box, card, navCtx, numbers) {
+  function openNumberWindow(box, card, navCtx, numbers, options = {}) {
+    // backlog:7eb7dc663bbd: from the composer the window only saves the
+    // number and re-reads the card — the call starts only from «Chiama».
+    const callAfterSave = options.callAfterSave !== false;
     closeSchedaWindows();
     openCallNumberPanel({
       doc,
       host: mount,
       customer: typeof card?.name === 'string' ? card.name : null,
       numbers,
+      ...(callAfterSave ? {} : { mode: 'save' }),
       choose: async (number, held) => {
         if (held) {
+          if (!callAfterSave) return null;
           openCallPanel(box, card, navCtx, number);
           return null;
         }
@@ -2032,6 +2037,10 @@ export function createCustomerCardView(deps) {
         // number was saving — never repaint this one over it, never call.
         const key = `${navCtx.resource}/${navCtx.id}`;
         if (shownKey !== key) return null;
+        if (!callAfterSave) {
+          await renderCard(navCtx.resource, navCtx.id);
+          return null;
+        }
         // Review #776 (P1): the call starts on the number the operator
         // chose, and only once the re-read card holds that very number.
         pendingCallAfterSave = { key, number };
@@ -2875,7 +2884,13 @@ export function createCustomerCardView(deps) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
         chip.setAttribute('aria-disabled', 'true');
-        chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
+        // backlog:7eb7dc663bbd: a phone channel without a number names the
+        // missing number — the operator may come from «WhatsApp» and must
+        // read why it is missing, not a bare «no address».
+        const needsNumber = entry.channel === 'whatsapp' || entry.channel === 'sms';
+        chip.setAttribute('title', needsNumber
+          ? `${entry.label}: il cliente non ha un numero`
+          : `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
@@ -2901,6 +2916,25 @@ export function createCustomerCardView(deps) {
       const preferred = radios.find((row) => row.entry.channel === preferChannel
         && row.entry.recipient !== null && row.entry.connected === true);
       if (preferred) select(preferred.entry);
+    }
+    // backlog:7eb7dc663bbd: the customer holds no phone number — the
+    // composer says WhatsApp is missing for that reason, with a way to add
+    // one. The number window saves through POST /api/customer-hub/phone
+    // (the «Aggiungi telefono» write) and only re-reads the card — no call
+    // starts from here (openNumberWindow's callAfterSave). The draft
+    // survives the window through composerDrafts, like through ✕.
+    const missingPhone = channels.find((entry) => (entry.channel === 'whatsapp' || entry.channel === 'sms')
+      && entry.recipient === null) ?? null;
+    if (missingPhone !== null) {
+      const line = el('span', undefined, `${missingPhone.label} manca perché il cliente non ha un numero. `);
+      const add = el('button', 'bo-composer-add-phone', 'Aggiungi un numero');
+      add.setAttribute('type', 'button');
+      add.setAttribute('data-action', 'composer-add-phone');
+      add.addEventListener('click', () => {
+        openNumberWindow(panel, card, navCtx, [], { callAfterSave: false });
+      });
+      line.appendChild(add);
+      offLine.appendChild(line);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
