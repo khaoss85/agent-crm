@@ -137,6 +137,68 @@ test('a rerun replays the stored proposals and writes nothing twice', async (t) 
     'the rerun replays the merge proposal instead of writing it twice');
 });
 
+/**
+ * Seguito backlog:088b639d96a2 (supervisore 17/11, prova del Mac): in
+ * Presti restano due mittenti commerciali doppi con maiuscole diverse, che
+ * la normalizzazione di #955 non copre. I due si LEGGONO con lo stesso
+ * nome senza le maiuscole («MailUp» e «MAILUP», dopo il taglio del
+ * qualificatore di #955), ma la scansione confronta le stringhe
+ * memorizzate («mailup | teamsystem» contro «mailup») e resta muta.
+ * La cura confronta i nomi letti della stessa famiglia
+ * persona-identificativi, senza maiuscole. Rosso prima della cura (nessuna
+ * unione proposta), verde dopo.
+ */
+test('two commercial senders reading the same name ignoring case propose the merge', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+
+  const brand = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const first = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'MailUp | TeamSystem', lastName: '—',
+    email: 'info@mailup.it',
+  });
+  const second = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'MAILUP', lastName: '—',
+    email: 'info@mailup.com',
+  });
+  const other = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Marco', lastName: 'Bianchi',
+    email: 'marco@palestra-esempio.it',
+  });
+  const coFirst = await app.services.companies.create({ name: 'MailUp | TeamSystem' });
+  const coSecond = await app.services.companies.create({ name: 'MAILUP' });
+
+  // Two machine senders with no usable stored name both read «Google»
+  // from their address: an email-fallback label never pairs strangers.
+  const bounceA = 'aaa111bbb222ccc333-abc@identity-reachout.bounces.google.com';
+  const bounceB = 'zzz999yyy888xxx777-def@identity-reachout.bounces.google.com';
+  const ghostA = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Mittente:', lastName: bounceA, email: bounceA,
+  });
+  const ghostB = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Mittente:', lastName: bounceB, email: bounceB,
+  });
+
+  const receipt = await app.proposeDataCleanup({ actor: AGENT });
+
+  const merges = receipt.proposals.filter((proposal) => proposal.kind === 'merge');
+  const contactMerge = merges.find((proposal) => proposal.rule === 'cleanup-same-name'
+    && (proposal.subject?.id === first.id || proposal.subject?.id === second.id));
+  assert.ok(contactMerge, 'the two senders reading the same name ignoring case propose the merge');
+  assert.ok(contactMerge.candidateId, 'the merge suspect is a stored duplicate-candidate row');
+  assert.match(contactMerge.evidence, /ignoring case/, 'the evidence says the match ignores case');
+  assert.ok(contactMerge.title.includes('MailUp') && contactMerge.title.includes('MAILUP'),
+    'the proposal names the two readings the Mac sees double');
+
+  const companyMerge = merges.find((proposal) => proposal.rule === 'cleanup-same-company'
+    && (proposal.subject?.id === coFirst.id || proposal.subject?.id === coSecond.id));
+  assert.ok(companyMerge, 'the two companies reading the same name ignoring case propose the merge');
+
+  const namesOthers = merges.filter((proposal) => proposal.rule === 'cleanup-same-name'
+    && (proposal.subject?.id === other.id || proposal.subject?.id === ghostA.id || proposal.subject?.id === ghostB.id));
+  assert.equal(namesOthers.length, 0, 'no merge names an unrelated card or an email-fallback label');
+});
+
 test('a card with no phone proposes the completion, with the customer rows untouched', async (t) => {
   const { app, maria, snapshot } = await scene(t);
   const before = await snapshot();
