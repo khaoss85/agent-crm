@@ -105,6 +105,8 @@ const flush = async (rounds = 12) => {
 };
 
 const timelineList = (mount) => mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-timeline');
+const timelineRows = (mount) => timelineList(mount).findAll('div')
+  .filter((node) => typeof node.getAttribute('data-entry') === 'string' && node.getAttribute('data-entry') !== '');
 
 test('fb35de38db49: la storia in arrivo allarga la pagina, nessuna nota sparisce', async () => {
   const client = fakeClient();
@@ -126,4 +128,80 @@ test('fb35de38db49: la storia in arrivo allarga la pagina, nessuna nota sparisce
   assert.ok(after.textContent.includes('Nota di prova 1'), 'la nota più vecchia resta in pagina dopo che la storia arriva');
   assert.ok(after.textContent.includes('Nota di prova 10'), 'la nota più nuova resta in pagina dopo che la storia arriva');
   assert.ok(after.textContent.includes('Cambio di stato'), 'i cambi di stato arrivano insieme alle note');
+});
+
+const bnote = (n) => ({
+  entry: 'note',
+  id: `b${n}`,
+  body: `Nota B ${n}`,
+  teamAuthorId: null,
+  occurredAt: `2026-10-${String((n % 28) + 1).padStart(2, '0')}T08:00:00.000Z`,
+});
+
+/**
+ * Review #1027 (P2): la storia del cliente A che risponde dopo il passaggio
+ * al cliente B non deve allargare la pagina di B.
+ */
+test('fb35de38db49: la storia di una scheda staccata non allarga la pagina corrente', async () => {
+  const audit = Array.from({ length: 19 }, (_, i) => moveRow(i + 1));
+  let releaseAudit = null;
+  const auditGate = new Promise((resolve) => { releaseAudit = resolve; });
+  const cardFor = (id, name) => ({ ...CARD, subject: { resource: 'contact', id }, name });
+  const profileFor = (id) => (id === 'c1' ? PROFILE : {
+    ...PROFILE,
+    subject: { resource: 'contact', id },
+    opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+  });
+  const timelineFor = (id) => (id === 'c1' ? TIMELINE : {
+    ...TIMELINE,
+    subject: { resource: 'contact', id },
+    entries: {
+      available: true, count: 50, truncated: false,
+      items: Array.from({ length: 50 }, (_, i) => bnote(i + 1)),
+    },
+  });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (String(options?.method ?? 'GET').toUpperCase() !== 'GET') return { ok: true };
+      if (path.startsWith('/api/audit')) {
+        await auditGate;
+        return { items: audit };
+      }
+      if (path.startsWith('/api/customer-hub/card/')) {
+        const id = path.endsWith('/c2') ? 'c2' : 'c1';
+        return cardFor(id, id === 'c2' ? 'Rosa Blu' : CARD.name);
+      }
+      if (path.startsWith('/api/customer-hub/timeline/')) {
+        return timelineFor(path.endsWith('/c2') ? 'c2' : 'c1');
+      }
+      if (path.startsWith('/api/customer-data/profile/')) {
+        return profileFor(path.endsWith('/c2') ? 'c2' : 'c1');
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      if (path === '/api/spine/context') return { actor: { id: 'maria' } };
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: () => {},
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.equal(timelineRows(mount).length, 20, 'B mostra la prima pagina da 20');
+  assert.ok(timelineList(mount).textContent.includes('Mostra precedenti'), 'B offre le precedenti');
+  releaseAudit();
+  await flush(20);
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.equal(timelineRows(mount).length, 20, 'la storia di A non allarga la pagina di B');
+  assert.ok(timelineList(mount).textContent.includes('Mostra precedenti'), 'B offre ancora le precedenti');
 });

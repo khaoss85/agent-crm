@@ -4682,7 +4682,11 @@ export function createCustomerCardView(deps) {
         );
         historyState = 'done';
         applyHistory(answer);
-        if (shown.size > 0) {
+        // Review #1027 (P2): a history that lands after the operator opened
+        // another customer paints a detached list — it must not grow the
+        // shared page, or the new customer's next repaint shows extra rows
+        // nobody asked for.
+        if (shown.size > 0 && mount.contains(list)) {
           const order = orderedRows();
           const at = new Map(order.map((item, index) => [String(item?.id ?? ''), index]));
           let need = timelineShown;
