@@ -45,6 +45,7 @@ import {
   touchedTestDistances,
   nearestFirst,
   fillNearest,
+  touchesAdminClient,
   runTestShards,
   shardCountFor,
   testJobs,
@@ -57,6 +58,16 @@ import {
 
 /** @param {Record<string, string>} entries */
 const contents = (entries) => new Map(Object.entries(entries));
+
+test('touchesAdminClient is true only under apps/admin/public/ (backlog:ae2d5d3c)', () => {
+  assert.equal(touchesAdminClient(['apps/admin/public/admin-shell.js']), true);
+  assert.equal(touchesAdminClient(['apps/admin/public/sotto/cartella.js']), true);
+  assert.equal(touchesAdminClient(['packages/app/src/index.js', 'apps/admin/public/app.js']), true);
+  assert.equal(touchesAdminClient(['packages/app/src/index.js']), false);
+  assert.equal(touchesAdminClient(['apps/admin/README.md']), false);
+  assert.equal(touchesAdminClient(['docs/x.md']), false);
+  assert.equal(touchesAdminClient([]), false);
+});
 
 test('a changed test file runs itself', () => {
   const selected = selectTouchedTests(

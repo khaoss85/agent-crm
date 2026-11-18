@@ -305,6 +305,52 @@ test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking
   assert.deepEqual(seen.picked, ['presti']);
 });
 
+test('backlog:ca7008cac764 — spaceMenuItems marks rows outside the session member list', () => {
+  const spaces = [{ id: 'b1', name: 'B1' }, { id: 'vecchio', name: 'Vecchio' }];
+  // Without a member list every row reads as a plain switch, like before.
+  for (const row of spaceMenuItems(spaces, 'b1')) assert.equal(row.needsAccess, false);
+  for (const row of spaceMenuItems(spaces, 'b1', null)) assert.equal(row.needsAccess, false);
+  // With the host list only the unlisted row is marked; the active one never is.
+  const rows = spaceMenuItems(spaces, 'b1', ['b1']);
+  assert.equal(rows[0].needsAccess, false);
+  assert.equal(rows[1].needsAccess, true);
+  const both = spaceMenuItems(spaces, 'b1', ['b1', 'vecchio']);
+  assert.equal(both[0].needsAccess, false);
+  assert.equal(both[1].needsAccess, false);
+});
+
+test('backlog:ca7008cac764 — il menu dice quando uno spazio può chiedere l’accesso', () => {
+  const profile = {
+    space: { id: 'b1', name: 'Prova Validazione B1' },
+    spaces: [{ id: 'b1', name: 'Prova Validazione B1' }],
+    role: 'owner',
+    name: 'Elena Rinaldi',
+    email: 'elena@studioaurora.it',
+  };
+  const doc = createFakeDocument();
+  doc.querySelector = (selector) => (selector === 'script[id="bo-session"]'
+    ? { textContent: JSON.stringify(profile) }
+    : null);
+  const { sidebar, seen } = renderShell({
+    doc,
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'vecchio', name: 'Vecchio' },
+    ],
+  });
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').split(/\s+/).includes('bo-space-pick'));
+  assert.equal(picks.length, 2);
+  const marked = picks.find((node) => !((node.className ?? '').includes('active')));
+  assert.ok(marked.textContent.includes('può chiedere l’accesso'));
+  assert.equal(marked.getAttribute('title'), 'Questo spazio potrebbe chiedere di accedere di nuovo');
+  // The unlisted row still opens: the host decides, the menu only warns.
+  marked.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['vecchio']);
+  // Without a session (local development) no row is marked.
+  const plain = renderShell({ spaces: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] });
+  assert.ok(!plain.sidebar.textContent.includes('può chiedere l’accesso'));
+});
+
 test('backlog:ecb26347d12c — the «Cambia spazio» button names only the shortcuts that exist', () => {
   const { sidebar } = renderShell({
     spaces: [

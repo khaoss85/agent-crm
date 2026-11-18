@@ -849,6 +849,22 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-actions .bo-scheda-tile-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-offerwrap { position: relative; display: flex; }
 .bo-scheda-offerwrap > .bo-scheda-tile { flex: 1 1 auto; width: 100%; }
+/* Voce 2c1c0e149cf9 (seguito 17/11, verifier back su 84ebe9e5 AC-2): the
+ * shared add menu is right-aligned (right:0) and 290px wide, so in the
+ * scheda's narrow left column it runs left under the app sidebar (voices at
+ * x=156 with the sidebar at x=264, unreadable and untappable). Here the menu
+ * opens right of its tile, inside the visible area, and paints above the
+ * sidebar (which sits at z-index 40). Small screens keep the static flow. */
+.bo-scheda-offerwrap > .ui-add-menu { left: 0; right: auto; max-width: min(78vw, 320px); z-index: 50; }
+/* Voce 2c1c0e149cf9 (review P2 su 0429edd6: left:0/right:auto da solo non
+ * basta — .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole
+ * CSS overflow-x diventa auto e ritaglia il menu comunque). Al desktop la
+ * colonna resta sticky ma non è più un contenitore di scorrimento: il menu
+ * dipinge sopra la sidebar (z-index 50 > 40). Sotto i 1280px vale già la
+ * regola overflow:visible della media query max-width:1279px. */
+@media (min-width: 1280px) {
+  .bo-scheda-col-side { max-height: none; overflow: visible; }
+}
 /* Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — the same
  * agent tokens as the summary card, with the «Vista per» tabs and the
  * PROSSIME AZIONI rows. */
@@ -1312,6 +1328,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin-top: 26px; }
 .bo-spazi-card { padding: 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
 .bo-spazi-initials { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
+/* backlog:56c9ec170eaa: the card wears the menu's own badge (same sigla and
+ * palette class from spaceMenuItems), only larger for the card head. */
+.bo-spazi-head .bo-space-badge { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
 .bo-spazi-here { align-self: flex-start; padding: 5px 10px; border-radius: 99px; background: var(--accent-soft); }
 .bo-spazi-card:has(.bo-spazi-here) { border: 1.5px solid var(--accent); }
 .bo-spazi-panels { gap: 18px; margin-top: 26px; }
@@ -1344,6 +1363,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-you strong { color: var(--ink); font-weight: 700; }
 .bo-spazi-foot .bo-spazi-here { align-self: center; }
 .bo-spazi-open.ui-btn { padding: 7px 14px; }
+/* backlog:2de01913d276: the «Riprova» after a failed role/team read — small,
+   inline, never pushing the card foot. */
+.bo-spazi-retry.ui-btn { padding: 6px 12px; margin-left: 8px; }
 .bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
 .bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }

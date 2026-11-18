@@ -811,7 +811,13 @@ export function createOfferDetail(deps) {
         await renderOfferDetail(offerId);
       } catch (error) {
         busy = false;
-        errorNode.textContent = humanReadError(error, { failed: 'Modifica non riuscita. Riprova più tardi.' });
+        // backlog:18cdf78c: «Modifica → Salva» è una scrittura: il rifiuto
+        // del server porta il motivo vero (400 dati non validi, 404
+        // offerta sparita), mai «Riprova più tardi».
+        errorNode.textContent = humanWriteError(error, {
+          failed: 'Modifica non riuscita. Riprova più tardi.',
+          notComposed: 'Offerta non trovata, ricarica.',
+        });
         errorNode.setAttribute('class', 'field-error');
       }
     };

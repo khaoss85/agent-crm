@@ -1,6 +1,6 @@
 // @ts-check
 
-import { sessionRoleLabel } from './admin-session.js';
+import { readSessionProfile, sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
@@ -514,12 +514,21 @@ export function spaceSwitcherLabel(spaces) {
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
  * the name — the first unused candidate, so «Presti Group» and «Prova
  * Validazione B1» read differently even when both arrive as «PR».
+ * Rows outside the host's live member list (backlog:ca7008cac764) carry
+ * `needsAccess`: visited mounts the session profile does not name may land
+ * on the space login instead of switching, so the menu marks them instead
+ * of promising a seamless switch. Without a member list every row reads
+ * as a plain switch, like before.
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
+ * @param {Array<string> | null} [memberIds] ids the session profile names
  */
-export function spaceMenuItems(spaces, activeId) {
+export function spaceMenuItems(spaces, activeId, memberIds = null) {
   const list = Array.isArray(spaces) ? spaces : [];
   const seen = new Set();
+  const memberSet = memberIds == null ? null : new Set(
+    (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
+  );
   return list.map((space, index) => {
     const name = typeof space?.name === 'string' ? space.name : '';
     const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
@@ -546,6 +555,7 @@ export function spaceMenuItems(spaces, activeId) {
       badgeClass: spaceBadgeClass(space?.id),
       keyHint: index < 9 ? `⌘${index + 1}` : '',
       active: space.id === activeId,
+      needsAccess: memberSet !== null && space.id !== activeId && !memberSet.has(space.id),
     };
   });
 }
@@ -700,6 +710,20 @@ export function createShellView({
     state.activeSpaceId = state.spaces[0].id;
   }
 
+  // backlog:ca7008cac764: the host's live member list — the session
+  // profile's spaces. Rows outside it are visited mounts the host may no
+  // longer know, so opening one can land on the space login; the menu
+  // marks them instead of promising a seamless switch. Without a session
+  // (local development) every pick switches in-tab: nothing is marked.
+  const sessionMemberIds = (() => {
+    try {
+      const ids = readSessionProfile(doc)?.spaces?.map((entry) => entry?.id);
+      return Array.isArray(ids) ? ids : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
 
   // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
@@ -792,7 +816,7 @@ export function createShellView({
     // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
     // per-space colors, so two spaces never read the same; the button label
     // lists only the shortcuts that exist.
-    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId, sessionMemberIds);
     const space = items.find((entry) => entry.active) ?? items[0];
     const switcherLabel = spaceSwitcherLabel(state.spaces);
 
@@ -830,6 +854,12 @@ export function createShellView({
       pick.appendChild(ini);
       pick.appendChild(label);
       if (entry.keyHint !== '') pick.appendChild(el(doc, 'span', 'bo-space-key', entry.keyHint));
+      // backlog:ca7008cac764: a row the session profile does not name may
+      // land on the space login instead of switching — the menu says so.
+      if (entry.needsAccess === true) {
+        pick.appendChild(el(doc, 'span', 'bo-space-pick-note bo-muted', 'può chiedere l\u2019accesso'));
+        pick.setAttribute('title', 'Questo spazio potrebbe chiedere di accedere di nuovo');
+      }
       if (entry.active) pick.appendChild(el(doc, 'span', 'bo-space-check', '✓'));
       else pick.addEventListener('click', () => {
         switchSpace(entry.id);
