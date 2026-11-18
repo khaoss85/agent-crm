@@ -125,6 +125,12 @@ async function paintedView(options) {
 }
 
 const button = (mount, action) => mount.querySelector(`button[data-action="${action}"]`);
+// Backlog 8605b6f520c0: catalogue cards carry Ritira/Riattiva too, so the
+// tests that drive Mano's own two-step scope the press to Mano's card
+// (the fake dom has no descendant selectors: findAll + filter instead).
+const cardButton = (mount, sourceKey, action) => mount.findAll('article')
+  .find((node) => node.getAttribute('data-agent') === sourceKey)
+  .findAll('button').find((node) => node.getAttribute('data-action') === action);
 
 test('7d169a3b1dd2: il rifiuto dice a quale campo manca', () => {
   assert.equal(checkNewAgent({ name: '', role: 'r', instructions: 'i' }).field, 'name');
@@ -317,10 +323,10 @@ test('7d169a3b1dd2: su un deploy senza le scritture agenti la Modifica legge neu
 
 test('7d169a3b1dd2: Ritira chiede Conferma in linea e mette in pausa, mai un dialog nativo', async () => {
   const { mount, client } = await paintedView();
-  button(mount, 'retire-agent').dispatch('click', {});
-  assert.ok(mount.querySelector('button[data-action="confirm-retire-agent"]'), 'prima chiede, in linea');
+  cardButton(mount, MANO.sourceKey, 'retire-agent').dispatch('click', {});
+  assert.ok(cardButton(mount, MANO.sourceKey, 'confirm-retire-agent'), 'prima chiede, in linea');
   assert.equal(posts(client, '/api/agents/set-status').length, 0, 'niente scrittura prima della conferma');
-  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'confirm-retire-agent').dispatch('click', {});
   await flush();
   const pauses = posts(client, '/api/agents/set-status');
   assert.equal(pauses.length, 1);
@@ -331,8 +337,8 @@ test('7d169a3b1dd2: Ritira chiede Conferma in linea e mette in pausa, mai un dia
 
 test('7d169a3b1dd2: Ritira su un deploy senza le scritture agenti legge neutra', async () => {
   const { mount } = await paintedView({ noWriteRoutes: true });
-  button(mount, 'retire-agent').dispatch('click', {});
-  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'retire-agent').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'confirm-retire-agent').dispatch('click', {});
   await flush();
   const live = mount.findAll('div').find((node) => node.classList.contains('bo-agent-retire'));
   assert.ok(live && live.findAll('p').some((node) => node.classList.contains('bo-agent-retire-unavailable')), 'nota neutra nella conferma');
@@ -472,8 +478,8 @@ test('f06d06f242d6: in Modifica, Salva e Annulla sono gli stessi del form nuovo'
 
 test('f06d06f242d6: dopo Riattiva la riga usa le parole del badge', async () => {
   const { mount } = await focusedView({ agents: [RIAGGANCIO, { ...MANO, status: 'paused' }] });
-  button(mount, 'retire-agent').dispatch('click', {});
-  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'retire-agent').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'confirm-retire-agent').dispatch('click', {});
   await flush();
   assert.ok(!mount.textContent.includes('di nuovo attivo'), 'mai «attivo» per un agente che aspetta il motore');
   assert.ok(mount.textContent.includes(`Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`),
@@ -492,8 +498,8 @@ test('92829060f8ff: dopo Riattiva le parole del badge restano anche se la rilett
     }
     return real(path, options);
   };
-  button(mount, 'retire-agent').dispatch('click', {});
-  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'retire-agent').dispatch('click', {});
+  cardButton(mount, MANO.sourceKey, 'confirm-retire-agent').dispatch('click', {});
   await flush();
   const expected = `Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`;
   assert.ok(mount.textContent.includes(expected), 'la riga dice quello che dice il badge');
