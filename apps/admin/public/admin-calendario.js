@@ -1580,6 +1580,8 @@ export function createCalendarioView(deps) {
     pendingEventId: null,
     /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
     pendingEventMember: null,
+    /** Booked start the highlight falls back to when the confirm answer carries no id (production bridge). @type {string|null} */
+    pendingEventStart: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1808,6 +1810,28 @@ export function createCalendarioView(deps) {
         // The explicit request beats a retained «hide this person»
         // (review Muse #792): the asked event's member shows again.
         else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
+      }
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carried no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person. The local copy rides until the server week carries a row
+      // with the same time, which the highlight then adopts by id. A
+      // cancelled server row with the same time retires everything: the
+      // server stays authoritative, like the id handshake above.
+      else if (state.pendingEventStart !== null && state.pendingEventMember !== null) {
+        carryBookedRow();
+        const match = pendingTimeRow();
+        if (match !== null && typeof match.id === 'string' && match.id !== '') {
+          state.selectedId = match.id;
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(match.teamMemberId ?? ''));
+        } else if (match === null && cancelledTimeRow()) {
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.selectedId = null;
+        }
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
@@ -2068,6 +2092,39 @@ export function createCalendarioView(deps) {
       }
     }
     return null;
+  }
+
+  /**
+   * backlog:134f3ed7 (seguito 18/11) — the non-cancelled row with the
+   * just-booked time and person, for confirms whose answer carries no id
+   * (production bridge). Only the grid highlight and the reload handshake
+   * read it — never the detail selection, so no popover opens uninvited.
+   */
+  function pendingTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A cancelled server row with the just-booked time and person: the booking is gone, so the fallback retires. */
+  function cancelledTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return false;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (!isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -3386,7 +3443,11 @@ export function createCalendarioView(deps) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
+    const timeFallback = state.selectedId === null && state.pendingEventStart !== null
+      && state.pendingEventMember !== null
+      && String(row?.teamMemberId ?? '') === state.pendingEventMember
+      && String(row?.startsAt ?? '') === state.pendingEventStart;
+    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
@@ -4743,12 +4804,27 @@ export function createCalendarioView(deps) {
     const booked = state.confirmed;
     const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
     const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
-    if (id === null || member === null) return;
+    if (member === null) return;
     if (!state.week || !Array.isArray(state.week.members)) return;
     const day = romeDayKey(booked?.startsAt);
     if (!day || !state.weekKeys.includes(day)) return;
     const group = state.week.members.find((entry) => entry?.teamMemberId === member);
     if (!group || !Array.isArray(group.appointments)) return;
+    if (id === null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the booked time rides instead. A server row
+      // with the same time already there wins, booked or cancelled — never
+      // a duplicate, never a phantom over a cancellation.
+      const start = typeof booked?.startsAt === 'string' && booked.startsAt !== '' ? booked.startsAt : null;
+      if (start === null) return;
+      if (group.appointments.some((row) => String(row?.startsAt ?? '') === start)) return;
+      const appointments = [...group.appointments, booked];
+      state.week = {
+        ...state.week,
+        members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+      };
+      return;
+    }
     const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
     // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
     // reloaded server week is authoritative: when the id is already there
@@ -4791,6 +4867,7 @@ export function createCalendarioView(deps) {
     const member = typeof appointment?.teamMemberId === 'string' && appointment.teamMemberId !== '' ? appointment.teamMemberId : null;
     state.pendingEventId = id;
     state.pendingEventMember = member;
+    state.pendingEventStart = typeof appointment?.startsAt === 'string' && appointment.startsAt !== '' ? appointment.startsAt : null;
     const day = romeDayKey(appointment?.startsAt);
     if (day && !state.weekKeys.includes(day)) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
@@ -4801,6 +4878,12 @@ export function createCalendarioView(deps) {
     // grid shows it before the reload lands. The reload reconciles.
     if (id !== null) {
       state.selectedId = id;
+      carryBookedRow();
+    } else if (member !== null && state.pendingEventStart !== null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person until the reload adopts the server row with the same time.
+      state.selectedId = null;
       carryBookedRow();
     }
   }
@@ -5574,6 +5657,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = null;
       state.pendingEventMember = null;
+      state.pendingEventStart = null;
       resetPopSteps();
       state.moveNote = '';
       cancelCustomerSearch();
@@ -5593,6 +5677,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = askedEvent.id;
       state.pendingEventMember = askedEvent.member ?? null;
+      state.pendingEventStart = null;
     }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {
