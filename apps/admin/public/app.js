@@ -67,6 +67,10 @@ function isMutation(method) {
 
 async function api(path, options = {}) {
   const method = options.method ?? 'GET';
+  // backlog:0d25ed7dc34f (review Muse #1009): the navigation token at call
+  // time — route() bumps navSeq on every navigation, so a poll left behind
+  // aborts instead of fetching stray requests for a screen already left.
+  const navToken = navSeq;
   /** @type {Record<string, string>} */
   const requestHeaders = { ...headers, ...(options.headers || {}) };
   if (isMutation(method)) {
@@ -96,10 +100,11 @@ async function api(path, options = {}) {
   };
   // backlog:0d25ed7dc34f: a write keeps the single retry, same key; a read
   // polls past the first refusal while the space wakes, so the screen paints
-  // by itself when the space answers.
+  // by itself when the space answers. The poll dies with the screen that
+  // started it (review Muse #1009): a late answer never fetches on, and a
+  // dropped read throws coded stale — never a failure on the new screen.
   if (isMutation(method)) return withWakeRetry(run, { method, onWaking: wakingNotice });
-  return readWhileWaking(run, { method });
-}
+  return readWhileWaking(run, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
 
 const submissions = createSubmissionController({
   transport: (path, options) => api(path, {
@@ -168,6 +173,9 @@ const moduleClient = {
   },
   async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
+    // backlog:0d25ed7dc34f (review Muse #1009): same navigation token as
+    // api() — a module read left behind aborts instead of fetching on.
+    const navToken = navSeq;
     /** @type {Record<string, string>} */
     const requestHeaders = {
       'content-type': 'application/json',
@@ -235,7 +243,7 @@ const moduleClient = {
       return payload;
     };
     if (isMutation(method)) return withWakeRetry(once, { method, onWaking: wakingNotice });
-    return readWhileWaking(once, { method });
+    return readWhileWaking(once, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
   },
 };
 // backlog:c048bf6f2dd3: the schema answers from the space's last copy and
@@ -292,19 +300,6 @@ function spaceWakingNotice(waking) {
   }
   spaceWakingReads += 1;
   if (spaceWakingReads === 1 && elements.toast) toast(SPACE_WAKING_TEXT, false, { duration: 65000, scope: 'space-waking' });
-}
-
-/**
- * Read through a waking space (backlog:0d25ed7dc34f): the same verdict as
- * the single retry, but the read polls (bounded) while the failure says the
- * service is waking — the screen paints by itself when the space answers
- * instead of parking on a refusal with Riprova. A final refusal still throws,
- * so the screen stays honest when the space never answers in time.
- */
-async function readWhileWaking(run, { method }) {
-  const settled = await pollWhileWaking(run, { method, onWaking: spaceWakingNotice });
-  if (settled !== null && typeof settled === 'object' && 'answer' in settled) return settled.answer;
-  throw settled?.error ?? Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
 }
 
 async function refresh() {
@@ -596,7 +591,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView, masterEnabled } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { SPACE_WAKING_TEXT, WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, pollWhileWaking, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { SPACE_WAKING_TEXT, WAKING_TEXT, apiFailure, humanizeLabel, isStaleRead, parseModuleRoute, readWhileWaking, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -1676,6 +1671,9 @@ async function route() {
     }
     if (restored > 0) toast('Ho ripreso il testo che non era stato salvato: controllalo e salva di nuovo.');
   } catch (error) {
+    // backlog:0d25ed7dc34f (review Muse #1009): a read dropped because its
+    // screen moved on proves nothing — no toast, no failure paint.
+    if (isStaleRead(error)) return;
     if (navToken !== navSeq) {
       // A screen already left: its handle was inert and the operator is on
       // another screen, so no toast there — but the failure stays

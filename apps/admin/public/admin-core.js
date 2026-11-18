@@ -1293,6 +1293,48 @@ export async function pollWhileWaking(run, { wait = unrefWait, everyMs = 3000, r
 }
 
 /**
+ * A read dropped because its screen moved on (backlog:0d25ed7dc34f): the
+ * poll proved nothing about the space, so the caller shows nothing — no
+ * failure paint, no toast. Views already drop it through their render
+ * token or their inert mount handle; the shell router swallows it by code.
+ */
+export const READ_STALE_CODE = 'READ_STALE';
+
+/** Whether `error` is a read dropped for a screen already left. @param {unknown} error */
+export function isStaleRead(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  return record.code === READ_STALE_CODE;
+}
+
+/**
+ * Read through a waking space (backlog:0d25ed7dc34f): the same verdict as
+ * the single retry, but the read polls (bounded) while the failure says the
+ * service is waking — the screen paints by itself when the space answers
+ * instead of parking on a refusal with Riprova. A final refusal still throws,
+ * so the screen stays honest when the space never answers in time. A poll
+ * abandoned because the caller moved on throws a coded stale read, never an
+ * INVALID_RESPONSE: the late answer proved nothing and must not paint as a
+ * failure on the screen already left.
+ * @param {() => Promise<any>} run
+ * @param {{ method?: unknown, stale?: () => boolean, onWaking?: (waking: boolean) => void, wait?: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number }} [options]
+ */
+export async function readWhileWaking(run, { method = 'GET', stale = () => false, onWaking = () => {}, wait, everyMs, rounds } = {}) {
+  const settled = await pollWhileWaking(run, {
+    method,
+    stale,
+    onWaking,
+    ...(wait !== undefined ? { wait } : {}),
+    ...(everyMs !== undefined ? { everyMs } : {}),
+    ...(rounds !== undefined ? { rounds } : {}),
+  });
+  if (settled !== null && typeof settled === 'object' && 'answer' in settled) return settled.answer;
+  if (settled !== null && typeof settled === 'object' && settled.stale === true) {
+    throw Object.assign(new Error('stale'), { code: READ_STALE_CODE });
+  }
+  throw settled?.error ?? Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+}
+
+/**
  * Read a queued request back on its own path (`GET <path>?requestId=`), the
  * resume the pilot offers for its queued writes: never a second POST. Waits
  * `everyMs` before each read, up to `rounds` reads; a transient read
