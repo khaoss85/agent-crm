@@ -1236,6 +1236,11 @@ export function createCustomerCardView(deps) {
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
   const detailsInFlight = new Set();
+  // backlog:26afd13657c5 (ritorno 1, supervisore 17/11): dopo «Salva» in
+  // Modifica la conferma vive nei Dettagli, dove sta l'occhio — il solo
+  // toast in basso a destra restava lontano dalla card salvata.
+  /** @type {string | null} */
+  let detailsSavedKey = null;
   // «Chiama» on a number just saved from the number window (Dan 11/11):
   // the call opens on the re-read card of that same customer, once.
   /** @type {{key: string, number: string} | null} */
@@ -3512,6 +3517,14 @@ export function createCustomerCardView(deps) {
     // Voce 714433c2: Modifica opens the in-place form below. Company
     // records have no update path yet, so a company scheda shows no button.
     const contact = profile?.identity?.contact ?? null;
+    // backlog:26afd13657c5: la conferma del salvataggio sta nei Dettagli,
+    // sopra il bottone — vicina alla card salvata, non solo nel toast.
+    if (detailsSavedKey !== null && editCtx
+      && `${editCtx.resource}/${editCtx.id}` === detailsSavedKey) {
+      const saved = el('p', 'bo-scheda-saved', 'Dati salvati.');
+      saved.setAttribute('role', 'status');
+      box.appendChild(saved);
+    }
     if (editCtx && card?.subject?.resource === 'contact'
       && contact && typeof contact.id === 'string' && contact.id !== '') {
       const edit = el('button', undefined, 'Modifica');
@@ -3524,6 +3537,9 @@ export function createCustomerCardView(deps) {
         details(box, card, profile, editCtx, profileError);
       };
       edit.addEventListener('click', () => {
+        // backlog:26afd13657c5: il form aperto non mostra la conferma
+        // del salvataggio di prima — niente riga vecchia sotto i campi.
+        detailsSavedKey = null;
         renderDetailsForm(box, card, contact, editCtx, restore);
         // backlog:fe9be5f0af4a: the cursor in the first field, at the end.
         focusAtEnd(box.querySelector('input[name="firstName"]'));
@@ -3627,6 +3643,9 @@ export function createCustomerCardView(deps) {
           }),
         });
         detailsInFlight.delete(flightKey);
+        // backlog:26afd13657c5: la conferma vive nei Dettagli, dove sta
+        // l'occhio — restore() la dipinge lì, poi la rilettura la tiene.
+        detailsSavedKey = `${editCtx.resource}/${editCtx.id}`;
         if (typeof restore === 'function') restore();
         // backlog:2a214b66fe12: the new name and email show at once; then
         // only the card and the profile are read again.
@@ -6156,6 +6175,9 @@ export function createCustomerCardView(deps) {
       retainedDrafts = null;
       channelFilter = 'all';
       noteAuthorFilter = null;
+      // backlog:26afd13657c5: un altro cliente non eredita la conferma
+      // del salvataggio di prima.
+      detailsSavedKey = null;
       timelineShown = TIMELINE_PAGE;
       // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
       // leaves now — never silently undone by opening another customer —

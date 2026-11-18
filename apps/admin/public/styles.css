@@ -811,6 +811,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-fact { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-fact-label { font-weight: 400; color: var(--muted); }
 .bo-scheda-fact > span:last-child { text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+/* backlog:26afd13657c5: la conferma del salvataggio vive nei Dettagli, come
+ * .bo-agent-done vive sulla card dell'agente — stesso peso, stesso colore. */
+.bo-scheda-saved { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--accent); }
 .bo-scheda-identity { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 13px; }
 .bo-scheda-card-timeline { padding: 0; }
 .bo-scheda-card-timeline > h4 { padding: 18px 20px 0; font-size: 18px; }
