@@ -975,3 +975,36 @@ test('48993bed7294: no proposal from or to «senza referente»; only past-dated 
   assert.match(stale.text, /^1 preventivo aperto con la data di chiusura attesa già passata/, 'the two undated offers are in the forecast, not stale');
   assert.equal(model.forecast.bestMinor, 2000, 'the undated ones are the forecast window');
 });
+
+// backlog:ed6bae5e5c0d (verifica indipendente 18/11 sul live: «1 preventivo
+// perso su 2 chiusi» mentre la tabella mostra 0 vinte e tasso n.d.): la frase
+// di «Cosa noto» e la tabella leggono la stessa finestra — chiusi del periodo
+// (vinte + perse del mese), mai il totale storico. Con 1 vinta e 1 persa
+// chiuse a novembre e altre 4 chiuse a ottobre, la frase dice 1 su 2 (50%)
+// come la tabella, non 4 su 6 (67%).
+test('ed6bae5e5c0d: «Cosa noto» reads the period closed (1 won + 1 lost), like the table', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR' });
+  const row = (stage, totalMinor, closedAt = null) => ({
+    'opportunity.owner': 'alice', 'opportunity.stage': stage, 'opportunity.expectedCloseDate': null,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const nov = '2026-11-07T10:00:00.000Z';
+  const oct = '2026-10-05T10:00:00.000Z';
+  const schedule = [
+    row('qualification', 10000),
+    row('won', 9000, nov),
+    row('lost', 3000, nov),
+    row('won', 5000, oct),
+    row('lost', 1000, oct), row('lost', 1000, oct), row('lost', 1000, oct),
+  ];
+  const byStage = [
+    { 'opportunity.stage': 'qualification', 'opportunity.currency': 'EUR', totalMinor: 10000, count: 1 },
+    { 'opportunity.stage': 'won', 'opportunity.currency': 'EUR', totalMinor: 14000, count: 2 },
+    { 'opportunity.stage': 'lost', 'opportunity.currency': 'EUR', totalMinor: 6000, count: 4 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS);
+  const alice = model.team.find((entry) => entry.owner === 'alice');
+  assert.deepEqual([alice.wonCount, alice.lostCount, alice.winRateDisplay], [1, 1, '50%'], 'the table reads the period: 1 won, 1 lost, 50%');
+  const lostRate = model.insights.find((entry) => entry.id === 'lost-rate');
+  assert.match(lostRate.text, /^1 preventivo perso su 2 chiusi \(50%\)/, 'the phrase reads the same period closed as the table, never the lifetime 4 of 6');
+});
