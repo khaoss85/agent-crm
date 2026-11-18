@@ -5154,14 +5154,22 @@ export function createCustomerCardView(deps) {
     const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
       && typeof first?.currency === 'string' && first.currency !== ''
       ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
+    // backlog:1e07362849db: the figure reads with its label — a quote row
+    // shows the quote total («preventivo», «preventivo in bozza» for a
+    // draft), an offer row the offer value («valore dell’offerta», like the
+    // offer page hero): never two bare figures that read as the same.
+    const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
+      fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
+      if (amountNote) box.appendChild(amountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
+      if (amountNote) link.appendChild(amountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
