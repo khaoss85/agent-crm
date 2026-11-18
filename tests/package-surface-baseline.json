@@ -61,14 +61,14 @@
       "name": "commercial",
       "dir": "commercial",
       "graph": "contract1",
-      "version": 14,
-      "fingerprint": "bf46ded62b66927cfbf93de540793b2e1d98fa5ed135a9d6c83086f01889086a"
+      "version": 15,
+      "fingerprint": "5a87edadf971dd2e608754f5d649c181b453c996a8df1ce8ad3aea1a949e01c2"
     },
     {
       "name": "commercial",
       "dir": "commercial",
       "graph": "contract2",
-      "version": 14,
+      "version": 15,
       "fingerprint": "cbc385c0650b0740d6f8a28b4db1b4f4c1ea78fb724b86cdba17a65c710788de"
     },
     {

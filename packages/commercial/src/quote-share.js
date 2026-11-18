@@ -407,11 +407,10 @@ function redactedShareResult(result) {
 }
 
 /**
- * The link history row needs a place to land: an `opportunity` audit that
- * can record and a quote that names its opportunity. Check this BEFORE the
- * mint or the rotation commits (backlog:bf1bc20a, review #995 P1): refusing
- * here leaves no live bearer behind, while refusing after the commit leaves
- * a working link with no Cronologia row — and the retry only reuses it.
+ * The link history row needs a place to land. Check this BEFORE the mint or
+ * the rotation commits (backlog:bf1bc20a, review #995 P1): refusing here
+ * leaves no live bearer behind, while refusing after the commit leaves a
+ * working link with no Cronologia row — and the retry only reuses it.
  *
  * @param {any} shares the quote-share managed service
  */
@@ -421,33 +420,60 @@ function requireLinkHistoryTarget(shares, quote) {
       code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
     });
   }
-  const opportunityId = quote?.opportunityId;
-  if (typeof opportunityId !== 'string' || opportunityId === '') {
-    throw new AppError('The quote names no offer for its link history row', {
+  if (!quote || typeof quote.id !== 'string' || quote.id === '') {
+    throw new AppError('quote-share storage cannot record the link history row', {
       code: 'COMMERCIAL_STATE_CORRUPT', status: 409,
     });
   }
 }
 
 /**
+ * Where one link history row lands (backlog:bf1bc20a, arbitrato #995 giro 3):
+ * the `opportunity` audit the offer Cronologia reads when the quote names
+ * its offer, otherwise the `quote` audit — the Cronologia del preventivo.
+ * A missing opportunity never blocks: the link is still created, resurfaced
+ * or rotated, and its row lands on the quote.
+ *
+ * @param {any} quote the quote record the link belongs to
+ */
+function linkHistoryTarget(quote) {
+  const opportunityId = quote?.opportunityId;
+  if (typeof opportunityId === 'string' && opportunityId !== '') {
+    return { entityType: 'opportunity', entityId: opportunityId, prefix: 'opportunity' };
+  }
+  return { entityType: 'quote', entityId: quote.id, prefix: 'quote' };
+}
+
+/**
+ * Action names carrying one link creation, on either history target.
+ *
+ * @param {string} prefix the target prefix (`opportunity` or `quote`)
+ */
+function linkHistoryActions(prefix) {
+  return [`${prefix}.quote_link_shared`, `${prefix}.quote_link_regenerated`];
+}
+
+/**
  * The operator's cronologia row for one link creation (backlog:bf1bc20a):
- * the Cronologia reads `opportunity` audit, so every fresh mint and every
- * regenerate records one `opportunity.quote_link_*` row — even when the
- * answer to the browser is later lost, because the action writes the row
- * before answering. A reuse writes nothing: the
- * winner's call already wrote the row. The payload carries no bearer and
- * no hash — only the quote, version and expiry the operator already sees.
+ * the offer Cronologia reads `opportunity` audit, so every fresh mint and
+ * every regenerate records one `*.quote_link_*` row — even when the answer
+ * to the browser is later lost, because the action writes the row before
+ * answering. Without an offer the row lands on the `quote` audit instead.
+ * A reuse writes nothing: the winner's call already wrote the row. The
+ * payload carries no bearer and no hash — only the quote, version and
+ * expiry the operator already sees.
  *
  * @param {any} shares the quote-share managed service
  */
 async function recordOpportunityLinkRow(shares, quote, { action, share, actor }) {
   requireLinkHistoryTarget(shares, quote);
-  const opportunityId = quote.opportunityId;
+  const target = linkHistoryTarget(quote);
+  const verb = String(action).endsWith('regenerated') ? 'regenerated' : 'shared';
   await shares.audit.record({
     actor,
-    action,
-    entityType: 'opportunity',
-    entityId: opportunityId,
+    action: `${target.prefix}.quote_link_${verb}`,
+    entityType: target.entityType,
+    entityId: target.entityId,
     data: {
       quoteId: quote.id,
       versionNumber: share.versionNumber,
@@ -459,32 +485,34 @@ async function recordOpportunityLinkRow(shares, quote, { action, share, actor })
 
 /**
  * Heal a live bearer left without its cronologia row (backlog:bf1bc20a,
- * review #995 P1 giro 2). The row write runs after the mint in the same
- * action transaction, so a failing write rolls the mint back too — but a
- * link minted before this row existed has no row at all, and the retry
- * reuses the winner while the reuse path writes nothing. When the winner
- * has no `opportunity.quote_link_*` row for its share id and the quote
- * names an offer, write that row now, marked `backfilled` (the share row's
- * own `.created` audit already holds the true provenance). With no offer
- * there is nowhere to land: report `skipped-no-target` and let the reuse
- * stand — resurfacing a live link never needs a row.
+ * review #995 P1 giro 2, arbitrato giro 3). The row write runs after the
+ * mint in the same action transaction, so a failing write rolls the mint
+ * back too — but a link minted before this row existed has no row at all,
+ * and the retry reuses the winner while the reuse path writes nothing.
+ * When the winner has no `*.quote_link_*` row for its share id on either
+ * history target, write that row now on the current target, marked
+ * `backfilled` (the share row's own `.created` audit already holds the
+ * true provenance).
  *
  * @param {any} shares the quote-share managed service
- * @returns {Promise<'present' | 'written' | 'skipped-no-target'>}
+ * @returns {Promise<'present' | 'written'>}
  */
 async function backfillWinnerLinkRow(shares, quote, { share, actor }) {
-  const opportunityId = quote?.opportunityId;
-  if (typeof opportunityId !== 'string' || opportunityId === '') return 'skipped-no-target';
-  const rows = await shares.audit.list({ entityType: 'opportunity', entityId: opportunityId, limit: 500 });
-  const hasRow = rows.some((row) =>
-    (row.action === 'opportunity.quote_link_shared' || row.action === 'opportunity.quote_link_regenerated')
-    && row.data?.shareId === share.id);
-  if (hasRow) return 'present';
+  const matches = (row) =>
+    (linkHistoryActions('opportunity').includes(row.action) || linkHistoryActions('quote').includes(row.action))
+    && row.data?.shareId === share.id;
+  const hasRow = async (entityType, entityId) => {
+    if (typeof entityId !== 'string' || entityId === '') return false;
+    const rows = await shares.audit.list({ entityType, entityId, limit: 500 });
+    return rows.some(matches);
+  };
+  if (await hasRow('opportunity', quote?.opportunityId) || await hasRow('quote', quote?.id)) return 'present';
+  const target = linkHistoryTarget(quote);
   await shares.audit.record({
     actor,
-    action: 'opportunity.quote_link_shared',
-    entityType: 'opportunity',
-    entityId: opportunityId,
+    action: `${target.prefix}.quote_link_shared`,
+    entityType: target.entityType,
+    entityId: target.entityId,
     data: {
       quoteId: quote.id,
       versionNumber: share.versionNumber,

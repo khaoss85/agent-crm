@@ -36,6 +36,8 @@ function auditActionLabel(action) {
   // (review Muse #905 P1 still holds: no «Offerta inviata» here).
   if (action === 'opportunity.quote_link_shared') return 'Link creato';
   if (action === 'opportunity.quote_link_regenerated') return 'Nuovo link creato';
+  if (action === 'quote.quote_link_shared') return 'Link creato';
+  if (action === 'quote.quote_link_regenerated') return 'Nuovo link creato';
   return 'Variazione registrata';
 }
 

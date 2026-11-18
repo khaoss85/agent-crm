@@ -227,7 +227,12 @@ export function createCommercialDomain(options = {}) {
     // when the opportunity audit or the quote's opportunity is missing, so
     // no live bearer is left behind without its Cronologia row. Additive:
     // the share-link contract (input, answers) is unchanged.
-    version: 14,
+    // 15: without an offer the link still mints, resurfaces and rotates
+    // (arbitrato #995 giro 3, backlog:bf1bc20a) — opportunityId is optional
+    // in the module, so the history row lands on the `quote` audit (the
+    // Cronologia del preventivo) instead of refusing. Additive: the
+    // share-link contract (input, answers) is unchanged.
+    version: 15,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',

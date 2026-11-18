@@ -852,35 +852,47 @@ test('bf1bc20a: every link creation writes its cronologia row, a reuse writes no
   assert.equal(opened.result.accepted, true, 'the new link works');
 });
 
-test('bf1bc20a: a quote without an opportunity refuses before the mint — no live link without a cronologia row (review #995 P1)', async () => {
+test('bf1bc20a: a quote without an opportunity still mints — the row lands in the quote history (arbitrato #995 giro 3)', async () => {
   const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-NOOPP', cents: 10000 });
   // A legacy/manual/stub quote shape: approved and versioned, but naming no
-  // offer for the link history row.
+  // offer — opportunityId is optional in the module, so the link must still
+  // be created and its row lands on the quote audit instead.
   await app.modules.get('quote').service.applyManaged(quote.id, { opportunityId: null }, { actor: ACTOR });
   const shares = app.modules.get('quote-share').service;
-  let mints = 0;
-  const originalCreateManaged = shares.createManaged.bind(shares);
-  shares.createManaged = async (...args) => {
-    mints += 1;
-    return originalCreateManaged(...args);
-  };
-  try {
-    const refused = await refusal(app.runAction({
-      module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
-    }));
-    assert.equal(refused.ok, false);
-    assert.equal(refused.code, 'COMMERCIAL_STATE_CORRUPT', 'the mint is refused, not committed-then-failed');
-    const refusedRegen = await refusal(app.runAction({
-      module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
-    }));
-    assert.equal(refusedRegen.ok, false);
-    assert.equal(refusedRegen.code, 'COMMERCIAL_STATE_CORRUPT', 'the rotation is refused before it commits too');
-  } finally {
-    shares.createManaged = originalCreateManaged;
-  }
-  assert.equal(mints, 0, 'no mint runs when the history row has nowhere to land');
-  assert.deepEqual(await shares.listWhere({ quoteId: quote.id }), [], 'no bearer is left live');
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.match(first.result.token, /^[0-9a-f]{64}$/, 'the link is created without an offer');
+  const live = await shares.listWhere({ quoteId: quote.id });
+  assert.equal(live.length, 1, 'exactly one live bearer');
+  const minted = app.audit
+    .list({ entityType: 'quote', entityId: quote.id })
+    .filter((row) => row.action === 'quote.quote_link_shared' && row.data?.quoteId === quote.id);
+  assert.equal(minted.length, 1, 'the mint writes its row in the quote history');
+  assert.equal(minted[0].data.shareId, live[0].id, 'the row names the live share');
+  assert.ok(!JSON.stringify(minted[0].data).includes(first.result.token), 'the row carries no bearer');
+
+  // The operator lost the first answer: regenerate revokes and replaces,
+  // and the old token dies at once — also without an offer.
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.regenerated, true);
+  assert.match(again.result.token, /^[0-9a-f]{64}$/);
+  const dead = await refusal(app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: first.result.token }, actor: PUBLIC,
+  }));
+  assert.equal(dead.ok, false);
+  assert.equal(dead.code, 'QUOTE_LINK_INVALID', 'the old link opens no more');
+  const opened = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: again.result.token }, actor: PUBLIC,
+  });
+  assert.equal(opened.result.accepted, true, 'the new link works');
+  const regens = app.audit
+    .list({ entityType: 'quote', entityId: quote.id })
+    .filter((row) => row.action === 'quote.quote_link_regenerated' && row.data?.quoteId === quote.id);
+  assert.equal(regens.length, 1, 'the regenerate writes its own row in the quote history');
 });
 
 test('bf1bc20a: a live link stays reachable when the quote names no offer — reuse needs no history target (review #995 P1 giro 2)', async () => {
@@ -899,17 +911,22 @@ test('bf1bc20a: a live link stays reachable when the quote names no offer — re
   assert.equal(resurfaced.result.alreadyExisted, true, 'the live link is resurfaced, not refused');
   assert.equal(resurfaced.result.token, null, 'a reuse never reissues the bearer');
   assert.equal((await shares.listWhere({ quoteId: quote.id })).length, 1, 'still one live row, no second mint');
-  // Rotating is still a creation: with nowhere to land its row it refuses
-  // before committing, and the live link above keeps working.
-  const refusedRegen = await refusal(app.runAction({
+  // Rotating without an offer still rotates: the row lands in the quote
+  // history, the old bearer dies at once, and the new one opens.
+  const rotated = await app.runAction({
     module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
-  }));
-  assert.equal(refusedRegen.ok, false);
-  assert.equal(refusedRegen.code, 'COMMERCIAL_STATE_CORRUPT', 'the rotation refuses before it commits');
-  const opened = await app.runAction({
-    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: first.result.token }, actor: PUBLIC,
   });
-  assert.equal(opened.result.accepted, true, 'the resurfaced link still opens');
+  assert.equal(rotated.result.regenerated, true, 'the rotation lands without an offer');
+  assert.match(rotated.result.token, /^[0-9a-f]{64}$/);
+  const dead = await refusal(app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: first.result.token }, actor: PUBLIC,
+  }));
+  assert.equal(dead.ok, false);
+  assert.equal(dead.code, 'QUOTE_LINK_INVALID', 'the rotated bearer opens no more');
+  const opened = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: rotated.result.token }, actor: PUBLIC,
+  });
+  assert.equal(opened.result.accepted, true, 'the rotated link opens');
 });
 
 test('bf1bc20a: a mint whose history row write fails leaves no live bearer — the mint rolls back with its row (review #995 P1 giro 2)', async () => {
