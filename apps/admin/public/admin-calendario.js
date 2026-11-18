@@ -4378,11 +4378,10 @@ export function createCalendarioView(deps) {
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
-      // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
-      // below the grid (fetta 8), never dropped.
-      // backlog:d1e4d90e — the night is always free, so rank the painted
-      // hours first: day steps fill the proposals, night steps stay behind
-      // for the honest lines, never dropped (fetta 8).
+      // it (backlog:d1e4d90e). Only the painted 09:00–18:00 hours fill the
+      // rows (inHours below): the night is always free, so night steps would
+      // otherwise crowd out the day. An explicitly asked time keeps its
+      // honest line below the grid (exact, fetta 8).
       // Review #646 P2: the held-booking guard reads the SEARCHED person's
       // week. When the painted week does not hold every searched identity
       // (nobody named, the filter shows marco and the phrase names sara, a
@@ -4404,6 +4403,11 @@ export function createCalendarioView(deps) {
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
       const nowMs = clock().getTime();
       const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      // Only the painted 09:00–18:00 Rome hours are proposed: the night is
+      // always free, so a fully booked day would otherwise fill the rows
+      // with 00:00–02:30 steps. An explicitly asked time keeps its honest
+      // line below the grid (exact, fetta 8).
+      const inHours = ranked.filter((slot) => slotInGrid(slot?.startsAt, slot?.endsAt));
       // backlog:913c61ec — a sentence with a time asks for that time: when it
       // is free the proposal is the draft itself; when it is missing the next
       // free steps of the same afternoon follow, with the reason said — «già
@@ -4415,7 +4419,7 @@ export function createCalendarioView(deps) {
         : null;
       // The exact step books the draft's own end (a stated 20 minutes inside
       // a free 30-minute step stays 20, never the search size).
-      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : inHours;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
