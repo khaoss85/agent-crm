@@ -276,7 +276,7 @@ test('confirm refuses unknown stages and empty ids instead of coercing them', ()
       { ...routed.proposal, spaceId: '' },
       { actor: PERSON, decision: 'accept', reason: 'prova' },
     ),
-    /spaceId must be a non-empty string/,
+    /spaceId must be a non-empty/,
   );
 
   // A valid proposal still confirms with the validated ids.
@@ -311,5 +311,33 @@ test('unknown stages and moves out of terminal stages are refused at route time'
   assert.throws(
     () => routeOfferMoveFromReply({ ...base, fromStage: 'perso', toStage: 'proposta' }),
     (error) => error.code === 'TERMINAL_STAGE',
+  );
+});
+
+// P1 (giro 3): requireSpaceId uses the same normalization as the permission
+// gate — trim plus control-character refusal — so the gated space and the
+// stored/carried one are the same.
+test('a space id with padding is trimmed like the permission gate, control chars refused', () => {
+  const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
+  const suggestion = fakeSuggestStage(body, 'prova');
+  assert.ok(suggestion, 'the fake AI reads a step in this reply');
+  const base = {
+    opportunityId: OPPORTUNITY,
+    messageId: 'wa:msg:50',
+    messageBody: body,
+    fromStage: 'prova',
+    toStage: suggestion.toStage,
+    quote: suggestion.quote,
+    suggestedBy: AI,
+    overrideRows: [],
+  };
+  const routed = routeOfferMoveFromReply({ ...base, spaceId: '  space-presti  ' });
+  assert.equal(routed.decision, 'apply');
+  assert.equal(routed.spaceId, 'space-presti');
+  assert.equal(routed.move.spaceId, 'space-presti');
+
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, messageId: 'wa:msg:51', spaceId: 'space\u0007presti' }),
+    /spaceId must be a non-empty/,
   );
 });

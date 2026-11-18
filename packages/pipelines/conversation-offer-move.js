@@ -35,10 +35,9 @@ import { randomUUID } from 'node:crypto';
 import { AppError, ForbiddenError, ValidationError } from '../core/src/errors.js';
 import { findStage } from '../core/src/pipeline-registry.js';
 import { nowIso } from '../core/src/time.js';
-import { isAiActionAllowed } from '../space-permissions/src/permissions.js';
+import { checkSpaceId, isAiActionAllowed } from '../space-permissions/src/permissions.js';
 import { accordoSalesPipeline } from './accordo-sales.js';
 
-const SPACE_ID_MAX = 128;
 const ID_MAX = 256;
 const BODY_MAX = 20000;
 const QUOTE_MAX = 2000;
@@ -53,10 +52,10 @@ function requireText(value, field, max) {
 
 /** @param {unknown} value */
 function requireSpaceId(value) {
-  if (typeof value !== 'string' || value.length === 0 || value.length > SPACE_ID_MAX) {
-    throw new ValidationError('spaceId must be a non-empty string of at most 128 characters', { field: 'spaceId' });
-  }
-  return value;
+  // Single source of truth for space identity: the same normalization as the
+  // permission gate (checkSpaceId trims and refuses control characters), so
+  // the checked space and the stored/carried one are always the same.
+  return checkSpaceId(value);
 }
 
 /** @param {unknown} value */
