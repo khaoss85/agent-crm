@@ -489,19 +489,20 @@ function identitiesOf(row) {
 }
 
 /**
- * backlog:54a83e2fd0d2 — the author's word in cronologia, «Creata da» and
- * Storico: the row's own profile name, never the Team ordinal («Rossi
- * (2)») and never merged across rows (review Muse rev-agent-crm-988
- * testa fe04fb68: two rows that paint the same name modulo case stay
- * distinct authors, each with its own casing — a lower-cased name alone
- * never joins people, agent-crm#644/#742). The same person reads one
- * author because it joins in one `teamPeople` row first (same
- * operatorAccountId, or same mailbox and name modulo case) and reads that
- * row's name.
+ * backlog:54a83e2fd0d2 — the author's word in cronologia, «Creata da»,
+ * Storico and the scheda signatures (notes, outbound passages:
+ * backlog:3f3c143b seguito): the row's own profile name, never the Team
+ * ordinal («Rossi (2)») and never merged across rows (review Muse
+ * rev-agent-crm-988 testa fe04fb68: two rows that paint the same name
+ * modulo case stay distinct authors, each with its own casing — a
+ * lower-cased name alone never joins people, agent-crm#644/#742). The same
+ * person reads one author because it joins in one `teamPeople` row first
+ * (same operatorAccountId, or same mailbox and name modulo case) and reads
+ * that row's name.
  * @param {{ name?: string | null, email?: string | null, subjects?: Array<string> }} row
  * @returns {string | null}
  */
-function authorName(row) {
+export function authorName(row) {
   const plain = Array.isArray(row?.subjects)
     ? row.subjects.map((subject) => subjectText(subject)).find((text) => text !== null) ?? null
     : null;
