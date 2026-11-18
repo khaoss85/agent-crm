@@ -1559,7 +1559,10 @@ test('dd570f6d501e: Escape on the new-space button closes the menu too', async (
   assert.equal(newSpaceToggle(mount).__focused, true, 'focus stays on the button');
 });
 
-test('dd570f6d501e: an outside click closes the new-space menu without stealing focus', async () => {
+test('dd570f6d501e: an outside click closes the new-space menu and returns focus to the opener', async () => {
+  // Corrected acceptance (verifier BACK on 66476a0, supervisor note): an
+  // outside click used to leave focus where the user put it (BODY in the
+  // Mac check) — it must return to the element that opened the panel.
   const docClicks = [];
   const doc = {
     ...createFakeDocument(),
@@ -1576,7 +1579,7 @@ test('dd570f6d501e: an outside click closes the new-space menu without stealing 
   for (const handler of docClicks) handler({ target: mount });
   await flush();
   assert.equal(newSpaceMenus(mount).length, 0, 'an outside click closes the menu');
-  assert.notEqual(newSpaceToggle(mount).__focused, true, 'an outside click leaves focus where the user put it');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the element that opened the panel');
 });
 
 test('dd570f6d501e: the opening click stops propagation so the document closer never sees it', async () => {
@@ -2133,4 +2136,44 @@ test('backlog:3136d15d only a paused child switch reads not-allowed, a busy one 
   const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
   assert.doesNotMatch(css, /\.bo-spazi-toggle:disabled\s*,/);
+});
+
+// backlog:dd570f6d501e (seguito, prova del Mac): an outside click sent focus
+// to BODY — focus must return to the element that opened the panel. And the
+// review P2: the outside-click closer must not full-render and destroy the
+// just-clicked control.
+test('dd570f6d501e: an outside click closes the menu, keeps the clicked control and returns focus to the opener', async () => {
+  const doc = createFakeDocument();
+  const docListeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (docListeners[type] ??= []).push(handler); };
+  const fireDoc = (type, event) => { for (const handler of docListeners[type] ?? []) handler(event); };
+  const { mount, view: v } = view({ doc });
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  const opener = newSpaceToggle(mount);
+  const outside = mount.findAll('button').find((node) => node !== opener);
+  assert.ok(outside, 'there is an outside control to click');
+  fireDoc('click', { target: outside });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'an outside click closes the menu');
+  assert.ok(mount.contains(opener), 'the opener survives: no full repaint destroys the clicked control');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the element that opened the panel');
+});
+
+// backlog:dd570f6d501e (review P2): opening the menu moves focus to the
+// first voice — the claimed cure a test could never fail for.
+test('dd570f6d501e: opening the new-space menu moves focus to its first voice', async () => {
+  const { mount, view: v } = view({});
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  const menu = mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  assert.ok(menu, 'the menu opens');
+  const firstVoice = menu.querySelector('button');
+  assert.ok(firstVoice, 'the menu has a first voice');
+  assert.equal(firstVoice.__focused, true, 'opening the menu moves focus to the first voice');
 });
