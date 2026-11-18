@@ -170,3 +170,34 @@ export function createShellSchemaClient({ request, adminBase, activeSpace, stora
 
 /** The sessionStorage key prefix of a space's schema copy. */
 export const SCHEMA_STORAGE_PREFIX = 'bo-schema:';
+
+/**
+ * Identity of one schema copy for the shell's stamp (backlog:c048bf6f2dd3,
+ * ritorno 1): the version when the schema names one, plus a short FNV-1a
+ * digest of the copy — the same algorithm as spaceBadgeIndex in
+ * admin-shell.js, kept here so this module stays standalone and
+ * node-testable. A content change without a version bump still moves the
+ * stamp. A missing or unserializable value stamps empty, never throws. The
+ * schema is the application's own description (modules, fields, workflows,
+ * pipelines, providers, the spine's declared contract): no customer record,
+ * no person's name, e-mail or phone — safe to show.
+ * @param {unknown} schema
+ */
+export function schemaStampOf(schema) {
+  const empty = { version: '', digest: '' };
+  if (schema === null || typeof schema !== 'object') return empty;
+  const rawVersion = /** @type {any} */ (schema).version;
+  const version = typeof rawVersion === 'string' || typeof rawVersion === 'number' ? String(rawVersion) : '';
+  let text = '';
+  try {
+    text = JSON.stringify(schema) ?? '';
+  } catch {
+    return { version, digest: '' };
+  }
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return { version, digest: (hash >>> 0).toString(16).padStart(8, '0') };
+}
