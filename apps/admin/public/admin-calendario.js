@@ -2293,6 +2293,7 @@ export function createCalendarioView(deps) {
     layout.appendChild(main);
     wrap.appendChild(layout);
     mount.appendChild(wrap);
+    fitEventRows();
     if (pop) placePopover(main, pop);
     if (paintedPop) placeEventPopover(main, paintedPop, selected);
     trackRetainedDraft();
@@ -3501,7 +3502,8 @@ export function createCalendarioView(deps) {
     // backlog:667f1f1c: below 60 min no row paints under the title rows —
     // the verifier saw the initials dot half-cut in a 43px block. Badges
     // (origin, cancelled) ride the line that already paints; the foot with
-    // the initials dot paints only where it fits whole (60+ min).
+    // the initials dot paints from 60 min up, and fitEventRows drops it
+    // wherever the painted block cannot hold it whole (real measure).
     const badgeNodes = [];
     // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
     // keeps its badge, a Google-imported event and an online-link booking
@@ -3562,6 +3564,32 @@ export function createCalendarioView(deps) {
       else paintedEvents.get(id)?.focus?.();
     });
     return item;
+  }
+
+  /**
+   * backlog:667f1f1c — the foot (initials dot, badges) paints only where
+   * the painted block holds it whole. The fixed 60-min threshold was not
+   * enough: a 60-min block with a two-line title still cut the dot in half
+   * on the verifier's Mac. So after the week lands in the document this
+   * pass measures each painted block for real (scrollHeight against
+   * clientHeight, valid synchronously once appended) and drops the foot
+   * wherever the block overflows. A title plus time always fits from
+   * 45 min up, so one dropped foot is enough; the loop is only a guard.
+   * Without real layout numbers (unit tests without a browser engine) the
+   * pass does nothing and the foot stays as rendered.
+   */
+  function fitEventRows() {
+    for (const item of paintedEvents.values()) {
+      if (!item || typeof item.querySelector !== 'function') continue;
+      if (typeof item.scrollHeight !== 'number' || typeof item.clientHeight !== 'number') continue;
+      if (item.clientHeight <= 0) continue;
+      for (let guard = 0; guard < 2; guard += 1) {
+        if (item.scrollHeight <= item.clientHeight + 1) break;
+        const foot = item.querySelector('.cal-day-foot');
+        if (!foot || typeof foot.remove !== 'function') break;
+        foot.remove();
+      }
+    }
   }
 
   /**
