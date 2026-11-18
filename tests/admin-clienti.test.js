@@ -1836,3 +1836,32 @@ test('5af848afdb63: a failed rinnovi read keeps the other views\u2019 numbers, n
   assert.ok(mount.textContent.includes('Marco Rossi'), 'the list reads again after Riprova');
   assert.ok(tabs().includes('Rinnovi entro 30 giorni 15'), 'the numbers are still there after the retry');
 });
+
+test('5af848afdb63: a failed read never borrows another space\u2019s numbers', async () => {
+  // Review Codex giro 1 (P2): the kept pills are keyed by space too, so a
+  // failed read in space B shows no numbers instead of space A's.
+  const views = MENUS.views.map((view, index) => ({ ...view, count: (index + 1) * 3 }));
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (String(new URL(path, 'http://localhost').searchParams.get('spaceId') ?? '') === 'space-b') {
+        throw Object.assign(new Error('the list is not readable here'), { status: 409, code: 'CUSTOMER_LIST_UNAVAILABLE' });
+      }
+      return {
+        customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS, views,
+      };
+    },
+  };
+  let space = 'space-a';
+  const { mount } = await render(client, { spaceId: () => space });
+  const tabs = () => buttons(mount).filter((node) => node.getAttribute('role') === 'tab').map((node) => node.textContent);
+  assert.ok(tabs().includes('Tutti 3'), `space A reads its numbers: ${JSON.stringify(tabs())}`);
+  space = 'space-b';
+  byAttr(mount, 'button', 'data-view', 'rinnovi-30-giorni').dispatch('click');
+  await flush();
+  const after = tabs();
+  assert.deepEqual(after, ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni'],
+    `space B shows no pill from space A: ${JSON.stringify(after)}`);
+});

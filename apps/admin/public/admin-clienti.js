@@ -261,10 +261,11 @@ export function createCustomerListView(deps) {
   // so a failed read keeps the other views' counts instead of wiping them.
   let lastViews = null;
   let lastViewsKey = null;
-  /** The explicit filters a pill count was read over: counts never depend on
-   * the active view, so a failed read reuses them while the filters match. */
+  /** The space and the explicit filters a pill count was read over: counts
+   * never depend on the active view, so a failed read reuses them while the
+   * space and the filters match — never another space's numbers. */
   function filterKey() {
-    return [state.q, state.canale, state.stato, state.campo, state.valore].join('|');
+    return [activeSpaceId() ?? '', state.q, state.canale, state.stato, state.campo, state.valore].join('|');
   }
   /** Keep the last answer's view pills (with their numbers) for a later failed read. */
   function rememberViews(key) {
@@ -615,9 +616,9 @@ export function createCustomerListView(deps) {
   /** The menus and the columns, from the last answer or the prototype fallbacks. */
   function metaOf() {
     // backlog:5af848afdb63: a failed read keeps the last pills — with their
-    // numbers — while the filters match, so one refusing list never wipes
-    // the others' counts. Unknown stays bare: a missing count is «unknown»,
-    // never a false 0.
+    // numbers — while the space and the filters match, so one refusing list
+    // never wipes the others' counts, nor borrows another space's. Unknown
+    // stays bare: a missing count is «unknown», never a false 0.
     const views = Array.isArray(data?.views) ? data.views
       : (lastViews !== null && lastViewsKey === filterKey() ? lastViews : FALLBACK_VIEWS);
     const sorts = data?.sorts ?? FALLBACK_SORTS;
