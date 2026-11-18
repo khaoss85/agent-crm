@@ -4849,6 +4849,31 @@ export function createCalendarioView(deps) {
           failed: CONFIRM_FORM_NOTE,
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
+        // Name exactly what the reopened form still misses, like Proponi
+        // does — the slot gives person and times, never customer or service.
+        // The form reopens with the slot first, so the note reads the
+        // slot-filled values, never the dropped shut-form ones.
+        reopenManual({ teamMemberId: member, startsAt, endsAt });
+        const filled = state.manual ?? {};
+        const slotDate = romeDayKey(startsAt);
+        const slotStartMin = romeMinutes(startsAt);
+        const slotEndMin = romeMinutes(endsAt);
+        const missing = missingBookingFields(
+          {
+            teamMemberId: member,
+            serviceKey: typeof filled.serviceKey === 'string' ? filled.serviceKey : manualValue('serviceKey'),
+            date: typeof slotDate === 'string' && slotDate !== '' ? slotDate
+              : (typeof filled.date === 'string' ? filled.date : manualValue('date')),
+            start: slotStartMin !== null ? minutesLabel(slotStartMin)
+              : (typeof filled.start === 'string' ? filled.start : manualValue('start')),
+            end: slotEndMin !== null ? minutesLabel(slotEndMin)
+              : (typeof filled.end === 'string' ? filled.end : manualValue('end')),
+          },
+          Boolean(state.customerPick && typeof state.customerPick.id === 'string' && state.customerPick.id !== ''),
+        );
+        if (missing.length > 0) {
+          state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+        }
       }
     }
     renderAll();
@@ -5316,6 +5341,10 @@ export function createCalendarioView(deps) {
       ['end', 'time', 'Fine', ''],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
+    // The missing-data block always paints, right after the Fine field, so
+    // its text never jumps the buttons below and the note stays put until
+    // an edit clears it.
+    const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
     for (const [name, type, label, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
@@ -5331,6 +5360,7 @@ export function createCalendarioView(deps) {
       // Giorno and Note take the row; Inizio and Fine sit side by side, so
       // no date ever gets cut on the 340 px popover.
       form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
+      if (name === 'end') form.appendChild(bookingNoteNode);
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -5432,8 +5462,6 @@ export function createCalendarioView(deps) {
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
-    const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
-    if (state.bookingNote) panel.appendChild(bookingNoteNode);
     return panel;
   }
 
