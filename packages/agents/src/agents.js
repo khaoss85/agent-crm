@@ -463,7 +463,11 @@ export function checkAgentUpdateInput(record) {
 /**
  * Validate the agent status input (backlog:7d169a3b1dd2): active or paused,
  * nothing else. A deployment that pauses the wrong agent pauses real work,
- * so the value is closed-vocabulary, never a free string.
+ * so the value is closed-vocabulary, never a free string. Backlog
+ * 8605b6f520c0: the status write runs for every team row — a catalogue
+ * agent pauses and resumes like a hand-written one — while the content
+ * update (checkAgentUpdateInput) stays hand-written: the catalogue owns
+ * its rows.
  */
 export function checkAgentStatusInput(record) {
   const input = record && typeof record === 'object' ? record : {};
@@ -472,9 +476,6 @@ export function checkAgentStatusInput(record) {
     throw new ValidationError('status must be active or paused', { field: 'status' });
   }
   const agentSourceKey = checkRecordKey(input.agentSourceKey, 'agentSourceKey');
-  if (!isCustomAgentSourceKey(agentSourceKey)) {
-    throw new ValidationError('only a hand-written agent can be paused or resumed', { field: 'agentSourceKey' });
-  }
   return {
     spaceId: checkSpaceId(input.spaceId),
     agentSourceKey,

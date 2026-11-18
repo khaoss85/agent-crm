@@ -16,6 +16,9 @@ import {
   buildAgentCards,
   createAgentiView,
 } from '../apps/admin/public/admin-agenti.js';
+// The real server-side validator: the double below writes only what the
+// server would accept (backlog:8605b6f520c0 review giro 1 P1).
+import { checkAgentStatusInput } from '../packages/agents/src/agents.js';
 
 const NOW = '2026-11-13T10:00:00.000Z';
 const RISPOSTE = { id: 7, sourceKey: 'agent:presti:risposte', spaceId: 'presti', name: 'Risposte', role: 'Risponde ai clienti', status: 'active' };
@@ -46,13 +49,11 @@ function driveClient({ agents = [RISPOSTE, MANO], catalog = CATALOG } = {}) {
       if (path.startsWith('/api/modules/teammate-assignment/records?')) return { items: [] };
       if (path.startsWith('/api/modules/teammate-run/records?')) return { items: [] };
       if (path === '/api/agents/set-status' && method === 'POST') {
-        const row = findRow(body);
+        const checked = checkAgentStatusInput(body);
+        const row = findRow(checked);
         if (!row) throw Object.assign(new Error('Unknown agent in this space'), { code: 'AGENT_UNKNOWN', status: 404 });
-        if (body.status !== 'active' && body.status !== 'paused') {
-          throw Object.assign(new Error('bad status'), { code: 'VALIDATION_ERROR', status: 400 });
-        }
-        const duplicate = row.status === body.status;
-        row.status = body.status;
+        const duplicate = row.status === checked.status;
+        row.status = checked.status;
         return { agent: { ...row }, duplicate };
       }
       throw new Error(`unexpected ${method} ${path}`);
