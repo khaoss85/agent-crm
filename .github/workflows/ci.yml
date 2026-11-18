@@ -84,14 +84,23 @@ jobs:
     steps:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
+      # Clean checkout every job (backlog:f16911e3, no workspace reuse on this
+      # public repo's self-hosted runner): each job starts from a fresh tree
+      # so no `.git/hooks`, `.git/info/attributes` or `.git/config` key from
+      # a previous job can survive into this one's checkout.
       - uses: actions/checkout@v4
         with:
+          clean: true
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No cache: npm on the self-hosted runners: ~/.npm stays on disk between
-          # runs, and restoring the 160 MB Actions cache cost ~70 s per job.
+          # Savings live ONLY on dependencies, never on the workspace: the npm
+          # cache restores read-only outside the work dir, keyed by the
+          # package-lock hash, and npm itself verifies every tarball against
+          # the lockfile before use (backlog:f16911e3; baseline 13/11: ~1.2 GB
+          # rewritten per job start plus ~107 MB of npm ci, disk wait 16-20%).
+          cache: 'npm'
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -206,13 +215,17 @@ jobs:
       # `node --test` runs (the PR gate, the pre-push hook) still run only
       # the slices' wiring. Same backlog as the slicing above.
     steps:
+      # Clean checkout every job (backlog:f16911e3): no workspace reuse, the
+      # disk saving lives only on the read-only npm cache below.
       - uses: actions/checkout@v4
         with:
+          clean: true
           # Full history: see the job-level comment above.
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: 'npm'
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -396,8 +409,10 @@ jobs:
       cancel-in-progress: true
     if: ${{ github.event_name == 'push' }}
     steps:
+      # Clean checkout every job (backlog:f16911e3): no workspace reuse.
       - uses: actions/checkout@v4
         with:
+          clean: true
           # A job that reads history, because it checks a historical fact.
           # site/claims.json records the commit its public numbers were
           # measured at, and scripts/measurement.js has to show that commit is an
@@ -419,6 +434,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          # Read-only npm cache outside the work dir (backlog:f16911e3).
+          cache: 'npm'
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this

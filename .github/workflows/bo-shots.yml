@@ -40,7 +40,11 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     timeout-minutes: 20
     steps:
+      # Clean checkout every job (backlog:f16911e3): no workspace reuse, so the
+      # render always sees exactly the checked-out ref.
       - uses: actions/checkout@v4
+        with:
+          clean: true
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

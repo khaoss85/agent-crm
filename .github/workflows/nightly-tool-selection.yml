@@ -78,12 +78,18 @@ jobs:
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+      # Clean checkout every job (backlog:f16911e3): no workspace reuse on the
+      # shared self-hosted runner; the disk saving lives only on the read-only
+      # npm cache below (outside the work dir, npm verifies every tarball).
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
+        with:
+          clean: true
       - if: steps.window.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: 'npm'
       - if: steps.window.outputs.run == 'true'
         run: npm ci
       - if: steps.window.outputs.run == 'true'
