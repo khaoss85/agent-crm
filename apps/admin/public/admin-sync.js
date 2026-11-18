@@ -1358,6 +1358,13 @@ export function createSyncView(deps) {
             go(route);
           });
           stateCell.appendChild(link);
+        } else if (route !== null) {
+          // Review #1010 P2: a channel the product can connect (a route
+          // exists) but this reader may not touch (observer) keeps the
+          // shared `Da collegare`, the same words Connettori paints —
+          // the missing Collega is a permission, never an unavailable
+          // channel.
+          stateCell.appendChild(uiChannelState(doc, { text: CHANNEL_STATE_LABELS['da-collegare'].text, tone: CHANNEL_STATE_LABELS['da-collegare'].tone, extra: 'bo-sync-muted' }));
         } else {
           // Backlog 6d0df351 (supervisore 17/11): a row nothing here can
           // connect (Stripe) says the shared `Non ancora disponibile`,

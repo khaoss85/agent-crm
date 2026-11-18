@@ -88,3 +88,28 @@ test('6d0df351: Stato sync parla come Connettori (scritta, TG/↔, conteggio sul
   assert.ok(text.includes('Non ancora disponibile'), 'le righe senza collegamento dicono «Non ancora disponibile»');
   assert.ok(text.includes(`2 di ${rows.length} collegati`), `il conteggio usa le righe mostrate (${rows.length})`);
 });
+
+test('6d0df351/P2 review #1010: un osservatore vede «Da collegare» dove si puo, «Non ancora disponibile» solo dove non si puo', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSyncView({
+    doc,
+    mount,
+    client: fakeClient({ activity: activityOf({ connections: [], feed: [] }) }),
+    storage: { getItem: () => 'prova', setItem: () => {}, removeItem: () => {} },
+    role: () => 'observer',
+    navigate: () => {},
+    toast: () => {},
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  const whatsapp = mount.findAll('tr').find((row) => row.textContent.includes('WhatsApp'));
+  assert.ok(whatsapp, 'la riga WhatsApp resta in tabella');
+  assert.ok(whatsapp.textContent.includes('Da collegare'), 'un canale collegabile non dice mai «Non ancora disponibile»');
+  assert.ok(!whatsapp.textContent.includes('Non ancora disponibile'), 'osservatore: permesso, non indisponibilita');
+  assert.equal(whatsapp.findAll('a').length, 0, 'nessun Collega per un osservatore');
+  const stripe = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
+  assert.ok(stripe && stripe.textContent.includes('Non ancora disponibile'), 'Stripe resta «Non ancora disponibile»');
+  assert.ok(!text.includes('non collegato'), 'mai «non collegato» in tabella');
+});
