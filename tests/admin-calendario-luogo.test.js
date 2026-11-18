@@ -1,7 +1,8 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
+import { readFileSync } from 'node:fs';
+import { createCalendarioView, isWebLink } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -249,4 +250,19 @@ test('9ff9a9ee1fea: un link senza luogo non parte e lo dice in italiano', async 
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 0, 'no write without the place label');
   assert.ok(/luogo/i.test(mount.textContent), 'the note names the place in Italian');
+});
+
+test('9ff9a9ee1fea: il controllo del link non usa regex letterali con doppia barra', () => {
+  const source = readFileSync(
+    new URL('../apps/admin/public/admin-calendario.js', import.meta.url),
+    'utf8',
+  );
+  assert.ok(!source.includes('/^https?:'), 'no literal http regex: the /bo pilot cuts the shell after //');
+  assert.ok(isWebLink('https://meet.example.com/abc-def'));
+  assert.ok(isWebLink('http://example.com/x'));
+  assert.ok(isWebLink('  HTTPS://example.com/x  '));
+  assert.ok(!isWebLink('ftp://example.com/x'));
+  assert.ok(!isWebLink('meet.example.com/abc-def'));
+  assert.ok(!isWebLink(''));
+  assert.ok(!isWebLink(null));
 });

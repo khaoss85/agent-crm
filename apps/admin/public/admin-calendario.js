@@ -214,12 +214,17 @@ export function missingBookingFields(values, hasCustomerPick) {
  * Pure and DOM-free so it is unit-tested without a browser.
  * @param {{location?: unknown, locationUrl?: unknown}} claim
  */
+export function isWebLink(value) {
+  const link = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return link.startsWith('http://') || link.startsWith('https://');
+}
+
 export function placeRefusal(claim) {
   const place = typeof claim?.location === 'string' ? claim.location.trim() : '';
   const link = typeof claim?.locationUrl === 'string' ? claim.locationUrl.trim() : '';
   if (link === '') return null;
   if (place === '') return 'Scrivi il luogo («Online») accanto al link: un link da solo non dice dove ci si vede.';
-  if (!/^https?:\/\//i.test(link)) return 'Il link della riunione deve iniziare con http(s)://, come un indirizzo web.';
+  if (!isWebLink(link)) return 'Il link della riunione deve iniziare con http(s)://, come un indirizzo web.';
   return null;
 }
 
@@ -3679,7 +3684,7 @@ export function createCalendarioView(deps) {
     if (place !== '') {
       const placeUrl = typeof row?.locationUrl === 'string' ? row.locationUrl.trim() : '';
       const placeRow = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-location' } });
-      if (/^https?:\/\//i.test(placeUrl)) {
+      if (isWebLink(placeUrl)) {
         placeRow.appendChild(el(doc, 'span', { text: 'Luogo: ' }));
         placeRow.appendChild(el(doc, 'a', {
           className: 'cal-pop-link',
