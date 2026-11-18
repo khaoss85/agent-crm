@@ -222,7 +222,12 @@ export function createCommercialDomain(options = {}) {
     // `opportunity.quote_link_*` audit row (backlog:bf1bc20a), so the
     // Cronologia shows each link creation even when the browser answer is
     // lost. Additive: the share-link contract (input, answers) is unchanged.
-    version: 13,
+    // 14: the history row must have a place to land before the mint or the
+    // rotation commits (review #995 P1) — refuse with a typed storage error
+    // when the opportunity audit or the quote's opportunity is missing, so
+    // no live bearer is left behind without its Cronologia row. Additive:
+    // the share-link contract (input, answers) is unchanged.
+    version: 14,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
