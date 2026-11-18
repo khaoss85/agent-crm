@@ -309,7 +309,15 @@ export function memberInitials(subject) {
  * status. Sorted by subject so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
  */
-const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
+const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa', sending: 'invio in corso' });
+
+/**
+ * Client-only marker for a membership whose grant request is still out:
+ * the row paints «invio in corso», never a status the 200 has not
+ * confirmed. The re-read (or the confirmed 200 below) replaces it with the
+ * server truth. Never sent to the server, never read from it.
+ */
+const INVITE_SENDING_STATUS = 'sending';
 
 /** Strongest role first: a person holding two subjects shows the higher one. */
 const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
@@ -1102,6 +1110,29 @@ export function createSpaziAccessiView(deps) {
   function snapshotMembers() {
     return Array.isArray(state.members) ? state.members.map((row) => ({ ...row })) : null;
   }
+  /**
+   * The grant request is out but the 200 has not answered yet: the person
+   * paints at once as «invio in corso», never as «invitato». A subject the
+   * store already lists is left alone — a second row would be the invented
+   * one, not this paint.
+   */
+  function markInviteSending(subject, role) {
+    if (!Array.isArray(state.members)) return;
+    const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
+    if (found !== undefined) return;
+    state.members.push({ subject, role, status: INVITE_SENDING_STATUS });
+  }
+  /**
+   * The 200 refused the grant (or never confirmed a status): drop the
+   * «invio in corso» row so the re-read paints only the server truth.
+   */
+  function removeInviteSending(subject) {
+    if (!Array.isArray(state.members)) return;
+    const at = state.members.findIndex(
+      (row) => row !== null && typeof row === 'object' && row.subject === subject && row.status === INVITE_SENDING_STATUS,
+    );
+    if (at >= 0) state.members.splice(at, 1);
+  }
   function applyInvite(subject, role, status) {
     if (!Array.isArray(state.members)) return;
     const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
@@ -1123,16 +1154,28 @@ export function createSpaziAccessiView(deps) {
     }
   }
   /**
-   * The transient status of a just-invited person: the 200 answer's own
-   * status when it carries one, else «invited» — the person has not accessed
-   * yet. The refresh after it paints the server truth.
+   * The status the 200 just confirmed for an invited person: its own
+   * status, or the nested membership's (the grant route answers
+   * `{entity, binding, event}`, the status living on the entity). Null
+   * when the answer confirms nothing — the caller then keeps the
+   * «invio in corso» row until the re-read paints the server truth, and
+   * never invents an «invited» the 200 did not confirm.
    * @param {unknown} answer
+   * @returns {string|null}
    */
   function inviteStatusOf(answer) {
-    const status = answer !== null && typeof answer === 'object'
-      ? /** @type {{status?: unknown}} */ (answer).status
-      : null;
-    return typeof status === 'string' && status.trim() !== '' ? status.trim() : 'invited';
+    const pick = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+    if (answer === null || typeof answer !== 'object') return null;
+    const direct = pick(/** @type {{status?: unknown}} */ (answer).status);
+    if (direct !== null) return direct;
+    for (const key of ['entity', 'membership']) {
+      const nested = /** @type {Record<string, unknown>} */ (answer)[key];
+      if (nested !== null && typeof nested === 'object') {
+        const confirmed = pick(/** @type {{status?: unknown}} */ (nested).status);
+        if (confirmed !== null) return confirmed;
+      }
+    }
+    return null;
   }
 
   function activeSpace() {
@@ -1621,12 +1664,24 @@ export function createSpaziAccessiView(deps) {
         say('Servono la persona e il motivo: senza motivo, il server rifiuta l\u2019invito.', true);
         return;
       }
+      // backlog:71a6574a review giro 4 (P1): the row paints now, before
+      // the 200, as «invio in corso» — never as «invitato», which only a
+      // 200 may confirm. The pending row rides the same keepMembers
+      // snapshot as the giro 3 cure, so one source of truth covers it.
+      markInviteSending(who, picked);
+      render();
       try {
         const answer = await mutate('/api/spine/memberships', { subject: who, role: picked, reason: motive });
         say(`${who} invitato come ${spaceRoleLabel(picked)}.`);
         // backlog:71a6574a: the 200 created the membership — the row paints
-        // now with live buttons; the refresh after it reconciles.
-        applyInvite(who, picked, inviteStatusOf(answer));
+        // now with live buttons; the refresh after it reconciles. Only a
+        // status the 200 confirmed replaces the pending row, otherwise the
+        // pending row stays until the re-read paints the server truth.
+        const confirmed = inviteStatusOf(answer);
+        if (confirmed !== null) {
+          removeInviteSending(who);
+          applyInvite(who, picked, confirmed);
+        }
         // Review giro 2 (P2): the confirmed overrides snapshot survives the
         // refresh like on the flip path — a click while the re-read is out
         // never paints «Permessi non disponibili.».
@@ -1649,7 +1704,9 @@ export function createSpaziAccessiView(deps) {
           ? state.overrides.map((row) => ({ ...row }))
           : null;
         // backlog:71a6574a review giro 3 (P1): the refused invite changed
-        // nothing, so the team in state is the truth to keep.
+        // nothing, so the team in state is the truth to keep. The pending
+        // «invio in corso» row goes first: a refused grant leaves no row.
+        removeInviteSending(who);
         const keptInviteRefusalMembers = snapshotMembers();
         await reload({ keepOverrides: confirmedInviteRefusal, keepMembers: keptInviteRefusalMembers });
         state.inviteRefusal = message;

@@ -2208,13 +2208,85 @@ test('71a6574a: an invited person paints at once, before the re-read lands', asy
   await flush(8);
   const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
   assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
-  assert.ok(statusColumn(mount).includes('invitato'), 'the new row reads invitato while the re-read is out');
+  // Review giro 4 (P1): the stub 200 carries no status, so the pending row
+  // stays — «invio in corso», never an unconfirmed «invitato».
+  assert.ok(statusColumn(mount).includes('invio in corso'), 'the new row reads «invio in corso» while the re-read is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no invented «invitato» without a confirming 200');
   assert.ok(!mount.findAll('button').some((node) => node.disabled), 'no grey disabled button while the re-read is out');
   gate.free();
   await done;
   await flush();
   const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
   assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth keeps the invited person');
+  assert.ok(statusColumn(mount).includes('attivo'), 'the re-read paints the server truth');
+  assert.ok(!statusColumn(mount).includes('invio in corso'), 'the pending row is gone once the truth lands');
+});
+
+// Backlog 71a6574a review giro 4 (P1): the 200 never confirms «invitato» —
+// before it answers the row reads «invio in corso» and nothing else.
+test('71a6574a review giro 4 (P1): before the 200 the invited row reads «invio in corso», never «invitato»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const base = stubClient({ members });
+  let releasePost = null;
+  const client = {
+    async request(path, options = {}) {
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      if (path === '/api/spine/memberships' && method === 'POST') {
+        await new Promise((resolve) => { releasePost = resolve; });
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  await v.render();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  assert.ok(releasePost !== null, 'the 200 is still out');
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed before the 200');
+  assert.ok(statusColumn(mount).includes('invio in corso'), 'the row reads «invio in corso» while the request is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no «invitato» before the 200 confirms it');
+  releasePost();
+  await done;
+  await flush();
+  assert.ok(statusColumn(mount).includes('attivo'), 'after the 200 the re-read paints the server truth');
+});
+
+// Backlog 71a6574a review giro 4 (P1): the production grant answers
+// `{entity, binding, event}` with the status on the entity — a confirmed
+// status paints at once, even while the re-read is out.
+test('71a6574a review giro 4 (P1): a 200 carrying a status paints that status at once', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const base = stubClient({ members });
+  const client = {
+    async request(path, options = {}) {
+      const answer = await base.request(path, options);
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      if (path === '/api/spine/memberships' && method === 'POST') {
+        // The production grant shape: the status lives on the entity.
+        return { entity: { subject: 'nuova@esempio.it', role: 'operator', status: 'active' }, binding: null, event: null };
+      }
+      return answer;
+    },
+  };
+  const gate = gatedGets(client, ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  assert.ok(statusColumn(mount).includes('attivo'), 'the 200-confirmed status paints while the re-read is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no invented «invitato» beside the confirmed status');
+  gate.free();
+  await done;
+  await flush();
+  assert.ok(statusColumn(mount).includes('attivo'), 'the server truth keeps the confirmed status');
 });
 
 test('71a6574a: a removed person reads sospeso at once, before the re-read lands', async () => {
