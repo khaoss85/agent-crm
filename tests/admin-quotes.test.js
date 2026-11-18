@@ -248,7 +248,8 @@ test('version history lists immutable versions with their policy decision', asyn
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('Richiede approvazione'));
-  assert.ok(rows[1].textContent.includes('standard-sales-discount@1'), 'the row names the policy that decided it');
+  assert.ok(rows[1].textContent.includes('Standard sales discount (v1)'), 'the row names the policy that decided it, in words');
+  assert.ok(!rows[1].textContent.includes('standard-sales-discount@1'), 'no raw rule id in the row');
   assert.ok(rows[1].textContent.includes('una tantum 5.000' + NBSP + '€'), 'versions show grouped periods');
   assert.ok(rows[1].textContent.includes('3.200' + NBSP + '€ ogni 1 mese'), 'recurring period shown per version');
 });
@@ -276,8 +277,9 @@ test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total
   const text = mount.textContent;
   assert.ok(text.includes('3.200' + NBSP + '€'), 'the valued recurring group leads the hero');
   assert.ok(!text.includes('una tantum 0'), 'the hero never shows a zero one-time total');
-  assert.ok(text.includes('standard-sales-discount@1'), 'the history row names the deciding policy');
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
+  assert.ok(text.includes('Standard sales discount (v1)'), 'the history row names the deciding policy in readable words');
+  assert.ok(!text.includes('standard-sales-discount@1'), 'no raw name@version id on screen');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
 });
 
 test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
@@ -317,7 +319,7 @@ test('8dc6d4a456e1: a version with no valued group paints a dash like the header
   const mount = createMount();
   await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
   const text = mount.textContent;
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · —'), 'no value reads as a dash, like the header');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · —'), 'no value reads as a dash, like the header');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {

@@ -159,7 +159,8 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Preventivo'), 'the linked quotes paint');
   assert.ok(text.includes('Bozza') && text.includes('una tantum 5.000 €'), 'the quote state and total paint in Italian');
   assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
-  assert.ok(text.includes('standard@3'), 'the version names the policy that decided it');
+  assert.ok(text.includes('Standard (v3)'), 'the version names the policy that decided it, in words');
+  assert.ok(!text.includes('standard@3'), 'no raw rule id on screen');
   const line = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'quote-line');
   assert.equal(line?.childNodes[0].textContent, 'Pacchetto 10 PT', 'the line names the package, never the SKU');
   assert.equal(line?.childNodes[1].textContent, 'Quantità 2 · sconto 5,00%', 'quantity and an Italian percentage');
@@ -171,7 +172,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   // A UUID actor is a technical id, never a name; a named actor paints.
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
   assert.ok(!text.includes('utente'), 'no actor hides behind «utente»');
-  assert.ok(text.includes('da —'), 'the UUID actor reads as unknown');
+  assert.ok(!text.includes('da —'), 'the UUID actor paints no empty tail (backlog:bfc070243427)');
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
   // The quote opens in the quote page, never inline.
@@ -250,9 +251,10 @@ test('the version row names the deciding policy and honors valued groups', async
   });
   await view.renderOfferDetail('off1');
   const text = mount.textContent;
-  assert.ok(text.includes('standard@3'), 'the deciding policy paints as name@version');
+  assert.ok(text.includes('Standard (v3)'), 'the deciding policy paints as readable words, never the raw id');
+  assert.ok(!text.includes('standard@3'), 'no raw name@version id on screen');
   assert.ok(text.includes('3.200 € ogni 1 mese'), 'a recurring version keeps its period');
-  assert.ok(text.includes('Versione 3 · Approvazione automatica · standard@3 · —'), 'a version with no value paints a dash like the header');
+  assert.ok(text.includes('Versione 3 · Approvazione automatica · Standard (v3) · —'), 'a version with no value paints a dash like the header');
   assert.ok(!text.includes('una tantum 0'), 'no zero one-time total beside a valued group');
 });
 
@@ -340,7 +342,10 @@ test('technical actor handles never paint, even off the UUID shape', async () =>
   assert.ok(!text.includes('admin-ui'), 'the service handle never paints');
   assert.ok(!text.includes('stranger-handle'), 'an uncorroborated handle never paints');
   assert.ok(!text.includes('utente'), 'no actor hides behind «utente»');
-  assert.ok(text.includes('Creata · da —'), 'an unnameable author reads as unknown');
+  // backlog:bfc070243427 (VERIFIER_BACK 2026-11-17): the «da —» tail the Mac
+  // failed is gone — the fact stays, the empty author does not.
+  assert.ok(!text.includes('da —'), 'an unnameable author paints no empty tail');
+  assert.ok(text.includes('Creata'), 'the creation fact stays');
 });
 
 test('a full linked page says it shows only the first rows', async () => {

@@ -94,7 +94,7 @@ const OCCASION_QUOTE = (overrides = {}) => ({
 });
 
 /** backlog:bfc070243427 — the stub behind the repro tests: one offer, its quotes, readable books. */
-function reproClient({ record, quotes = [], audit = [] } = {}) {
+function reproClient({ record, quotes = [], audit = [], versions = [] } = {}) {
   return {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
@@ -104,7 +104,7 @@ function reproClient({ record, quotes = [], audit = [] } = {}) {
       if (/^\/api\/opportunities\/[^/?]+$/.test(path)) return { ...record };
       if (path.startsWith('/api/modules/quote/records')) return { items: quotes };
       if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
-      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
       if (path.startsWith('/api/modules/price-book/records')) {
         return { items: [{ id: 'pb1', name: 'Listino', currency: 'EUR', active: true }] };
       }
@@ -253,4 +253,50 @@ test('bfc070243427: the skeleton with a dateless offer skips «Chiusura prevista
   await done;
   await flushAll();
   assert.ok(!mount.textContent.includes('Chiusura prevista'), 'the final paint has no close-date row either');
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-17 (OWNER_ANSWER 17/11):
+ * «presti-sales-discount@2» a vista. The frozen version names the discount
+ * rule in words, never the raw `name@version` id. RED before the cure (the
+ * raw id paints), GREEN after.
+ */
+test('bfc070243427 repro: the frozen version names the rule in words, never the raw id', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20', createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const versions = [{
+    id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'presti-sales-discount', policyVersion: 2,
+    policyDecision: 'auto_approve', decisionReason: null, totalsJson: OCCASION_QUOTE().totalsJson, currency: 'EUR',
+  }];
+  const mount = createMount();
+  await createOfferDetail({ doc: createFakeDocument(), mount, client: reproClient({ record, quotes: [OCCASION_QUOTE()], versions }) }).renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(!mount.textContent.includes('presti-sales-discount@2'), 'no raw rule id on screen');
+  assert.ok(mount.textContent.includes('Presti sales discount (v2)'), 'the rule reads as words with its version');
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-17 (AC-1, cronologia): the Mac
+ * saw «da —» in the history. An entry whose actor the reads cannot name
+ * paints no «da —» tail — the fact stays, the empty author does not.
+ * RED before the cure, GREEN after.
+ */
+test('bfc070243427 repro: a history entry with an unknown actor paints no «da —» tail', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20', createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const audit = [{
+    action: 'opportunity.created', actorId: 'ghost-9', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z',
+  }];
+  const mount = createMount();
+  await createOfferDetail({ doc: createFakeDocument(), mount, client: reproClient({ record, quotes: [], audit }) }).renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(!mount.textContent.includes('da —'), 'no empty author tail in the history');
+  assert.ok(mount.textContent.includes('Creata'), 'the creation fact stays');
+  assert.ok(!mount.textContent.includes('Creata da'), 'no empty author row in the facts either');
 });

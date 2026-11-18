@@ -919,3 +919,17 @@ export function priceBookLabel(book) {
   const unit = currency === 'EUR' ? '€' : currency;
   return unit === '' ? name : `${name} (${unit})`;
 }
+
+/**
+ * backlog:bfc070243427 (coordina backlog:ef92f7289b30): a discount rule as the
+ * operator reads it in a frozen version row. The record carries `name@version`
+ * (`presti-sales-discount@2`): the id never paints — the name as words with
+ * its version, «Presti sales discount (v2)».
+ * @param {unknown} name the rule id @param {unknown} version its version number
+ * @returns {string}
+ */
+export function discountRuleLabel(name, version) {
+  const words = String(name ?? '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const head = words === '' ? 'Regola di sconto' : words.charAt(0).toUpperCase() + words.slice(1);
+  return Number.isSafeInteger(version) ? `${head} (v${version})` : head;
+}

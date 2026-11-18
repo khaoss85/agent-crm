@@ -2,6 +2,7 @@
 
 import { elFor, uiBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
+import { discountRuleLabel } from './admin-labels.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -228,11 +229,12 @@ export function createQuoteView(deps) {
 
   /**
    * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
-   * decided it (`name@version` from the version record), never nothing.
+   * decided it, never nothing. backlog:bfc070243427: the name reads as words
+   * (`discountRuleLabel`), never the raw `name@version` id.
    */
   const policyTag = (version) => (
     typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
-      ? `${version.policy}@${version.policyVersion}`
+      ? discountRuleLabel(version.policy, version.policyVersion)
       : null
   );
 
