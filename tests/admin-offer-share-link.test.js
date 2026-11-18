@@ -244,6 +244,8 @@ test('bf1bc20a: «Crea un nuovo link» arms, cancels, then revokes and mints one
     && call.path === '/api/modules/quote/records/q1/actions/regenerate-link');
   assert.equal(regens.length, 1, 'one confirmed press mints one link through regenerate-link');
   assert.ok(regens[0].key, 'the regenerate rides the submission controller key');
+  assert.deepStrictEqual(regens[0].body, {},
+    'the regenerate posts the exact empty body the /bo bridge accepts (bo-crm-writes.js regenerate-quote-link allows only spaceId/expiresInDays/expectedRevision, else 400)');
   assert.ok(mount.textContent.includes(URL2), 'the fresh link shows on screen');
   assert.ok(shareBox(mount)?.textContent.includes('il vecchio non funziona più'),
     'the operator is told the old link is dead');
