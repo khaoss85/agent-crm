@@ -33,7 +33,8 @@ import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-conn
 import { humanReadError } from './admin-core.js';
 import { plural } from './admin-labels.js';
 import { readProfile } from './admin-profilo.js';
-import { loadFixCount, paintSettingsHead, settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs } from './admin-shell.js';
+import { paintSettingsHead } from './admin-settings.js'; // backlog:ef0888bf5a3f: the shared settings header.
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);

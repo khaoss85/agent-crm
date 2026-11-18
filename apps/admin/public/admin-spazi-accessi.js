@@ -46,6 +46,7 @@ import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
+import { paintSettingsHead } from './admin-settings.js'; // backlog:ef0888bf5a3f: the shared settings header, never a local copy.
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import { subjectText, teamPeople } from './admin-labels.js';
 
@@ -1020,12 +1021,14 @@ export function createSpaziAccessiView(deps) {
   }
 
   function renderHeader(box) {
-    box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
-    box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro', cls: 'bo-spazi-title' }));
-    box.appendChild(el(doc, 'p', {
-      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.',
-      cls: 'bo-muted bo-spazi-lede',
-    }));
+    // backlog:ef0888bf5a3f: the same header component the Impostazioni index
+    // and Personalizzazione paint (paintSettingsHead), never a local copy of
+    // it. The words stay this screen's own; the tab row above already names
+    // the «Spazi e accessi» area, so the header carries no kicker.
+    paintSettingsHead(doc, box, {
+      title: 'Spazi di lavoro',
+      subtitle: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.',
+    });
   }
 
   function renderSpaces(box) {

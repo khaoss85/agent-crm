@@ -5,6 +5,7 @@ import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
 import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { paintSettingsHead } from './admin-settings.js'; // backlog:ef0888bf5a3f: the shared settings header lives in its own module.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -1298,19 +1299,11 @@ export function renderUnknownRoute({ doc, mount }) {
 export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
 
 /**
- * Backlog 2302655b1fcf: the settings header both the Impostazioni index and
- * Personalizzazione paint — one component (h2.panel-title plus its
- * subtitle), so the two pages keep the same title, subtitle and hero size.
- * The 46px hero size comes from the `.panel.personalizzazione` ancestor both
- * pages paint around it (styles.css), never from a copied rule.
- * @param {any} doc
- * @param {any} box the panel the header opens
- * @param {{ title?: string, subtitle?: string }} [options]
+ * Backlog ef0888bf5a3f: the settings header keeps its `admin-shell.js`
+ * import path (index, Personalizzazione and older callers), but the
+ * component lives in `admin-settings.js` — re-exported here, never copied.
  */
-export function paintSettingsHead(doc, box, { title = '', subtitle = '' } = {}) {
-  box.appendChild(el(doc, 'h2', { text: title, cls: 'panel-title' }));
-  box.appendChild(el(doc, 'p', { text: subtitle, cls: 'muted' }));
-}
+export { paintSettingsHead };
 
 /**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
