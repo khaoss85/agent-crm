@@ -2116,23 +2116,18 @@ export async function rescheduleAppointment(context, request) {
   // the moved row is already committed and the caller would observe a
   // failure for a move that happened — so it is answered as data. Only the
   // provider's code is surfaced, never its text.
-  // A series converges through its head: the head carries the Google RRULE,
-  // so the push names the head's key — never a later occurrence, which would
-  // leave no link on Google and be exported as a new standalone single event
-  // duplicating the series. When the head moved its push carries the new
-  // slot; when it did not move the push is a noop.
   // A scoped converge already wrote this series to Google BEFORE the commit
   // (backlog:6acf0a73bfc3): pushing the head again after the commit would
   // re-apply one occurrence onto the whole master — cancelling one occurrence
-  // could wipe the entire Google series. One write path only. A wide scope on
-  // a link-absent series pushes every in-scope key instead: the grid moved
-  // every row, so Google sees every row, never just the head.
+  // could wipe the entire Google series. One write path only. A «solo questo»
+  // move pushes the moved occurrence itself — never the head, which did not
+  // move: pushing the head would export the unmoved row while the moved
+  // occurrence never reaches Google (review #947: pushKeys rewrote to the
+  // head sourceKey). A wide scope on a link-absent series pushes every
+  // in-scope key instead: the grid moved every row, so Google sees every
+  // row, never just the head.
   let pushKeys = [appointment.sourceKey];
-  if (scope === 'single' && first.seriesKey) {
-    const siblings = await appointments.listWhere({ seriesKey: first.seriesKey });
-    const head = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
-    if (head) pushKeys = [head.sourceKey];
-  } else if (scope !== 'single') {
+  if (scope !== 'single') {
     pushKeys = [];
     for (const entry of occurrences ?? []) {
       if (entry && typeof entry.sourceKey === 'string' && entry.sourceKey !== '' && !pushKeys.includes(entry.sourceKey)) {

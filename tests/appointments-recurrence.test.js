@@ -1598,6 +1598,41 @@ test('serie mai esportata con «calendar»: la converge local-only non spegne la
   assert.equal(moved.moved, true, 'la serie mai esportata si sposta in griglia');
   assert.equal(scoped.length, 1, 'la converge corre e risponde local-only');
   assert.equal(pushes.length, 1, 'local-only non sopprime la spinta legacy con calendario nominato');
+  assert.deepEqual(
+    pushes,
+    [booked.occurrences[2].sourceKey],
+    '«solo questo» spinge l’occorrenza mossa, mai la testa ferma (backlog:6acf0a73bfc3, review #947)',
+  );
+});
+
+test('«solo questo» con «calendar» spinge la chiave mossa in ogni posizione: testa, centro, coda (backlog:6acf0a73bfc3, review #947)', async () => {
+  const positions = [0, 1, 2];
+  for (const position of positions) {
+    const service = fakeAppointments();
+    const pushes = [];
+    const calendarSync = {
+      async pushAppointment(calendarId, sourceKey) {
+        pushes.push(sourceKey);
+        return { status: 'pushed', sourceKey };
+      },
+      async pushSeriesScope(headSourceKey) {
+        return { status: 'local-only', sourceKey: headSourceKey, reason: 'finto' };
+      },
+    };
+    const context = { ...contextFor(service), calendarSync };
+    const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+    const movedKey = booked.occurrences[position].sourceKey;
+    const moved = await rescheduleAppointment(context, {
+      id: booked.occurrences[position].id,
+      startsAt: `2026-12-${String(10 + position).padStart(2, '0')}T16:00:00.000Z`,
+      endsAt: `2026-12-${String(10 + position).padStart(2, '0')}T17:00:00.000Z`,
+      scope: 'single',
+      calendar: { calendarId: 'cal-1' },
+      spaceId: 'spazio-1',
+    });
+    assert.equal(moved.moved, true, `posizione ${position}: la griglia si muove`);
+    assert.deepEqual(pushes, [movedKey], `posizione ${position}: Google vede la riga mossa, non la testa`);
+  }
 });
 
 test('«tutti» su serie mai esportata con «calendar»: ogni riga in-scope viene spinta (backlog:6acf0a73bfc3)', async () => {
