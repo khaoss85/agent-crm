@@ -32,6 +32,7 @@ import {
   channelDirectionLine,
   channelMark,
   channelState,
+  channelSynced as sharedChannelSynced,
   countedChannel,
   NINE_CHANNELS,
   mergeProfileConnections,
@@ -596,14 +597,15 @@ export function grantExpiring(iso, nowMs = Date.now()) {
  * consulted. A linked binding with zero events (the Stato sync «0 eventi»
  * case) is «in attesa del primo evento», never «sincronizzato». The
  * scheda's «Identità collegate» claims «↔ sincronizzato» only on observed
- * two-way traffic through a linked channel, never on recency; the Stato
- * sync pill and hero below read this rule through `channelPill`.
+ * two-way traffic through a linked channel with a first event received
+ * (`identitySyncText` in admin-channels-count.js), never on recency; the
+ * Stato sync pill and hero below read this rule through `channelPill`.
  * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
  */
 export function channelSynced(input = {}) {
-  const { linked = false, received = 0 } =
-    input !== null && typeof input === 'object' ? input : {};
-  return linked === true && Number.isSafeInteger(received) && received > 0;
+  // The single source lives in admin-channels-count.js so the scheda reads
+  // the same rule; this export stays for the existing import path.
+  return sharedChannelSynced(input);
 }
 
 /**

@@ -5242,6 +5242,12 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
     ...base,
     async request(path, options = {}) {
       requests.push(path);
+      if (path.startsWith('/api/connectors/activity')) {
+        return { connections: [
+          { connectionKey: 'profile:whatsapp', channel: 'whatsapp', status: 'active', health: 'ok',
+            inbox: { received: 3, lastReceivedAt: '2026-11-17T10:00:00.000Z' }, outbox: { openDeadLetters: 0, lastFailedAt: null } },
+        ] };
+      }
       if (path.startsWith('/api/connectors')) return { connectors: [] };
       if (path === '/api/profile') {
         return { member: {}, connections: { available: true, reason: null, meta: { configured: true },
