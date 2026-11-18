@@ -12,9 +12,11 @@ import { CUSTOMER_COLUMNS, CUSTOMER_SORTS } from '../packages/customer-data/src/
 // declared surface (propose-field-from-question, fill-ai-field-values).
 // Version 7 (backlog:e80c6aee42c5): the contact-fit score joined the list
 // surface (punteggio column, fit sort, spaceId-scored reads).
-test('customer-data is version 7 since the contact-fit score joined the list surface', () => {
+// Version 8 (review agent-crm#987 P1): the scorer arrives as the fitScorer
+// composition option instead of an intelligence import.
+test('customer-data is version 8 since the scorer became a composition option', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 7);
+  assert.equal(pkg.version, 8);
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),
     'the version-6 surface carries the AI field proposal operation (propose-field-from-question)');
   assert.ok(pkg.operations.some((operation) => operation.name === 'fill-ai-field-values'),

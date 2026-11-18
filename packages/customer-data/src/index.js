@@ -136,6 +136,17 @@ export function createCustomerDataPackage(options = {}) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
     );
   }
+  // backlog:e80c6aee42c5: the contact-fit scorer (the intelligence-owned
+  // pure function over the space playbook). A display column adds no
+  // requires edge, so it arrives as a plain option like `interactions`: a
+  // wrong shape refuses at composition, an absent one reads unavailable.
+  const fitScorer = options.fitScorer ?? null;
+  if (fitScorer !== null && typeof fitScorer !== 'function') {
+    throw new AppError(
+      'The customer-data package was composed with a fitScorer edge that is not a function',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
+    );
+  }
   const offeredFollowUp = Array.isArray(options.work?.capabilities)
     ? options.work.capabilities.find((entry) => entry?.name === 'follow-up' && entry?.version === 1) ?? null
     : null;
@@ -171,7 +182,11 @@ export function createCustomerDataPackage(options = {}) {
     // declared surface (propose-field-from-question, fill-ai-field-values).
     // Version 7 (backlog:e80c6aee42c5): the contact-fit score joined the
     // list surface (punteggio column, fit sort, spaceId-scored reads).
-    version: 7,
+    // Version 8 (backlog:e80c6aee42c5, review agent-crm#987 P1): the scorer
+    // is no longer imported from the intelligence sources — it arrives as
+    // the fitScorer composition option, so the list operation's declared
+    // wiring changed with it.
+    version: 8,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -516,7 +531,7 @@ export function createCustomerDataPackage(options = {}) {
           const operations = createCustomerDataOperations({
             database: runtime.database, modules: runtime.modules, events: runtime.events,
             config: runtime.config, core: runtime.core, policy, names,
-            interactions: readState,
+            interactions: readState, fitScorer,
           });
           return (request) => operations.listCustomerRecords(request);
         },

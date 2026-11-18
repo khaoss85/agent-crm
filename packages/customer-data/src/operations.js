@@ -19,13 +19,12 @@ import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './impo
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, coalescedProfileFor } from './profile.js';
 import { createPolicyReader, createSubjectForRow, isNoCompany, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
-// backlog:e80c6aee42c5 — deliberate pure reuse (MEM_ACC_REUSE, DECISION in the
-// PR): the contact-fit scorer is owned by the intelligence package and
-// imported here as a pure function only — no record, no storage, no action of
-// that package is reached. A domain package reaches another only through
-// requires plus capability for its records; a pure scoring function is reused
-// like a core helper so the rule lives in exactly one place.
-import { scoreContactFit } from '../../intelligence/src/contact-fit.js';
+// backlog:e80c6aee42c5 — the contact-fit scorer arrives as the `fitScorer`
+// option (a plain function like `interactions`), never through an import:
+// a domain package reaches another only through requires plus capability
+// (AGENTS.md rule 9), so the intelligence-owned rule is handed over at
+// composition and an absent scorer reads unavailable instead of breaking
+// the load of this module.
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -64,7 +63,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null, fitScorer = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -394,7 +393,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names, interactions }, request);
+      return listCustomerRecords({ modules, core, names, interactions, fitScorer }, request);
     },
 
     /**
@@ -829,7 +828,7 @@ function summarizeSectionRows(read, rows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null, fitScorer = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -1282,15 +1281,19 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // backlog:e80c6aee42c5 — one fit per customer, computed on read from the
   // playbook above and never stored: a rewritten ideal customer re-scores
   // every row on the next read with no button and no stale row. The scorer
-  // is pure (no storage of its own), so the subject it scores is exactly
-  // the shaped row's subject. A scorer throw reads unavailable, never a
-  // zero that would read as «not a fit».
+  // is the intelligence-owned pure function handed over at composition (or
+  // in tests); without it every row reads unavailable, never a zero that
+  // would read as «not a fit». A scorer throw reads unavailable too, never
+  // a verdict on the row.
+  const scorer = typeof fitScorer === 'function' ? fitScorer : null;
   const fitBySubject = new Map(subjectKeys.map((key) => [key, null]));
   for (const { contact, company } of subjects) {
     const key = contact ? keyOf('contact', contact.id) : keyOf('company', company.id);
     let fit = null;
-    try {
-      fit = scoreContactFit({ contact, company }, playbook);
+    if (scorer === null) {
+      fit = { available: false, value: null, reasons: ['il punteggio non è disponibile: lo scorer del cliente ideale non è composto'] };
+    } else try {
+      fit = scorer({ contact, company }, playbook);
     } catch (error) {
       // A scorer throw is a bug in the new code, never a verdict on the row:
       // the row reads unavailable, and the cause is logged with the space,
@@ -1308,6 +1311,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // without a playbook, or with an ideal customer that carries no usable
   // cue, the answer names no punteggio column instead of an empty one.
   const fitAvailable = [...fitBySubject.values()].some((fit) => fit?.available === true);
+  // An explicit fit sort with no scored row refuses instead of silently
+  // answering name order (review agent-crm#987: the parse allows fit because
+  // it is a declared sort, so the operation owns the refusal, like the
+  // canale and derived-view 409s above).
+  if (query.sort === 'fit' && fitAvailable !== true) {
+    throw new AppError('the fit sort needs a playbook with a usable ideal customer: no row scored, so punteggio order is unavailable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
 
   // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
   // is only exact when both the message and the call scans are readable and

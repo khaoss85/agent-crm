@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createCustomerDataPackage } from '../packages/customer-data/src/index.js';
 import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
+import { scoreContactFit } from '../packages/intelligence/src/index.js';
 import {
   CUSTOMER_COLUMNS,
   CUSTOMER_SORTS,
@@ -91,7 +93,7 @@ test('with a playbook the operation answers the punteggio column, the fit sort a
   const { contacts, companies, identities } = SCENE();
   const modules = fakeModules({ contacts, companies, identities, playbook: PLAYBOOK, withPlaybook: true });
   const page = await listCustomerRecords(
-    { modules, core: {}, names: { identity: 'external-identity' } },
+    { modules, core: {}, names: { identity: 'external-identity' }, fitScorer: scoreContactFit },
     { vista: 'tutti', sort: 'recent', pageSize: '10', spaceId: 's1' },
   );
   assert.ok(page.columns.some((column) => column.id === 'punteggio'), 'the column is named');
@@ -103,7 +105,7 @@ test('with a playbook the operation answers the punteggio column, the fit sort a
   assert.ok(guido.fit.value > anna.fit.value, `profiles differ: ${guido.fit.value} vs ${anna.fit.value}`);
   assert.ok(guido.fit.reasons.length >= 2 && guido.fit.reasons.every((reason) => typeof reason === 'string' && reason !== ''));
   const sorted = await listCustomerRecords(
-    { modules, core: {}, names: { identity: 'external-identity' } },
+    { modules, core: {}, names: { identity: 'external-identity' }, fitScorer: scoreContactFit },
     { vista: 'tutti', sort: 'fit', pageSize: '10', spaceId: 's1' },
   );
   assert.equal(sorted.items[0].id, 'c1', 'the fit sort reads highest first');
@@ -117,7 +119,7 @@ test('without a playbook the operation names no punteggio column and no fit sort
     fakeModules({ contacts, companies, identities, playbook: null, withPlaybook: true }),
   ]) {
     const page = await listCustomerRecords(
-      { modules, core: {}, names: { identity: 'external-identity' } },
+      { modules, core: {}, names: { identity: 'external-identity' }, fitScorer: scoreContactFit },
       { vista: 'tutti', sort: 'recent', pageSize: '10', spaceId: 's1' },
     );
     assert.ok(!page.columns.some((column) => column.id === 'punteggio'), 'no empty column');
@@ -132,4 +134,56 @@ test('without a playbook the operation names no punteggio column and no fit sort
 test('the declared sorts and columns name the new entries', () => {
   assert.ok(CUSTOMER_SORTS.some((sort) => sort.id === 'fit' && sort.label === 'Punteggio'));
   assert.ok(CUSTOMER_COLUMNS.some((column) => column.id === 'punteggio' && column.label === 'Punteggio'));
+});
+
+/* ------------------------------------------- scorer edge (review #987 P1) */
+
+test('without a composed scorer the list still answers, with every fit unavailable', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({ contacts, companies, identities, playbook: PLAYBOOK, withPlaybook: true });
+  const base = { modules, core: {}, names: { identity: 'external-identity' } };
+  const page = await listCustomerRecords(base, { vista: 'tutti', sort: 'recent', pageSize: '10', spaceId: 's1' });
+  assert.ok(!page.columns.some((column) => column.id === 'punteggio'), 'no empty column');
+  assert.ok(!page.sorts.some((sort) => sort.id === 'fit'), 'no empty sort');
+  for (const item of page.items) {
+    assert.equal(item.fit.available, false);
+    assert.equal(item.fit.value, null);
+    assert.ok(item.fit.reasons.some((reason) => /scorer/i.test(reason)), `the row names the missing scorer: ${item.fit.reasons}`);
+  }
+  await assert.rejects(
+    listCustomerRecords(base, { vista: 'tutti', sort: 'fit', pageSize: '10', spaceId: 's1' }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /fit sort/.test(error.message),
+    'an explicit fit sort with no scorer refuses instead of silently answering name order',
+  );
+});
+
+test('the fitScorer edge refuses a wrong shape at composition', () => {
+  assert.throws(
+    () => createCustomerDataPackage({ fitScorer: 'score-everything' }),
+    (error) => error.code === 'PACKAGE_DEPENDENCY_MISMATCH' && /fitScorer/.test(error.message),
+  );
+  assert.ok(createCustomerDataPackage().operations.length > 0, 'absent reads unavailable');
+  assert.ok(createCustomerDataPackage({ fitScorer: scoreContactFit }).operations.length > 0, 'a function composes');
+});
+
+/* --------------------------------- fail-closed fit sort (review #987 P2) */
+
+test('an explicit fit sort with no scored row refuses on every no-playbook branch', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const branches = [
+    ['no spaceId', fakeModules({ contacts, companies, identities, playbook: PLAYBOOK, withPlaybook: true }), {}],
+    ['no playbook module', fakeModules({ contacts, companies, identities, withPlaybook: false }), { spaceId: 's1' }],
+    ['null playbook', fakeModules({ contacts, companies, identities, playbook: null, withPlaybook: true }), { spaceId: 's1' }],
+    ['unusable ideal customer', fakeModules({ contacts, companies, identities, playbook: { idealCustomer: '' }, withPlaybook: true }), { spaceId: 's1' }],
+  ];
+  for (const [label, modules, extra] of branches) {
+    const base = { modules, core: {}, names: { identity: 'external-identity' }, fitScorer: scoreContactFit };
+    await assert.rejects(
+      listCustomerRecords(base, { vista: 'tutti', sort: 'fit', pageSize: '10', ...extra }),
+      (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /fit/.test(error.message),
+      `${label}: sort=fit refuses instead of silently answering name order`,
+    );
+    const page = await listCustomerRecords(base, { vista: 'tutti', sort: 'recent', pageSize: '10', ...extra });
+    assert.ok(!page.sorts.some((sort) => sort.id === 'fit'), `${label}: no empty sort on the default order`);
+  }
 });
