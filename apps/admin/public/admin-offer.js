@@ -794,12 +794,19 @@ export function createOfferDetail(deps) {
     const save = async (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       if (busy) return;
-      const cents = euroToCents(inputs.value.value);
+      const rawValue = String(inputs.value.value ?? '').trim();
+      const cents = euroToCents(rawValue);
       const owner = String(inputs.owner.value ?? '').trim();
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
-      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250,00).';
+      // backlog:18cdf78c: a negative amount is refused as negative, never
+      // as missing — euroToCents answers null for both.
+      if (cents === null) {
+        failures.value = rawValue.startsWith('-')
+          ? 'Il valore non può essere negativo, in euro (es. 250,00).'
+          : 'Il valore è obbligatorio, in euro (es. 250,00).';
+      }
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
@@ -838,8 +845,13 @@ export function createOfferDetail(deps) {
     const cancelButton = el('button', undefined, 'Annulla');
     cancelButton.setAttribute('type', 'button');
     cancelButton.addEventListener('click', cancelEdit);
-    form.appendChild(saveButton);
-    form.appendChild(cancelButton);
+    // backlog:18cdf78c: Salva and Annulla share their own actions row, so a
+    // shown error never pushes them onto a second line — the message keeps
+    // its own full-width line above (see styles.css).
+    const actions = el('div', 'offer-edit-actions');
+    actions.appendChild(saveButton);
+    actions.appendChild(cancelButton);
+    form.appendChild(actions);
     wrap.appendChild(form);
     wrap.__save = save;
     wrap.__cancelEdit = cancelEdit;

@@ -426,6 +426,15 @@ export function teamPeople(roster) {
 }
 
 /**
+ * `teamPeople` rows for an id lookup: roster items or already-built rows.
+ * @param {unknown} rosterOrPeople roster items or `teamPeople` rows
+ */
+function rowsOf(rosterOrPeople) {
+  const list = Array.isArray(rosterOrPeople) ? rosterOrPeople : [];
+  return list.length > 0 && Array.isArray(list[0]?.subjects) ? list : teamPeople(list);
+}
+
+/**
  * The person row behind an id — a roster subject or a control-plane
  * person key (`operatorAccountId`, the actor of an audit entry) — or null.
  * @param {unknown} id
@@ -480,17 +489,42 @@ function identitiesOf(row) {
 }
 
 /**
+ * backlog:54a83e2fd0d2 — the author's word in cronologia, «Creata da»,
+ * Storico and the scheda signatures (notes, outbound passages:
+ * backlog:3f3c143b seguito): the row's own profile name, never the Team
+ * ordinal («Rossi (2)») and never merged across rows (review Muse
+ * rev-agent-crm-988 testa fe04fb68: two rows that paint the same name
+ * modulo case stay distinct authors, each with its own casing — a
+ * lower-cased name alone never joins people, agent-crm#644/#742). The same
+ * person reads one author because it joins in one `teamPeople` row first
+ * (same operatorAccountId, or same mailbox and name modulo case) and reads
+ * that row's name.
+ * @param {{ name?: string | null, email?: string | null, subjects?: Array<string> }} row
+ * @returns {string | null}
+ */
+export function authorName(row) {
+  const plain = Array.isArray(row?.subjects)
+    ? row.subjects.map((subject) => subjectText(subject)).find((text) => text !== null) ?? null
+    : null;
+  return row?.name ?? row?.email ?? plain;
+}
+
+/**
  * The words a screen shows for a person id it stores (an offer referente,
- * a reporting owner, an audit actor): the person label from the team, else
- * the id as words (`subjectText`: a typed name or a real mailbox reads as
- * itself, a slug as words), else null — never a technical mailbox or a
- * provider id.
+ * a reporting owner, an owner filter, a Pipeline card): the team's
+ * disambiguated label — «Rossi (1)»/«Rossi (2)» where the team numbers
+ * homonyms — else the id as words (`subjectText`: a typed name or a real
+ * mailbox reads as itself, a slug as words), else null — never a technical
+ * mailbox or a provider id. Cronologia, «Creata da» and Storico never read
+ * this: they read the author through `auditActorLabel`/`offerActorLabel`
+ * (backlog:54a83e2fd0d2, no «(2)» there).
  * @param {unknown} id
  * @param {unknown} rosterOrPeople
  * @returns {string | null}
  */
 export function personLabel(id, rosterOrPeople) {
-  const row = personOf(id, rosterOrPeople);
+  const rows = rowsOf(rosterOrPeople);
+  const row = personOf(id, rows);
   if (row !== null) return row.known ? row.label : null;
   return subjectText(id);
 }
@@ -750,10 +784,11 @@ export function auditActorLabel(entry, known = [], roster = []) {
   if (entry?.actorType === 'system') return 'sistema';
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (id === '') return '—';
-  // A team member (by subject or person key) reads their profile name —
-  // else their mailbox, like personLabel does (backlog:3f3c143b).
+  // A team member (by subject or person key) reads the author word —
+  // else their mailbox, like personLabel does (backlog:3f3c143b), never
+  // with the Team ordinal (backlog:54a83e2fd0d2).
   const person = personOf(id, roster);
-  if (person !== null && person.known) return person.label;
+  if (person !== null && person.known) return authorName(person);
   // A technical or service id is never corroborated into a name: a record
   // value that literally equals a provider subject stays hidden, like the
   // old code hid technical ids first (review Muse rev-agent-crm-918 P2).
@@ -780,9 +815,11 @@ export function auditActorLabel(entry, known = [], roster = []) {
  * @param {any} entry the audit entry @param {any} record the offer @param {unknown} [people] the roster
  */
 export function offerActorLabel(entry, record, people = []) {
-  // A team member reads their profile name (famiglia F5): the roster first,
-  // then the deal's own display values — never a slug like «coach-guido».
-  const owner = personLabel(record?.owner, people);
+  // A team member reads the author word (famiglia F5, never the Team
+  // ordinal in «Creata da»: backlog:54a83e2fd0d2): the roster first, then
+  // the deal's own display values — never a slug like «coach-guido».
+  const ownerRow = personOf(record?.owner, people);
+  const owner = ownerRow !== null && ownerRow.known ? authorName(ownerRow) : personLabel(record?.owner, people);
   const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
   return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);

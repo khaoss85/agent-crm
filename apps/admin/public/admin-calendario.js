@@ -632,6 +632,36 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/**
+ * backlog:8f10bea47ac8 — the manual form's opening proposal as a Rome day
+ * plus HH:MM: today at its first half-hour slot strictly after now when one
+ * still fits the 09:00–18:00 grid, else tomorrow 09:30–10:00. A real
+ * free-slot read needs the person, still unnamed at this point, so the
+ * default stays a proposal the operator confirms or moves — never an empty
+ * form that books a midnight. Pure so tests pin it without a clock.
+ * @param {number} [nowMs]
+ */
+export function defaultManualSlot(nowMs = Date.now()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const label = (minutes) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+  const now = new Date(nowMs);
+  const todayKey = romeDayKey(now);
+  const nowMin = romeMinutes(now);
+  if (todayKey !== null && nowMin !== null) {
+    // 10:17 Roma proposes today 10:30–11:00: the first grid step after now,
+    // never tomorrow 09:30 with today still free.
+    let start = Math.floor(nowMin / GRID_SLOT_MINUTES) * GRID_SLOT_MINUTES;
+    if (start <= nowMin) start += GRID_SLOT_MINUTES;
+    if (start < GRID_START_MINUTES) start = GRID_START_MINUTES;
+    if (start + GRID_SLOT_MINUTES <= GRID_END_MINUTES) {
+      return { date: todayKey, start: label(start), end: label(start + GRID_SLOT_MINUTES) };
+    }
+  }
+  const tomorrow = romeDayKey(new Date(nowMs + 24 * 3600 * 1000).toISOString());
+  if (!tomorrow) return null;
+  return { date: tomorrow, start: '09:30', end: '10:00' };
+}
+
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -2618,18 +2648,19 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:134f3ed7 — every opening of the manual form proposes a day and
-   * a time: the picked slot where one was clicked, else tomorrow 09:30–10:00
-   * Rome. A real free-slot read needs the person, still unnamed at this
-   * point, so the default is a proposal the operator confirms or moves —
-   * never an empty form that books a midnight.
+   * backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening of the manual
+   * form proposes a day and a time: the picked slot where one was clicked,
+   * else today at its first slot after now, else tomorrow 09:30–10:00 Rome
+   * (defaultManualSlot). A real free-slot read needs the person, still
+   * unnamed at this point, so the default is a proposal the operator
+   * confirms or moves — never an empty form that books a midnight.
    */
   function ensureManualDefaults() {
     const manual = { ...(state.manual ?? {}) };
     if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return;
-    const tomorrow = romeDayKey(new Date(clock().getTime() + 86400000).toISOString());
-    if (!tomorrow) return;
-    state.manual = { ...manual, date: tomorrow, start: '09:30', end: '10:00' };
+    const slot = defaultManualSlot(clock().getTime());
+    if (!slot) return;
+    state.manual = { ...manual, ...slot };
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2673,7 +2704,8 @@ export function createCalendarioView(deps) {
    * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
    * appuntamento» form: it closes AND drops the typed values — never the
    * old slot, customer or price left behind. The next opening proposes a
-   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
+   * day and a time (today when a slot is still ahead, else tomorrow
+   * 09:30–10:00) instead of an empty form. Focus
    * goes back to the «Nuovo appuntamento» button.
    */
   function closeManual() {

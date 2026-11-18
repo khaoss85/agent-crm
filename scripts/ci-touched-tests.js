@@ -408,6 +408,18 @@ export function hasCodeChange(
 }
 
 /**
+ * Whether the change touches the served backoffice client
+ * (backlog:ae2d5d3c): any added, modified or deleted path under
+ * `apps/admin/public/` — the tree the pilot serves under /bo. The
+ * pilot-browser gate runs only then; every other PR skips it.
+ */
+export function touchesAdminClient(
+  /** @type {string[]} */ changedFiles,
+) {
+  return changedFiles.some((file) => normalize(file).replace(/\\/g, '/').startsWith('apps/admin/public/'));
+}
+
+/**
  * Map changed repository-relative paths to the test files that cover them:
  * changed test files themselves, plus every test file that reaches a changed
  * file through relative imports — directly, or transitively through
@@ -1913,7 +1925,13 @@ async function main() {
 }
 
 // Importing this module (the unit test does) must not run the gate: only
-// a direct invocation selects and runs tests.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// a direct invocation selects and runs tests. `scripts/ci-pilot-browser.sh`
+// imports only `touchesAdminClient` through `node -e` (same backlog) and
+// opts out the same way through CI_TOUCHED_NO_MAIN.
+if (
+  process.env.CI_TOUCHED_NO_MAIN !== '1' &&
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   await main();
 }
