@@ -13,7 +13,7 @@
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
-import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -48,12 +48,15 @@ function historyLine(entry, schema, record, people = []) {
   // backlog:a060a4aa65b6: the day and the hour, like «Storia stati».
   const when = italianDateTime(entry?.createdAt) ?? '—';
   const who = actorLabel(entry, record, people);
+  // backlog:bfc070243427: an actor the reads cannot name paints no «da —»
+  // tail — the fact stays, the empty author does not.
+  const by = who === '—' ? '' : ` · da ${who}`;
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
   if (move !== null && words !== null) {
-    return { when, what: `Cambio di stato · da ${upperFirst(words.from)} a ${upperFirst(words.to)} · da ${who}` };
+    return { when, what: `Cambio di stato · da ${upperFirst(words.from)} a ${upperFirst(words.to)}${by}` };
   }
-  return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
+  return { when, what: `${auditActionLabel(entry?.action)}${by}` };
 }
 
 /** Italian label of a quote status; unknown states stay an em dash. */
@@ -591,13 +594,21 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     // backlog:bfc070243427: an unknown close date paints no row — never an
     // empty «Chiusura prevista —» field.
-    const factRows = [
-      ['Referente', personLabel(record.owner, people) ?? '—'],
-      ['Stato', stageLabel(schema, record)],
-    ];
+    // backlog:bfc070243427: like «Creata da» below, an owner the reads
+    // cannot name paints no row — never an empty «Referente —» field.
+    // personLabel returns null (never a dash) for an unknown owner.
+    const referente = personLabel(record.owner, people);
+    const factRows = [];
+    if (referente !== null && referente !== '') factRows.push(['Referente', referente]);
+    factRows.push(['Stato', stageLabel(schema, record)]);
     if (close !== null) factRows.push(['Chiusura prevista', close]);
+    // backlog:bfc070243427: an author the reads cannot name paints no row —
+    // never an empty «Creata da —» field, named or not. Naming an
+    // existing-but-unresolved author stays with backlog:a2ea75f705fd and the
+    // person-identifier family (backlog:91f4e2f0d650); once they name them,
+    // the row paints.
+    if (creator !== null && creator !== '—') factRows.push(['Creata da', creator]);
     factRows.push(
-      ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     );
@@ -1208,6 +1219,7 @@ export function createOfferDetail(deps) {
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean}} [options]
    */
   async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
@@ -1324,10 +1336,11 @@ function quoteTotalSummary(totals, currency) {
 
 /**
  * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
- * decided it (`name@version` from the version record), never nothing.
+ * decided it, never nothing. backlog:bfc070243427: the name reads as words
+ * (`discountRuleLabel`), never the raw `name@version` id.
  */
 function policyTag(version) {
   return typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
-    ? `${version.policy}@${version.policyVersion}`
+    ? discountRuleLabel(version.policy, version.policyVersion)
     : null;
 }
