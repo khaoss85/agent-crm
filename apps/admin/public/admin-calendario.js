@@ -1171,20 +1171,24 @@ export function aiBlockOf(error) {
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
- * backlog:a16726b5ea76 — the painted homonym ordinal («Rossi (2)») is not
- * the name: it is stripped before matching, so a phrase echoing the Team
- * label still finds a unique person, while two real homonyms stay
- * unresolved. The match also reads the painted label base, so a team known
- * only by a differently-cased id («MARCO») is still recognised — but never
- * the generic «Membro del team» fallback, which names nobody (review #1017
- * giro 1, P2). Only the painted ordinal shape is stripped: one space,
- * digits, end (« (2)»); «Marco(2)» or «Marco  (2)» stay part of the
- * searched name. A literal roster name wins before any stripping, so a
- * real «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
- * giro 1, P2 regression).
+ * An exact identity wins; then the visible person name (case-insensitive,
+ * without the painted homonym ordinal).
+ * backlog:a16726b5ea76 (follow-up, live 18/11: «daniele pelleri»,
+ * «Daniele Pelleri» and «daniele pelleri (2)» all answered «… non è nel
+ * team» while «khaoss85» worked) — the person holds several identities
+ * the roster does not join into one row (same cause as the
+ * persona-identificativi family): the match is by visible name, without
+ * case and without the « (N)» suffix, and rows showing the same name are
+ * searched together. The search stays fail-closed (personFreeSlots offers
+ * only steps free under EVERY identity, and the form choice stays with
+ * the operator when identities are several), so nobody books as the wrong
+ * human. Strangers stay out — the caller sends them down the «non
+ * capisco» path. Only the painted shape is stripped (« (2)»: one space,
+ * digits, end); «Marco(2)» or «Marco  (2)» stay part of the searched
+ * name. A literal roster name wins before any stripping, so a real
+ * «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * round 1, P2 regression) — but the generic «Membro del team» fallback
+ * names nobody (review #1017 round 1, P2).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
@@ -1199,19 +1203,21 @@ export function resolveDraftMemberIds(draftMember, named, members) {
   // fallback (with or without a painted ordinal) matches nothing.
   const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
   const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
+  // Every row sharing the visible name, in painted order, without doubles:
+  // one human split over several identities searches them all together.
+  const unionOf = (matched) => [...new Set(matched.flatMap((row) => row.ids))];
   const wanted = fold(draftMember);
-  // The raw step reads person names only, never painted labels: a draft
-  // echoing a homonym ordinal («Marco (1)») stays unresolved with the two
-  // real homonyms instead of picking one through its label.
+  // The raw step reads person names only, never painted labels: a literal
+  // roster name («Marco Rossi (2)») still finds its own row before any
+  // stripping (review #1017 giro 1, P2 regression).
   const raw = rows.filter((row) => matchable(row)
     && typeof row.name === 'string' && fold(row.name) === wanted);
-  if (raw.length === 1) return [...raw[0].ids];
-  if (raw.length > 1) return [];
+  if (raw.length >= 1) return unionOf(raw);
   const stripped = stripOrdinal(draftMember);
   if (stripped === '') return [];
   const byName = rows.filter((row) => matchable(row)
     && namesOf(row).some((name) => stripOrdinal(name) === stripped));
-  if (byName.length === 1) return [...byName[0].ids];
+  if (byName.length >= 1) return unionOf(byName);
   return [];
 }
 
@@ -4356,7 +4362,10 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
-        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
+        // known team does not hold was never «in the team» — the phrase did
+        // not name a person we know, so it says so instead of refusing them.
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it. The outsider name never fills
         // «Persona del team» (production after #735): the field stays empty,
