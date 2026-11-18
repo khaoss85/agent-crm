@@ -28,8 +28,10 @@
 /**
  * The one tile mark per channel (backlog:6d0df351): the same mark on
  * Connettori, Stato sync and Personalizzazione — Telegram is `TG`
- * everywhere, SMS is `S`. Channels outside this table (a stored spelling
- * no screen knows) fall back to their first two letters, never blank.
+ * everywhere, SMS is `S`. Every channel has its own mark: Stripe reads
+ * `ST`, never the SMS `S`, so the two never share a tile in Stato sync.
+ * Channels outside this table (a stored spelling no screen knows) fall
+ * back to their first two letters, never blank.
  */
 export const CHANNEL_MARKS = Object.freeze({
   whatsapp: 'WA',
@@ -42,7 +44,7 @@ export const CHANNEL_MARKS = Object.freeze({
   voice: 'TEL',
   'site-form': 'WEB',
   calendar: 'CAL',
-  stripe: 'S',
+  stripe: 'ST',
 });
 
 /**
@@ -60,8 +62,9 @@ export function channelMark(channel) {
  * The one fixed direction line per channel (backlog:6d0df351): the same
  * line on Connettori, Stato sync and Personalizzazione — Telegram reads
  * `↔ bidirezionale` everywhere. `sms` has no dedicated adapter in
- * `packages/channels`, so its direction is undeclared and reads `—`
- * instead of a guess (the connector detail says so too).
+ * `packages/channels`, but the Connettori catalog invites it as
+ * «Nuovi SMS in arrivo e in uscita», so its line reads `↔ bidirezionale`
+ * like the other two-way channels instead of `—`.
  */
 export const CHANNEL_DIRECTION_LINES = Object.freeze({
   whatsapp: '↔ bidirezionale',
@@ -74,7 +77,7 @@ export const CHANNEL_DIRECTION_LINES = Object.freeze({
   tiktok: '← in entrata',
   'site-form': '← in entrata',
   stripe: '↔ pagamenti e link',
-  sms: '—',
+  sms: '↔ bidirezionale',
 });
 
 /**

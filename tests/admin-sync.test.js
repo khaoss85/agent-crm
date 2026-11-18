@@ -693,7 +693,7 @@ test('the Canali card lists the nine fixed prototype channels', () => {
   assert.equal(byId.get('voice').name, 'Telefono');
   assert.equal(byId.get('site-form').name, 'Form sito');
   assert.equal(byId.get('calendar').name, 'Google Calendar');
-  assert.deepEqual(SYNC_CHANNELS.map((row) => row.mark), ['WA', 'IG', 'FB', 'TT', '@', 'TEL', 'WEB', 'CAL', 'S']);
+  assert.deepEqual(SYNC_CHANNELS.map((row) => row.mark), ['WA', 'IG', 'FB', 'TT', '@', 'TEL', 'WEB', 'CAL', 'ST']);
   assert.equal(byId.get('tiktok').direction, '← in entrata');
   assert.equal(byId.get('site-form').direction, '← in entrata');
   assert.equal(byId.get('stripe').direction, '↔ pagamenti e link');
