@@ -351,13 +351,16 @@ export function createQuoteView(deps) {
       ? `Mostro solo i primi ${LIST_LIMIT} preventivi.`
       : `${quotes.rows.length} preventiv${quotes.rows.length === 1 ? 'o' : 'i'}.`;
 
-    // Voce 47b89e19: quotes are created from their offer page («Crea
+    // Voce 47b89e19: quotes are created from their offer page («Nuovo
     // preventivo» there, backlog 169cd4bc988c) — never by typing an id
     // here. No manual id field on this screen.
     const page = el('div', 'bo-offer');
     const panel = el('section', 'offer-quotes');
     panel.appendChild(el('h3', undefined, 'Tutti i preventivi'));
-    panel.appendChild(el('p', 'bo-muted', 'I preventivi si creano dall’offerta: apri l’offerta e premi «Crea preventivo».'));
+    // backlog:3234cc917e0a: the screen names the same button the offer page
+    // shows («Nuovo preventivo», the canonical create name in admin-labels),
+    // never a different one.
+    panel.appendChild(el('p', 'bo-muted', 'I preventivi si creano dall’offerta: apri l’offerta e premi «Nuovo preventivo».'));
     if (offerNames === null) {
       panel.appendChild(el('p', 'bo-muted', 'Offerte collegate non leggibili adesso: righe, stato e importo restano.'));
     }
@@ -557,14 +560,21 @@ export function createQuoteView(deps) {
       ? `${customerName} — ${opportunityName}`
       : (customerName ?? opportunityName);
     if (titleName !== null) heading.textContent = `Preventivo · ${titleName}`;
+    // backlog:3234cc917e0a: the quote list is one link away — off the
+    // offer through this detail, through the router like every other
+    // screen link (see linkTo). It paints before the status so the way
+    // back, the offer and the list read as one row of exits.
+    const listLink = linkTo('#/quotes', 'Tutti i preventivi', 'quote-list-link');
+    listLink.setAttribute('data-action', 'quote-open-list');
+    mount.removeChild(status);
     if (back !== null || offer !== null) {
       mount.removeChild(heading);
-      mount.removeChild(status);
       if (back !== null) mount.appendChild(back);
       mount.appendChild(heading);
       if (offer !== null) mount.appendChild(offer);
-      mount.appendChild(status);
     }
+    mount.appendChild(listLink);
+    mount.appendChild(status);
 
     // Design (Dan 06/11): the quote reads as a small, tidy document — the
     // issuing space, who it is for, what it includes and what it costs — with

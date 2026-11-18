@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { auditActorLabel, memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
+import { auditActorLabel, memberLabel, offerActorLabel, offerCreatorLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
 import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
 import { buildTeamRows, duplicateTeamHints } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
@@ -478,4 +478,45 @@ test('backlog:6563edf41aab: Impostazioni segnala i possibili doppioni del team',
     { subject: 'a', displayName: 'Sara Neri', role: 'operator', status: 'active' },
     { subject: 'b', displayName: 'Luca Blu', role: 'operator', status: 'active' },
   ])), [], 'distinct names stay silent');
+});
+
+test('backlog:54a83e2fd0d2: l\u2019autore in cronologia e \u00abCreata da\u00bb ha il nome di profilo, senza \u00ab(2)\u00bb', () => {
+  // La stessa persona con due soggetti nella stessa riga (stessa chiave
+  // persona del control plane, maiuscole diverse): un solo autore, senza
+  // suffisso, per entrambi i soggetti.
+  const roster = [
+    { subject: 'google|1', displayName: 'Daniele Pelleri', email: 'dan@example.com', operatorAccountId: 'op-1' },
+    { subject: 'github|2', displayName: 'daniele pelleri', email: 'dan@example.com', operatorAccountId: 'op-1' },
+  ];
+  // Una sola riga, senza ordinali (backlog:6563edf41aab).
+  assert.deepEqual(teamPeople(roster).map((row) => row.label), ['Daniele Pelleri']);
+  for (const subject of ['google|1', 'github|2']) {
+    assert.equal(personLabel(subject, roster), 'Daniele Pelleri', 'personLabel: la riga della stessa persona');
+    assert.equal(auditActorLabel({ actorId: subject }, [], roster), 'Daniele Pelleri', 'cronologia/Storico: un solo autore');
+  }
+  const record = { owner: 'github|2', contactName: 'Anna', companyName: 'Acme' };
+  assert.equal(offerActorLabel({ actorId: 'github|2' }, record, roster), 'Daniele Pelleri', 'stesso soggetto di owner e actor');
+  assert.equal(
+    offerCreatorLabel([{ action: 'opportunity.created', actorId: 'google|1' }], record, roster),
+    'Daniele Pelleri',
+    '\u00abCreata da\u00bb: l\u2019altro soggetto della stessa persona',
+  );
+});
+
+test('backlog:54a83e2fd0d2: due righe distinte restano due autori distinti (review Muse testa fe04fb68)', () => {
+  // Stesso nome con maiuscole diverse ma chiavi e caselle diverse: mai
+  // fuse (il nome da solo non fonde mai, agent-crm#644/#742) — due righe
+  // numerate e due autori distinti, mai fusi in un solo nome.
+  const roster = [
+    { subject: 'google|1', displayName: 'Daniele Pelleri', email: 'dan@example.com' },
+    { subject: 'github|2', displayName: 'daniele pelleri', email: 'dan.code@example.com' },
+  ];
+  assert.deepEqual(teamPeople(roster).map((row) => row.label), ['Daniele Pelleri (1)', 'daniele pelleri (2)']);
+  // Filtri owner, card Pipeline e Reporting: l'etichetta numerata resta.
+  assert.equal(personLabel('google|1', roster), 'Daniele Pelleri (1)', 'personLabel: prima riga');
+  assert.equal(personLabel('github|2', roster), 'daniele pelleri (2)', 'personLabel: seconda riga');
+  // Cronologia/Storico: niente fusione — ognuno legge il proprio nome,
+  // senza prendere le maiuscole dell'altra riga.
+  assert.equal(auditActorLabel({ actorId: 'google|1' }, [], roster), 'Daniele Pelleri', 'cronologia: prima riga');
+  assert.equal(auditActorLabel({ actorId: 'github|2' }, [], roster), 'daniele pelleri', 'cronologia: seconda riga');
 });

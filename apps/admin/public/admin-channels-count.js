@@ -26,20 +26,88 @@
 // It imports nothing, so any screen may import it without a cycle.
 
 /**
+ * The one tile mark per channel (backlog:6d0df351): the same mark on
+ * Connettori, Stato sync and Personalizzazione — Telegram is `TG`
+ * everywhere, SMS is `S`. Channels outside this table (a stored spelling
+ * no screen knows) fall back to their first two letters, never blank.
+ */
+export const CHANNEL_MARKS = Object.freeze({
+  whatsapp: 'WA',
+  instagram: 'IG',
+  facebook: 'FB',
+  tiktok: 'TT',
+  telegram: 'TG',
+  sms: 'S',
+  email: '@',
+  voice: 'TEL',
+  'site-form': 'WEB',
+  calendar: 'CAL',
+  stripe: 'S',
+});
+
+/**
+ * The tile mark of one channel, from the one table above.
+ * @param {unknown} channel
+ */
+export function channelMark(channel) {
+  if (typeof channel === 'string' && Object.hasOwn(CHANNEL_MARKS, channel)) {
+    return CHANNEL_MARKS[channel];
+  }
+  return String(channel ?? '·').slice(0, 2).toUpperCase() || '·';
+}
+
+/**
+ * The one fixed direction line per channel (backlog:6d0df351): the same
+ * line on Connettori, Stato sync and Personalizzazione — Telegram reads
+ * `↔ bidirezionale` everywhere. `sms` has no dedicated adapter in
+ * `packages/channels`, so its direction is undeclared and reads `—`
+ * instead of a guess (the connector detail says so too).
+ */
+export const CHANNEL_DIRECTION_LINES = Object.freeze({
+  whatsapp: '↔ bidirezionale',
+  instagram: '↔ bidirezionale',
+  facebook: '↔ bidirezionale',
+  telegram: '↔ bidirezionale',
+  email: '↔ bidirezionale',
+  voice: '↔ bidirezionale',
+  calendar: '↔ bidirezionale',
+  tiktok: '← in entrata',
+  'site-form': '← in entrata',
+  stripe: '↔ pagamenti e link',
+  sms: '—',
+});
+
+/**
+ * The fixed direction line of one channel, from the one table above.
+ * @param {unknown} channel
+ */
+export function channelDirectionLine(channel) {
+  if (typeof channel === 'string' && Object.hasOwn(CHANNEL_DIRECTION_LINES, channel)) {
+    return CHANNEL_DIRECTION_LINES[channel];
+  }
+  return '—';
+}
+
+/**
  * The prototype's nine fixed channels (BO-F6-16, fetta 2), in Stato sync
- * order: id, the table name, the tile mark and the fixed direction line.
+ * order: id, the table name, the tile mark and the fixed direction line
+ * (both from the single tables above, never literals here).
  * `sms` and `telegram` are connectable in the catalog but outside the nine.
  */
+const fixedChannel = (id, name) => Object.freeze({
+  id, name, mark: channelMark(id), direction: channelDirectionLine(id),
+});
+
 export const NINE_CHANNELS = Object.freeze([
-  Object.freeze({ id: 'whatsapp', name: 'WhatsApp', mark: 'WA', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'instagram', name: 'Instagram', mark: 'IG', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'facebook', name: 'Facebook', mark: 'FB', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'tiktok', name: 'TikTok', mark: 'TT', direction: '← in entrata' }),
-  Object.freeze({ id: 'email', name: 'Email', mark: '@', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'voice', name: 'Telefono', mark: 'TEL', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'site-form', name: 'Form sito', mark: 'WEB', direction: '← in entrata' }),
-  Object.freeze({ id: 'calendar', name: 'Google Calendar', mark: 'CAL', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'stripe', name: 'Stripe', mark: 'S', direction: '↔ pagamenti e link' }),
+  fixedChannel('whatsapp', 'WhatsApp'),
+  fixedChannel('instagram', 'Instagram'),
+  fixedChannel('facebook', 'Facebook'),
+  fixedChannel('tiktok', 'TikTok'),
+  fixedChannel('email', 'Email'),
+  fixedChannel('voice', 'Telefono'),
+  fixedChannel('site-form', 'Form sito'),
+  fixedChannel('calendar', 'Google Calendar'),
+  fixedChannel('stripe', 'Stripe'),
 ]);
 
 /** The nine ids, in table order. */

@@ -83,6 +83,38 @@ test('every sidebar voice has its own icon (BO-F6-01)', () => {
   }
 });
 
+// backlog:09644bb7e7e9: i nomi degli spazi si leggono per intero (il menu
+// va a capo, ogni riga ha il nome intero nel title) e ogni riga del menu
+// finisce con lo stesso elemento da 20px (pill, placeholder pinnato
+// backlog:b76770f82fe9 o slot neutro), mai uno «0» visibile.
+test('09644bb7e7e9: space names read in full, every voice row ends alike', () => {
+  const long = 'Prova Validazione Molto Lunga Sede Secondaria';
+  const { sidebar } = renderShell({
+    spaces: [{ id: 'b1', name: long, initials: 'PR' }],
+    items: buildShellNav({ customerDataAvailable: true }),
+  });
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  assert.ok(picks.length > 0);
+  for (const pick of picks) assert.equal(pick.getAttribute('title'), long);
+  const rows = [...sidebar.findAll('a'), ...sidebar.findAll('span')]
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    const trailing = row.findAll('span').filter((node) => {
+      const c = (node.getAttribute('class') ?? '').split(/\s+/);
+      return c.includes('bo-count') || c.includes('bo-badge') || c.includes('bo-pill-slot');
+    });
+    assert.equal(trailing.length, 1, 'una sola coda da 20px per riga');
+  }
+  const zeros = sidebar.findAll('span').filter((node) => node.textContent === '0');
+  for (const node of zeros) {
+    assert.ok((node.getAttribute('class') ?? '').includes('is-empty'), 'uno «0» solo nel segnaposto nascosto');
+    assert.equal(node.getAttribute('aria-hidden'), 'true');
+  }
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.bo-pill-slot'), 'lo slot neutro sta nel foglio di stile');
+});
+
 test('Impostazioni badge lights only from a real count (0 = no badge)', () => {
   assert.equal(settingsBadge(0), '');
   assert.equal(settingsBadge(-2), '');
@@ -303,6 +335,52 @@ test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking
   const other = picks.find((node) => !((node.className ?? '').includes('active')));
   other.dispatch('click', {});
   assert.deepEqual(seen.picked, ['presti']);
+});
+
+test('backlog:ca7008cac764 — spaceMenuItems marks rows outside the session member list', () => {
+  const spaces = [{ id: 'b1', name: 'B1' }, { id: 'vecchio', name: 'Vecchio' }];
+  // Without a member list every row reads as a plain switch, like before.
+  for (const row of spaceMenuItems(spaces, 'b1')) assert.equal(row.needsAccess, false);
+  for (const row of spaceMenuItems(spaces, 'b1', null)) assert.equal(row.needsAccess, false);
+  // With the host list only the unlisted row is marked; the active one never is.
+  const rows = spaceMenuItems(spaces, 'b1', ['b1']);
+  assert.equal(rows[0].needsAccess, false);
+  assert.equal(rows[1].needsAccess, true);
+  const both = spaceMenuItems(spaces, 'b1', ['b1', 'vecchio']);
+  assert.equal(both[0].needsAccess, false);
+  assert.equal(both[1].needsAccess, false);
+});
+
+test('backlog:ca7008cac764 — il menu dice quando uno spazio può chiedere l’accesso', () => {
+  const profile = {
+    space: { id: 'b1', name: 'Prova Validazione B1' },
+    spaces: [{ id: 'b1', name: 'Prova Validazione B1' }],
+    role: 'owner',
+    name: 'Elena Rinaldi',
+    email: 'elena@studioaurora.it',
+  };
+  const doc = createFakeDocument();
+  doc.querySelector = (selector) => (selector === 'script[id="bo-session"]'
+    ? { textContent: JSON.stringify(profile) }
+    : null);
+  const { sidebar, seen } = renderShell({
+    doc,
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'vecchio', name: 'Vecchio' },
+    ],
+  });
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').split(/\s+/).includes('bo-space-pick'));
+  assert.equal(picks.length, 2);
+  const marked = picks.find((node) => !((node.className ?? '').includes('active')));
+  assert.ok(marked.textContent.includes('può chiedere l’accesso'));
+  assert.equal(marked.getAttribute('title'), 'Questo spazio potrebbe chiedere di accedere di nuovo');
+  // The unlisted row still opens: the host decides, the menu only warns.
+  marked.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['vecchio']);
+  // Without a session (local development) no row is marked.
+  const plain = renderShell({ spaces: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] });
+  assert.ok(!plain.sidebar.textContent.includes('può chiedere l’accesso'));
 });
 
 test('backlog:ecb26347d12c — the «Cambia spazio» button names only the shortcuts that exist', () => {
@@ -890,6 +968,36 @@ test('backlog:2302655b1fcf — Impostazioni header matches Personalizzazione, no
   assert.ok(subtitles.length >= 1, 'a subtitle like Personalizzazione');
 });
 
+// backlog:2302655b1fcf repro: the Impostazioni index painted a bare
+// h2.panel-title with no tab row, while every other settings screen paints
+// the IMPOSTAZIONI tab row above the same Personalizzazione header
+// component (46px hero title). Red before the cure, green after.
+test('backlog:2302655b1fcf — Impostazioni index shares the Personalizzazione header component and tab row', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 0, customerDataAvailable: true });
+  // The tab row: the same IMPOSTAZIONI occhiello + area tabs every other
+  // settings screen paints above its header.
+  const labels = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-settings-label'));
+  assert.equal(labels.length, 1, 'the IMPOSTAZIONI occhiello paints on the index too');
+  assert.equal(labels[0].textContent, 'IMPOSTAZIONI');
+  const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab') !== null);
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi', 'profilo']);
+  assert.ok(tabs.every((tab) => tab.getAttribute('aria-selected') !== 'true'), 'no tab underlined on the index');
+  // The header: h2.panel-title inside the same .panel.personalizzazione
+  // block Personalizzazione paints, so the title keeps its 46px hero size.
+  const panels = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('personalizzazione'));
+  assert.equal(panels.length, 1, 'the index header lives in the same panel component');
+  const titles = panels[0].findAll('h2');
+  assert.equal(titles.length, 1);
+  assert.equal(titles[0].textContent, 'Impostazioni');
+});
+
+test('backlog:2302655b1fcf — Personalizzazione header paints through the shared settings head', () => {
+  const source = readFileSync(new URL('../apps/admin/public/admin-personalizzazione.js', import.meta.url), 'utf8');
+  assert.match(source, /paintSettingsHead\(doc, box,/);
+});
+
 test('backlog:2302655b1fcf — «Gestisci spazi e accessi» opens Spazi e accessi directly', () => {
   const { sidebar, seen } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
   const manage = sidebar.findAll('button').find((node) => node.textContent === 'Gestisci spazi e accessi');
@@ -988,9 +1096,14 @@ test('Stato sync row carries the real fix-count badge, absent at zero', () => {
   const mount = createMount();
   renderSettingsPanel({ doc, mount, fixCount: 2, customerDataAvailable: true });
   const badges = mount.findAll('span').filter((node) => node.className.includes('bo-badge'));
-  assert.equal(badges.length, 1);
-  assert.equal(badges[0].textContent, '2');
-  assert.ok(badges[0].parentNode.textContent.includes('Stato sync'));
+  // backlog:2302655b1fcf: the index paints the tab row too, so the count
+  // lights twice — on the Stato sync tab and on its row. The row badge
+  // keeps the old contract: real count, absent at zero and when unknown.
+  assert.equal(badges.length, 2);
+  const inRow = badges.filter((node) => (node.parentNode.getAttribute('class') ?? '').split(/\s+/).includes('bo-setting-row'));
+  assert.equal(inRow.length, 1);
+  assert.equal(inRow[0].textContent, '2');
+  assert.ok(inRow[0].parentNode.textContent.includes('Stato sync'));
 
   const zero = createMount();
   renderSettingsPanel({ doc, mount: zero, fixCount: 0, customerDataAvailable: true });

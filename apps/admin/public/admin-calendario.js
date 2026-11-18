@@ -632,6 +632,36 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/**
+ * backlog:8f10bea47ac8 — the manual form's opening proposal as a Rome day
+ * plus HH:MM: today at its first half-hour slot strictly after now when one
+ * still fits the 09:00–18:00 grid, else tomorrow 09:30–10:00. A real
+ * free-slot read needs the person, still unnamed at this point, so the
+ * default stays a proposal the operator confirms or moves — never an empty
+ * form that books a midnight. Pure so tests pin it without a clock.
+ * @param {number} [nowMs]
+ */
+export function defaultManualSlot(nowMs = Date.now()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const label = (minutes) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+  const now = new Date(nowMs);
+  const todayKey = romeDayKey(now);
+  const nowMin = romeMinutes(now);
+  if (todayKey !== null && nowMin !== null) {
+    // 10:17 Roma proposes today 10:30–11:00: the first grid step after now,
+    // never tomorrow 09:30 with today still free.
+    let start = Math.floor(nowMin / GRID_SLOT_MINUTES) * GRID_SLOT_MINUTES;
+    if (start <= nowMin) start += GRID_SLOT_MINUTES;
+    if (start < GRID_START_MINUTES) start = GRID_START_MINUTES;
+    if (start + GRID_SLOT_MINUTES <= GRID_END_MINUTES) {
+      return { date: todayKey, start: label(start), end: label(start + GRID_SLOT_MINUTES) };
+    }
+  }
+  const tomorrow = romeDayKey(new Date(nowMs + 24 * 3600 * 1000).toISOString());
+  if (!tomorrow) return null;
+  return { date: tomorrow, start: '09:30', end: '10:00' };
+}
+
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -1752,6 +1782,14 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
+      // backlog:134f3ed7 (review Muse #1001 P1) — the confirmed row rides
+      // the fresh week only while the booking handshake is still open
+      // (pendingEventId set): a reload that does not carry the just-booked
+      // id yet (read lag) still paints its block, and the handshake below
+      // selects it. Once the post-booking reload settles, the server week
+      // is authoritative: carrying state.confirmed on every loadWeek would
+      // resurrect a cancelled or moved booking as a highlighted phantom.
+      if (state.pendingEventId !== null) carryBookedRow();
       state.weekError = null;
       state.unavailable = false;
       // backlog:bd5e84545021: the event Oggi asked for opens its detail
@@ -1760,6 +1798,11 @@ export function createCalendarioView(deps) {
         state.selectedId = state.pendingEventId;
         state.pendingEventId = null;
         state.pendingEventMember = null;
+        // backlog:134f3ed7 (review Muse #1001 P1) — the first reload after
+        // the booking reconciles the optimistic row: the server week owns
+        // the id from here, so the confirmed copy retires instead of riding
+        // every later reload as a phantom.
+        state.confirmed = null;
         const asked = selectedRow();
         if (asked === null) state.selectedId = null;
         // The explicit request beats a retained «hide this person»
@@ -2618,18 +2661,19 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:134f3ed7 — every opening of the manual form proposes a day and
-   * a time: the picked slot where one was clicked, else tomorrow 09:30–10:00
-   * Rome. A real free-slot read needs the person, still unnamed at this
-   * point, so the default is a proposal the operator confirms or moves —
-   * never an empty form that books a midnight.
+   * backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening of the manual
+   * form proposes a day and a time: the picked slot where one was clicked,
+   * else today at its first slot after now, else tomorrow 09:30–10:00 Rome
+   * (defaultManualSlot). A real free-slot read needs the person, still
+   * unnamed at this point, so the default is a proposal the operator
+   * confirms or moves — never an empty form that books a midnight.
    */
   function ensureManualDefaults() {
     const manual = { ...(state.manual ?? {}) };
     if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return;
-    const tomorrow = romeDayKey(new Date(clock().getTime() + 86400000).toISOString());
-    if (!tomorrow) return;
-    state.manual = { ...manual, date: tomorrow, start: '09:30', end: '10:00' };
+    const slot = defaultManualSlot(clock().getTime());
+    if (!slot) return;
+    state.manual = { ...manual, ...slot };
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2673,7 +2717,8 @@ export function createCalendarioView(deps) {
    * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
    * appuntamento» form: it closes AND drops the typed values — never the
    * old slot, customer or price left behind. The next opening proposes a
-   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
+   * day and a time (today when a slot is still ahead, else tomorrow
+   * 09:30–10:00) instead of an empty form. Focus
    * goes back to the «Nuovo appuntamento» button.
    */
   function closeManual() {
@@ -4348,7 +4393,23 @@ export function createCalendarioView(deps) {
         parseMemberFilter(state.memberFilter),
         state.members,
       );
-      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
+      // every opening proposes a time, so the first free step of the drafted
+      // day rides into the form — a real free slot, never an invented
+      // midnight. Without a free step the hours stay empty and the note says
+      // why («Nessuno slot libero quel giorno»).
+      if (draftDayOnly(fill)) {
+        const key = draftDayKey(fill);
+        const first = key
+          ? state.proposals.find((slot) => romeDayKey(slot?.startsAt) === key && romeTime(slot?.startsAt) && romeTime(slot?.endsAt))
+          : null;
+        if (first) {
+          state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
+          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+        }
+      }
+      fillManual(fill);
     }
   }
 
@@ -4670,6 +4731,40 @@ export function createCalendarioView(deps) {
    * the new event once it paints.
    * @param {any} appointment
    */
+  /**
+   * backlog:134f3ed7 — the just-booked row rides the painted week: the new
+   * block shows on the next paint, even before the reload lands or when the
+   * reloaded week does not carry the id yet. Only the booked day inside the
+   * painted week and its existing member group, added only when the id is
+   * missing — never an invented row, never another member's lane, and never
+   * replacing the authoritative server row when the id is already there.
+   */
+  function carryBookedRow() {
+    const booked = state.confirmed;
+    const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
+    const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
+    if (id === null || member === null) return;
+    if (!state.week || !Array.isArray(state.week.members)) return;
+    const day = romeDayKey(booked?.startsAt);
+    if (!day || !state.weekKeys.includes(day)) return;
+    const group = state.week.members.find((entry) => entry?.teamMemberId === member);
+    if (!group || !Array.isArray(group.appointments)) return;
+    const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
+    // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
+    // reloaded server week is authoritative: when the id is already there
+    // the server row wins and this function changes nothing (a row cancelled
+    // elsewhere must never paint booked again). The local copy rides only
+    // when the id is still missing (read lag).
+    if (at >= 0) return;
+    // Never mutate the loaded week in place (tests share the stub object):
+    // rebuild the group, so only the painted state changes.
+    const appointments = [...group.appointments, booked];
+    state.week = {
+      ...state.week,
+      members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+    };
+  }
+
   function markBooked(appointment) {
     state.confirmed = appointment ?? null;
     state.selection = null;
@@ -4701,12 +4796,28 @@ export function createCalendarioView(deps) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
       state.week = null;
     }
+    // backlog:134f3ed7 — the new block reads highlighted on the next paint:
+    // the selection names it now and its row rides the painted week, so the
+    // grid shows it before the reload lands. The reload reconciles.
+    if (id !== null) {
+      state.selectedId = id;
+      carryBookedRow();
+    }
   }
 
   /** Reload the week after a booking, so the new event paints on the grid. */
-  function reloadAfterBooking() {
+  async function reloadAfterBooking() {
+    if (!state.confirmed) return;
     const members = parseMemberFilter(state.memberFilter);
-    if (members.length > 0 && state.confirmed) void loadWeek(members);
+    if (members.length > 0) {
+      void loadWeek(members);
+      return;
+    }
+    // backlog:134f3ed7 — the filter may read empty (roster unreadable, the
+    // operator cleared it): the booked member still scopes the reload, so
+    // the new block paints and highlights instead of never reloading.
+    if (state.pendingEventMember !== null) void loadWeek([state.pendingEventMember]);
+    else renderAll();
   }
 
   /**

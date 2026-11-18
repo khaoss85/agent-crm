@@ -1,6 +1,6 @@
 // @ts-check
 
-import { sessionRoleLabel } from './admin-session.js';
+import { readSessionProfile, sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
@@ -514,12 +514,21 @@ export function spaceSwitcherLabel(spaces) {
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
  * the name — the first unused candidate, so «Presti Group» and «Prova
  * Validazione B1» read differently even when both arrive as «PR».
+ * Rows outside the host's live member list (backlog:ca7008cac764) carry
+ * `needsAccess`: visited mounts the session profile does not name may land
+ * on the space login instead of switching, so the menu marks them instead
+ * of promising a seamless switch. Without a member list every row reads
+ * as a plain switch, like before.
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
+ * @param {Array<string> | null} [memberIds] ids the session profile names
  */
-export function spaceMenuItems(spaces, activeId) {
+export function spaceMenuItems(spaces, activeId, memberIds = null) {
   const list = Array.isArray(spaces) ? spaces : [];
   const seen = new Set();
+  const memberSet = memberIds == null ? null : new Set(
+    (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
+  );
   return list.map((space, index) => {
     const name = typeof space?.name === 'string' ? space.name : '';
     const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
@@ -546,6 +555,7 @@ export function spaceMenuItems(spaces, activeId) {
       badgeClass: spaceBadgeClass(space?.id),
       keyHint: index < 9 ? `⌘${index + 1}` : '',
       active: space.id === activeId,
+      needsAccess: memberSet !== null && space.id !== activeId && !memberSet.has(space.id),
     };
   });
 }
@@ -700,6 +710,20 @@ export function createShellView({
     state.activeSpaceId = state.spaces[0].id;
   }
 
+  // backlog:ca7008cac764: the host's live member list — the session
+  // profile's spaces. Rows outside it are visited mounts the host may no
+  // longer know, so opening one can land on the space login; the menu
+  // marks them instead of promising a seamless switch. Without a session
+  // (local development) every pick switches in-tab: nothing is marked.
+  const sessionMemberIds = (() => {
+    try {
+      const ids = readSessionProfile(doc)?.spaces?.map((entry) => entry?.id);
+      return Array.isArray(ids) ? ids : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
 
   // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
@@ -792,7 +816,7 @@ export function createShellView({
     // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
     // per-space colors, so two spaces never read the same; the button label
     // lists only the shortcuts that exist.
-    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId, sessionMemberIds);
     const space = items.find((entry) => entry.active) ?? items[0];
     const switcherLabel = spaceSwitcherLabel(state.spaces);
 
@@ -825,11 +849,20 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
+      // backlog:09644bb7e7e9: il nome va a capo per intero (CSS) e resta
+      // comunque tutto a un hover di distanza.
+      pick.setAttribute('title', entry.name);
       const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
       if (entry.keyHint !== '') pick.appendChild(el(doc, 'span', 'bo-space-key', entry.keyHint));
+      // backlog:ca7008cac764: a row the session profile does not name may
+      // land on the space login instead of switching — the menu says so.
+      if (entry.needsAccess === true) {
+        pick.appendChild(el(doc, 'span', 'bo-space-pick-note bo-muted', 'può chiedere l\u2019accesso'));
+        pick.setAttribute('title', 'Questo spazio potrebbe chiedere di accedere di nuovo');
+      }
       if (entry.active) pick.appendChild(el(doc, 'span', 'bo-space-check', '✓'));
       else pick.addEventListener('click', () => {
         switchSpace(entry.id);
@@ -850,6 +883,15 @@ export function createShellView({
     // One voice row: icon, label, then the voice's live badge, if any.
     // Clienti carries the live client count (grey pill, BO-F6-01);
     // Impostazioni carries the real "things to fix" count (yellow pill).
+    // backlog:09644bb7e7e9: every row ends with exactly one 20px trailing
+    // element — the badged voices keep their pinned `is-empty` placeholder
+    // (backlog:b76770f82fe9), the others get a neutral hidden slot — so all
+    // rows measure the same and no «0» ever shows before the real number.
+    function appendPillSlot(link) {
+      const slot = el(doc, 'span', 'bo-pill-slot');
+      slot.setAttribute('aria-hidden', 'true');
+      link.appendChild(slot);
+    }
     function appendVoice(container, item) {
       const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
         + (item.id === state.activeScreenId ? ' active' : '')
@@ -894,6 +936,7 @@ export function createShellView({
           link.appendChild(empty);
         }
       }
+      if (item.id !== 'clienti' && item.id !== 'impostazioni') appendPillSlot(link);
       container.appendChild(link);
     }
 
@@ -1255,6 +1298,21 @@ export function renderUnknownRoute({ doc, mount }) {
 export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
 
 /**
+ * Backlog 2302655b1fcf: the settings header both the Impostazioni index and
+ * Personalizzazione paint — one component (h2.panel-title plus its
+ * subtitle), so the two pages keep the same title, subtitle and hero size.
+ * The 46px hero size comes from the `.panel.personalizzazione` ancestor both
+ * pages paint around it (styles.css), never from a copied rule.
+ * @param {any} doc
+ * @param {any} box the panel the header opens
+ * @param {{ title?: string, subtitle?: string }} [options]
+ */
+export function paintSettingsHead(doc, box, { title = '', subtitle = '' } = {}) {
+  box.appendChild(el(doc, 'h2', { text: title, cls: 'panel-title' }));
+  box.appendChild(el(doc, 'p', { text: subtitle, cls: 'muted' }));
+}
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -1264,13 +1322,17 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  // backlog:2302655b1fcf: the same header as Personalizzazione (panel-title
-  // plus subtitle), never the «Backoffice» kicker the other screens dropped.
-  mount.appendChild(el(doc, 'h2', { text: 'Impostazioni', cls: 'panel-title' }));
-  mount.appendChild(el(doc, 'p', {
-    text: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
-    cls: 'muted',
-  }));
+  // backlog:2302655b1fcf: the index paints the same chrome as every other
+  // settings screen — the IMPOSTAZIONI tab row (no tab underlined: the index
+  // is none of the areas) above the shared header component, never the
+  // «Backoffice» kicker the other screens dropped.
+  mount.appendChild(settingsTabs(doc, { activeId: null, fixCount, navigate }));
+  const panel = el(doc, 'div', { cls: 'panel personalizzazione' });
+  mount.appendChild(panel);
+  paintSettingsHead(doc, panel, {
+    title: 'Impostazioni',
+    subtitle: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+  });
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(
@@ -1285,7 +1347,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
-  mount.appendChild(summary);
+  panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {
     summary.setAttribute('role', 'status');
     const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
@@ -1310,12 +1372,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
           count = null;
         }
         // The operator may have left meanwhile: repaint only the panel
-        // still on screen, never over the screen just opened.
-        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        // still on screen, never over the screen just opened. Both links
+        // of the chain must hold: the summary in its panel and the panel
+        // in the mount (clearing the mount detaches the panel but leaves
+        // the summary inside it).
+        if (summary.parentNode !== panel || panel.parentNode !== mount) return;
         renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
       });
     });
-    mount.appendChild(retry);
+    panel.appendChild(retry);
   }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
@@ -1345,7 +1410,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     }
     list.appendChild(row);
   }
-  mount.appendChild(list);
+  panel.appendChild(list);
 }
 
 /**

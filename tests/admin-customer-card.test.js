@@ -5439,6 +5439,45 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
+test('backlog:1e07362849db: the scheda labels whose figure it shows when quote total and offer value differ', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo 10 ingressi',
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the quote total paints');
+  assert.equal(amount.textContent, '15 €');
+  const note = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(note, 'the figure carries its label');
+  assert.equal(note.textContent, 'preventivo in bozza');
+  const offer = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(offerNote, 'the offer value paints labelled too');
+  assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));

@@ -379,13 +379,13 @@ export function detailSections({ entry, connection, spaceId = null }) {
 
   const dettagliTecniciLines = connection === null
     ? [
-        `Canale: ${channel === '' ? '—' : channel}.`,
+        'Canale: nessun canale collegato.',
         direction === null
           ? 'Direzione: non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
           : `Direzione: ${direction === 'in-out' ? 'entrata e uscita' : 'solo entrata'}.`,
       ]
     : [
-        `Canale: ${typeof connection.channel === 'string' ? connection.channel : channel}.`,
+        `Canale: ${label}.`,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
         `Stato: ${statusLabel(connection.status)}.`,
