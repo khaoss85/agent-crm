@@ -31,6 +31,7 @@ export function quoteStubManifest() {
     description: 'Test stub: the approved-version pointer share-link mints for.',
     fields: [
       { name: 'status', type: 'string' },
+      { name: 'opportunityId', type: 'string' },
       { name: 'currentVersionId', type: 'string' },
       { name: 'currentVersionNumber', type: 'integer' },
       { name: 'draftRevision', type: 'integer' },
