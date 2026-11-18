@@ -29,7 +29,7 @@
 // inert text, never markup.
 
 import { humanReadError } from './admin-core.js';
-import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections, readConnectorListSnapshot } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -429,20 +429,44 @@ export function createConnectorDetailView(deps) {
     return state.spaceId;
   };
 
+  // The list (`#/connettori`) already read adapters+rows for this space:
+  // reuse them so a warm open skips two of three reads (backlog:9a1c9a94).
+  // Tests inject `listSnapshot` (object or thunk); the page uses the module
+  // snapshot the list view stored. A space mismatch means a cold open.
+  const snapshotOf = () => {
+    try {
+      if (typeof deps.listSnapshot === 'function') return deps.listSnapshot();
+      if (deps.listSnapshot !== null && typeof deps.listSnapshot === 'object') return deps.listSnapshot;
+      return readConnectorListSnapshot();
+    } catch {
+      return null;
+    }
+  };
+
   async function load() {
     refreshSpace();
     state.loaded = false;
     state.loadError = null;
-    let schema;
-    try {
-      schema = await client.request('/api/schema');
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
+    const spaceId = state.spaceId.trim();
+    const snap = snapshotOf();
+    const warm = snap !== null && typeof snap === 'object'
+      && snap.spaceId === spaceId && spaceId !== ''
+      && snap.channelsReady === true && Array.isArray(snap.adapters);
+    if (warm) {
+      state.channelsReady = true;
+      state.adapters = snap.adapters;
+    } else {
+      let schema;
+      try {
+        schema = await client.request('/api/schema');
+      } catch (error) {
+        state.loadError = errorOf(error);
+        return;
+      }
+      const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
+      state.channelsReady = Boolean(meta && meta.channelsContract === 1);
+      state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     }
-    const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-    state.channelsReady = Boolean(meta && meta.channelsContract === 1);
-    state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     state.units = null;
     state.catalogError = null;
     try {
@@ -455,9 +479,14 @@ export function createConnectorDetailView(deps) {
       state.units = null;
       state.catalogError = errorOf(error);
     }
-    if (!state.channelsReady || state.spaceId.trim() === '') return;
+    if (!state.channelsReady || spaceId === '') return;
+    if (warm && Array.isArray(snap.entries)) {
+      state.entries = snap.entries;
+      state.loaded = true;
+      return;
+    }
     try {
-      const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(state.spaceId.trim())}`);
+      const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`);
       state.entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
       state.loaded = true;
     } catch (error) {
