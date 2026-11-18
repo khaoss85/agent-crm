@@ -1610,6 +1610,11 @@ export function createCalendarioView(deps) {
     pendingEventMember: null,
     /** Booked start the highlight falls back to when the confirm answer carries no id (production bridge). @type {string|null} */
     pendingEventStart: null,
+    /** Adopted server row the grid highlights without selecting: the new block
+     * reads selected, but the detail popover never opens uninvited (review
+     * Muse #1030 P2). Cleared on the next explicit choice, close, entry or
+     * space switch, or when its row leaves the week. @type {string|null} */
+    pendingTimeId: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1812,6 +1817,9 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
+      // backlog:134f3ed7 (review Muse #1030 P2) — the adopted highlight
+      // retires with its row: a missing or cancelled row highlights nothing.
+      if (state.pendingTimeId !== null && !weekHasLiveRow(state.pendingTimeId)) state.pendingTimeId = null;
       // backlog:134f3ed7 (review Muse #1001 P1) — the confirmed row rides
       // the fresh week only while the booking handshake is still open
       // (pendingEventId set): a reload that does not carry the just-booked
@@ -1847,9 +1855,15 @@ export function createCalendarioView(deps) {
       // server stays authoritative, like the id handshake above.
       else if (state.pendingEventStart !== null && state.pendingEventMember !== null) {
         carryBookedRow();
-        const match = pendingTimeRow();
+        // backlog:134f3ed7 (review Muse #1030 P2) — the booking may land at
+        // a different time than claimed (server normalization, another
+        // client): the claim's source key owns the row wherever it paints,
+        // not only on exact-start match.
+        const match = sourceKeyRow() ?? pendingTimeRow();
         if (match !== null && typeof match.id === 'string' && match.id !== '') {
-          state.selectedId = match.id;
+          // Highlight-only adoption, never the detail selection: the block
+          // paints selected without opening its popover uninvited.
+          state.pendingTimeId = match.id;
           state.pendingEventStart = null;
           state.pendingEventMember = null;
           state.confirmed = null;
@@ -1859,6 +1873,7 @@ export function createCalendarioView(deps) {
           state.pendingEventMember = null;
           state.confirmed = null;
           state.selectedId = null;
+          state.pendingTimeId = null;
         }
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
@@ -2150,6 +2165,39 @@ export function createCalendarioView(deps) {
       for (const row of group?.appointments ?? []) {
         if (!isCancelledRow(row)) continue;
         if (String(row?.startsAt ?? '') === state.pendingEventStart) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * backlog:134f3ed7 (review Muse #1030 P2) — the live server row carrying
+   * the just-booked claim's source key, wherever it paints: when the booking
+   * lands at a different time than claimed, the key still owns it, so the
+   * id-less optimistic copy retires instead of riding on as a phantom.
+   */
+  function sourceKeyRow() {
+    const key = typeof state.confirmed?.sourceKey === 'string' && state.confirmed.sourceKey !== ''
+      ? state.confirmed.sourceKey
+      : null;
+    if (key === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        if (String(row?.sourceKey ?? '') === key) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A live (non-cancelled) week row with this id, or null. */
+  function weekHasLiveRow(id) {
+    if (!state.week) return false;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (String(row?.id ?? '') === id && !isCancelledRow(row)) return true;
       }
     }
     return false;
@@ -2651,6 +2699,9 @@ export function createCalendarioView(deps) {
           // A hidden selection has no visible border: close its detail card.
           const selected = selectedRow();
           if (selected && row.ids.includes(String(selected.teamMemberId ?? ''))) state.selectedId = null;
+          // backlog:134f3ed7 (review Muse #1030 P2) — hiding the adopted
+          // row's person retires its highlight with the selection.
+          state.pendingTimeId = null;
         } else {
           for (const id of row.ids) hidden.delete(id);
         }
@@ -2826,6 +2877,7 @@ export function createCalendarioView(deps) {
     state.bookingNote = '';
     state.serviceError = '';
     state.confirmed = null;
+    state.pendingTimeId = null;
     renderAll();
     const toggle = mount.querySelector('button[aria-haspopup="true"]');
     if (toggle && typeof toggle.focus === 'function') toggle.focus();
@@ -3471,11 +3523,18 @@ export function createCalendarioView(deps) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
+    // backlog:134f3ed7 (review Muse #1030 P2) — the fallback never paints a
+    // cancelled row as the new booking: a dead (grey) block stays dead.
     const timeFallback = state.selectedId === null && state.pendingEventStart !== null
       && state.pendingEventMember !== null
       && String(row?.teamMemberId ?? '') === state.pendingEventMember
-      && String(row?.startsAt ?? '') === state.pendingEventStart;
-    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback;
+      && String(row?.startsAt ?? '') === state.pendingEventStart
+      && !isCancelledRow(row);
+    // backlog:134f3ed7 (review Muse #1030 P2) — the adopted row highlights
+    // without being selected, so no detail popover opens uninvited.
+    const timeAdopted = state.pendingTimeId !== null && String(row?.id ?? '') === state.pendingTimeId
+      && !isCancelledRow(row);
+    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback || timeAdopted;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
@@ -3550,6 +3609,9 @@ export function createCalendarioView(deps) {
         return;
       }
       state.selectedId = state.selectedId === id ? null : id;
+      // backlog:134f3ed7 (review Muse #1030 P2) — an explicit choice owns
+      // the highlight from here: the adopted mark retires with the click.
+      state.pendingTimeId = null;
       state.moveNote = '';
       resetPopSteps();
       // One popover at a time: an event opens over a slot pick or the form,
@@ -4075,10 +4137,65 @@ export function createCalendarioView(deps) {
    * frase" card. The phrase interprets to a draft (person, day, duration);
    * "Trova slot liberi" reads that person's free slots over the shown week
    * — never invented — and renders one row plus one grid ghost per slot.
-   * Every Conferma (row or ghost) books through confirmBooking with the
-   * claim the manual form below holds; a missing customer, service or price
-   * fails closed with a plain sentence naming the manual form.
+   * Every card-row Conferma books through confirmBooking with the claim the
+   * manual form below holds; a missing customer, service or price fails
+   * closed with a plain sentence naming the manual form. A grid ghost fills
+   * the «Nuovo appuntamento» panel with its day and hours instead, so the
+   * operator checks them before confirming there.
    */
+  /**
+   * backlog:134f3ed73f86 (seguito 18/11, VERIFIER_BACK) — the first usable
+   * proposal: day and hours of a real free slot, never invented. The panel
+   * opens around it while the card lists it beside.
+   */
+  function firstProposalSlot() {
+    for (const slot of state.proposals ?? []) {
+      const day = romeDayKey(slot?.startsAt);
+      const start = romeTime(slot?.startsAt);
+      const end = romeTime(slot?.endsAt);
+      if (day && start && end) {
+        return { day, start, end };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * backlog:134f3ed73f86 (seguito 18/11) — the panel opens with the first
+   * proposal's day and hours when it has none of its own. What the operator
+   * already chose is never overwritten. @returns {boolean} true when filled.
+   */
+  function fillManualFromFirstProposal() {
+    const manual = { ...(state.manual ?? {}) };
+    if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return false;
+    const first = firstProposalSlot();
+    if (!first) return false;
+    state.manual = { ...manual, date: first.day, start: first.start, end: first.end };
+    return true;
+  }
+
+  /**
+   * backlog:134f3ed73f86 (seguito 18/11) — a clicked «Proposta» ghost fills
+   * the «Nuovo appuntamento» panel with its day and hours and opens it, so
+   * the operator checks them before confirming there. The person is never
+   * filled: an empty person fails closed at Conferma, naming its field.
+   * @param {{startsAt?: unknown, endsAt?: unknown}} slot
+   */
+  function fillManualFromSlot(slot) {
+    const day = romeDayKey(slot?.startsAt);
+    const start = romeTime(slot?.startsAt);
+    const end = romeTime(slot?.endsAt);
+    if (!day || !start || !end) return;
+    state.selection = null;
+    state.selectedId = null;
+    state.pendingTimeId = null;
+    state.draftFill = null;
+    state.manual = { ...(state.manual ?? {}), date: day, start, end };
+    state.manualOpen = true;
+    renderAll();
+    state.manualFirst?.focus?.();
+  }
+
   /**
    * backlog:3771ac637027 — «Compila a mano» from the phrase card: opens the
    * manual form like «Compila manualmente» and carries the phrase into its
@@ -4091,6 +4208,10 @@ export function createCalendarioView(deps) {
     if (phrase !== '' && String(state.manual?.notes ?? '').trim() === '') {
       state.manual = { ...(state.manual ?? {}), notes: phrase.slice(0, 2000) };
     }
+    // backlog:134f3ed73f86 (seguito 18/11) — the listed proposals already
+    // name a day and hours: the panel opens around the first one instead of
+    // empty, unless the operator already chose day or hours.
+    fillManualFromFirstProposal();
     ensureManualDefaults();
     renderAll();
     const target = state.manualFirst;
@@ -4842,6 +4963,12 @@ export function createCalendarioView(deps) {
       const start = typeof booked?.startsAt === 'string' && booked.startsAt !== '' ? booked.startsAt : null;
       if (start === null) return;
       if (group.appointments.some((row) => String(row?.startsAt ?? '') === start)) return;
+      // backlog:134f3ed7 (review Muse #1030 P2) — the booking landed at a
+      // different time (server normalization, another client): the server
+      // row carries the claim's source key, so the id-less copy retires
+      // instead of re-appending a phantom at the old hour on every reload.
+      const key = typeof booked?.sourceKey === 'string' && booked.sourceKey !== '' ? booked.sourceKey : null;
+      if (key !== null && group.appointments.some((row) => !isCancelledRow(row) && String(row?.sourceKey ?? '') === key)) return;
       const appointments = [...group.appointments, booked];
       state.week = {
         ...state.week,
@@ -4884,6 +5011,9 @@ export function createCalendarioView(deps) {
     state.customerError = null;
     state.customerPartial = false;
     state.selectedId = null;
+    // backlog:134f3ed7 (review Muse #1030 P2) — a new booking replaces any
+    // adopted highlight: only the just-booked row highlights from here.
+    state.pendingTimeId = null;
     state.manualTyped.clear();
     resetPopSteps();
     state.moveNote = '';
@@ -5679,6 +5809,7 @@ export function createCalendarioView(deps) {
       state.serviceError = '';
       state.confirmed = null;
       state.selectedId = null;
+      state.pendingTimeId = null;
       state.pendingEventId = null;
       state.pendingEventMember = null;
       state.pendingEventStart = null;
@@ -5699,6 +5830,7 @@ export function createCalendarioView(deps) {
       state.proposals = [];
       state.aiNote = '';
       state.selectedId = null;
+      state.pendingTimeId = null;
       state.pendingEventId = askedEvent.id;
       state.pendingEventMember = askedEvent.member ?? null;
       state.pendingEventStart = null;
