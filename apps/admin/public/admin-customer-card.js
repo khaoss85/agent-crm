@@ -6954,11 +6954,15 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    // backlog:9b28b3bc6003: the offer section hides itself when the customer
-    // has none, so the skeleton only covers the unknown — while the profile
-    // is still in flight. The pipelines only name the stage (the line falls
-    // back to the core stage without them), so a slow schema read never
-    // paints an «Offerta» skeleton over a customer with no offer.
+    // backlog:9b28b3bc6003 (main, #992 — supersedes the blank tried in this
+    // PR): the offer section hides itself when the customer has none, so
+    // the skeleton only covers the unknown — while the profile is still in
+    // flight. The pipelines only name the stage (the line falls back to the
+    // core stage without them), so a slow schema read never paints an
+    // «Offerta» skeleton over a customer with no offer. The placeholder also
+    // answers review P2 on c4e8586e: with-offer customers keep a placeholder
+    // instead of a blank-to-card jump. Measured by
+    // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js.
     if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the

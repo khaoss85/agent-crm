@@ -6149,6 +6149,11 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
+  // skeleton covers only the unknown — while the profile is still in
+  // flight. The phantom was a skeleton held by the slow schema read after
+  // the profile was already known empty; that case paints nothing (see
+  // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
