@@ -1379,7 +1379,7 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
 test('9790f4df7a93: channelSynced needs a linked binding and a first event', () => {
   assert.equal(channelSynced({ linked: true, received: 3, lastAt: '2026-10-25T11:30:00.000Z' }), true);
   assert.equal(channelSynced({ linked: true, received: 1, lastAt: null }), true, 'a counted event is enough');
-  assert.equal(channelSynced({ linked: true, received: 0, lastAt: '2026-10-25T11:30:00.000Z' }), true, 'an update instant is enough');
+  assert.equal(channelSynced({ linked: true, received: 0, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'an update instant alone is never enough (Mac 18/11: «aggiornato 1 min fa» with zero events)');
   // The reported bug: linked WhatsApp, «0 eventi» — no view may call it synced.
   assert.equal(channelSynced({ linked: true, received: 0, lastAt: null }), false);
   assert.equal(channelSynced({ linked: false, received: 10, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'traffic without a link is not synced');
@@ -1396,6 +1396,38 @@ test('9790f4df7a93: channelSynced needs a linked binding and a first event', () 
   assert.deepEqual(row.pill, { text: 'in attesa del primo evento', tone: 'attesa' });
   assert.ok(!syncIndicator(quiet, NOW).title.includes('sincronizzato') || syncIndicator(quiet, NOW).title.includes('attesa'),
     'no synced headline on zero events');
+});
+
+// backlog:9790f4df7a93 (supervisore 18/11, prova del Mac sul live): NON
+// PASSA — Google Calendar dello spazio di test dice «0 eventi ricevuti ·
+// Attivo» e l'Email di Presti lo stesso: basta un «aggiornato 1 min fa»
+// per dire sincronizzato con zero eventi. Repro: un istante di
+// aggiornamento recente (arrivo contato a zero, invio fallito recente,
+// giro attività recente) non basta mai — pill e hero restano in attesa.
+// Rosso sul codice prima della cura, verde dopo.
+test('9790f4df7a93: zero events with a fresh update never reads synced', () => {
+  // Un arrivo recente contato a zero: il contatore è stato azzerato ma
+  // l'istante è rimasto — mai «Attivo».
+  const zeroCounted = activityOf({
+    connections: [entryOf({ channel: 'calendar', connectionKey: 'cal-1', health: 'ok', inbox: inboxOf({ received: 0, lastReceivedAt: '2026-10-25T11:59:00.000Z' }) })],
+    lastActivityAt: '2026-10-25T11:59:00.000Z',
+  });
+  const zeroRow = syncChannelTable(zeroCounted, NOW).find((entry) => entry.channel === 'calendar');
+  assert.equal(zeroRow.connected, true);
+  assert.equal(zeroRow.received, 0);
+  assert.deepEqual(zeroRow.pill, { text: 'in attesa del primo evento', tone: 'attesa' }, 'a fresh instant with zero events waits');
+  assert.equal(syncIndicator(zeroCounted, NOW).title, 'Google Calendar in attesa del primo evento');
+  assert.ok(!syncIndicator(zeroCounted, NOW).title.includes('sincronizzato'), 'no synced headline on zero events');
+  // Un invio fallito recente non è un evento ricevuto — mai «Attivo».
+  const failedOnly = activityOf({
+    connections: [entryOf({ channel: 'email', connectionKey: 'mail-1', health: 'ok', inbox: inboxOf({ received: 0, lastReceivedAt: null }), outbox: { openDeadLetters: 0, lastFailedAt: '2026-10-25T11:59:00.000Z' } })],
+    lastActivityAt: '2026-10-25T11:59:00.000Z',
+  });
+  const failedRow = syncChannelTable(failedOnly, NOW).find((entry) => entry.channel === 'email');
+  assert.deepEqual(failedRow.pill, { text: 'in attesa del primo evento', tone: 'attesa' }, 'a recent failed send is not a received event');
+  assert.ok(!syncIndicator(failedOnly, NOW).title.includes('sincronizzato'), 'no synced headline on a failed send alone');
+  // Il dettaglio resta onesto: dice quando ha aggiornato e che gli eventi sono zero.
+  assert.match(syncIndicator(zeroCounted, NOW).detail, /Ultimo aggiornamento 1 min fa · 0 eventi ricevuti in tutto\./);
 });
 
 // backlog:e381c48581fa (giro UX 11/11, punto 32): Stato sync read «Quasi
