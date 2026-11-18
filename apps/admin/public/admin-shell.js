@@ -849,6 +849,9 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
+      // backlog:09644bb7e7e9: il nome va a capo per intero (CSS) e resta
+      // comunque tutto a un hover di distanza.
+      pick.setAttribute('title', entry.name);
       const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
@@ -880,6 +883,15 @@ export function createShellView({
     // One voice row: icon, label, then the voice's live badge, if any.
     // Clienti carries the live client count (grey pill, BO-F6-01);
     // Impostazioni carries the real "things to fix" count (yellow pill).
+    // backlog:09644bb7e7e9: every row ends with exactly one 20px trailing
+    // element — the badged voices keep their pinned `is-empty` placeholder
+    // (backlog:b76770f82fe9), the others get a neutral hidden slot — so all
+    // rows measure the same and no «0» ever shows before the real number.
+    function appendPillSlot(link) {
+      const slot = el(doc, 'span', 'bo-pill-slot');
+      slot.setAttribute('aria-hidden', 'true');
+      link.appendChild(slot);
+    }
     function appendVoice(container, item) {
       const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
         + (item.id === state.activeScreenId ? ' active' : '')
@@ -924,6 +936,7 @@ export function createShellView({
           link.appendChild(empty);
         }
       }
+      if (item.id !== 'clienti' && item.id !== 'impostazioni') appendPillSlot(link);
       container.appendChild(link);
     }
 
