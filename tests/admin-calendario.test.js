@@ -3574,6 +3574,58 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
 
+test('resolveDraftMemberIds strips the painted ordinal and reads the label (backlog:a16726b5ea76)', () => {
+  const solo = [{ subject: 'coach-rossi', displayName: 'Marco Rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], solo),
+    ['coach-rossi'],
+    'painted ordinal is not the name',
+  );
+  const labelOnly = [{ subject: 'marco-rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('MARCO ROSSI', [], labelOnly),
+    ['marco-rossi'],
+    'label base matches across cases',
+  );
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco (1)', [], homonyms), [], 'two real homonyms stay unresolved');
+  assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
+});
+
+test('resolveDraftMemberIds review #1017 giro 1: literal (N), strict strip, no fallback (backlog:a16726b5ea76)', () => {
+  const literal = [
+    { subject: 'a', displayName: 'Marco Rossi' },
+    { subject: 'b', displayName: 'Marco Rossi (2)' },
+  ];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi', [], literal),
+    ['a'],
+    'a real name wins before stripping',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], literal),
+    ['b'],
+    'a literal (N) name still finds its own row',
+  );
+  const solo = [{ subject: 'coach-marco', displayName: 'Marco' }];
+  assert.deepEqual(resolveDraftMemberIds('Marco(2)', [], solo), [], 'no space is not the painted ordinal');
+  assert.deepEqual(resolveDraftMemberIds('Marco  (2)', [], solo), [], 'two spaces are not the painted ordinal');
+  const technical = [{ subject: 'google|x1' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Membro del team', [], technical),
+    [],
+    'the generic fallback names nobody',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('membro del team (1)', [], [...technical, { subject: 'google|x2' }]),
+    [],
+    'a numbered fallback names nobody either',
+  );
+});
+
 // backlog:d1e4d90e — the server answers per booking identity, so one human
 // with two identities needs the intersection: a step held under coach-guido
 // must not be offered as free under google|g1.
