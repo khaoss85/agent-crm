@@ -1950,8 +1950,8 @@ export function createCustomerCardView(deps) {
     call.setAttribute('data-action', 'call-customer');
     call.setAttribute('title', phone !== null ? `Chiama ${phone}` : 'Chiama: scegli o scrivi il numero');
     call.addEventListener('click', () => {
-      if (phone !== null && numbers.length <= 1) openCallPanel(box, card, navCtx, phone);
-      else openNumberWindow(box, card, navCtx, numbers);
+      if (phone !== null && numbers.length <= 1) openCallPanel(card, navCtx, phone);
+      else openNumberWindow(card, navCtx, numbers);
     });
     row.appendChild(call);
     // A number just saved from the number window: the call starts on the
@@ -1962,7 +1962,7 @@ export function createCustomerCardView(deps) {
       // Another customer took the screen meanwhile: no call there.
       const same = wanted.key === `${navCtx.resource}/${navCtx.id}`;
       const held = phone === null ? null : phone.replace(/[\s\-().]/g, '');
-      if (same && held === wanted.number) openCallPanel(box, card, navCtx, phone);
+      if (same && held === wanted.number) openCallPanel(card, navCtx, phone);
       else if (same && phone !== null) {
         // The card still dials another number: never call one the
         // operator did not choose.
@@ -2004,7 +2004,7 @@ export function createCustomerCardView(deps) {
    * the card re-reads and the usual «Chiama» flow starts on the number the
    * server holds — the CRM call route dials only that one.
    */
-  function openNumberWindow(box, card, navCtx, numbers) {
+  function openNumberWindow(card, navCtx, numbers) {
     closeSchedaWindows();
     openCallNumberPanel({
       doc,
@@ -2013,7 +2013,7 @@ export function createCustomerCardView(deps) {
       numbers,
       choose: async (number, held) => {
         if (held) {
-          openCallPanel(box, card, navCtx, number);
+          openCallPanel(card, navCtx, number);
           return null;
         }
         try {
@@ -2042,7 +2042,7 @@ export function createCustomerCardView(deps) {
   }
   /** The windows over the scheda: one at a time (Scrivi keeps its draft). */
   function closeSchedaWindows(keep = null) {
-    for (const attr of ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']) {
+    for (const attr of ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone', 'data-call']) {
       if (attr === keep) continue;
       const open = mount.querySelector(`div[${attr}="open"]`);
       if (open && open.parentNode) open.parentNode.removeChild(open);
@@ -2071,14 +2071,19 @@ export function createCustomerCardView(deps) {
     dial.setAttribute('class', 'bo-call-fallback');
     into.appendChild(dial);
   };
-  function openCallPanel(box, card, navCtx, phone) {
+  function openCallPanel(card, navCtx, phone) {
     // Voce 14d999de: the shared scheda window frame — the same dark head
     // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
     // so the panel reads as /bo and Escape/Chiudi close it. A click outside
     // closes it too, through the document closer below.
+    // Seguito ANSWER 17/11 (stessa trappola della #605): the fixed panel
+    // hangs off the view, never the action card — inside the left column it
+    // painted under the Offerta column, covering Riduci/Chiudi. One window
+    // at a time, like Scrivi and the offer window.
+    closeSchedaWindows();
     installCallOutsideCloser(doc);
     const win = openSchedaWindow({
-      doc, host: box, attr: 'data-call', action: 'call',
+      doc, host: mount, attr: 'data-call', action: 'call',
       title: 'Chiama dal CRM',
       customer: typeof card?.name === 'string' ? card.name : null,
     });
@@ -6049,7 +6054,7 @@ export function createCustomerCardView(deps) {
     // offer panel) stay open through a re-read of the same customer, with
     // their text and focus; only the scheda itself is swapped.
     const isWindow = (child) => typeof child?.getAttribute === 'function'
-      && ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']
+      && ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone', 'data-call']
         .some((attr) => child.getAttribute(attr) === 'open');
     const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
     for (const child of Array.from(mount.childNodes ?? [])) {
