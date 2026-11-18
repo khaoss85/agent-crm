@@ -23,6 +23,7 @@ import {
   SYNC_ROUTE,
   cataloguedChannel,
   channelLabel,
+  channelSynced,
   createSyncView,
   directionLabel,
   feedClockTime,
@@ -1371,6 +1372,30 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   assert.ok(mount.textContent.includes('Quasi tutto sincronizzato'));
   assert.ok(!mount.textContent.includes('Niente da sistemare'), 'a row to fix never sits beside «Niente da sistemare»');
   assert.ok(mount.textContent.includes('Un canale va controllato'));
+});
+
+// backlog:9790f4df7a93: one synced rule for both views — linked AND a
+// first event received. A linked binding with zero events is never synced.
+test('9790f4df7a93: channelSynced needs a linked binding and a first event', () => {
+  assert.equal(channelSynced({ linked: true, received: 3, lastAt: '2026-10-25T11:30:00.000Z' }), true);
+  assert.equal(channelSynced({ linked: true, received: 1, lastAt: null }), true, 'a counted event is enough');
+  assert.equal(channelSynced({ linked: true, received: 0, lastAt: '2026-10-25T11:30:00.000Z' }), true, 'an update instant is enough');
+  // The reported bug: linked WhatsApp, «0 eventi» — no view may call it synced.
+  assert.equal(channelSynced({ linked: true, received: 0, lastAt: null }), false);
+  assert.equal(channelSynced({ linked: false, received: 10, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'traffic without a link is not synced');
+  assert.equal(channelSynced(), false);
+  assert.equal(channelSynced(null), false);
+  assert.equal(channelSynced({ linked: 'yes', received: 5, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'linked is a boolean, never a truthy word');
+  assert.equal(channelSynced({ linked: true, received: -2, lastAt: null }), false);
+  assert.equal(channelSynced({ linked: true, received: 2.5, lastAt: null }), false, 'counts are whole events');
+  // The Stato sync side already reads the shared rule through the pill.
+  const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: inboxOf({ received: 0, lastReceivedAt: null }) })], lastActivityAt: null });
+  const row = syncChannelTable(quiet).find((entry) => entry.channel === 'whatsapp');
+  assert.equal(row.connected, true);
+  assert.equal(channelSynced({ linked: row.connected, received: row.received, lastAt: row.lastAt }), false);
+  assert.deepEqual(row.pill, { text: 'in attesa del primo evento', tone: 'attesa' });
+  assert.ok(!syncIndicator(quiet, NOW).title.includes('sincronizzato') || syncIndicator(quiet, NOW).title.includes('attesa'),
+    'no synced headline on zero events');
 });
 
 // backlog:e381c48581fa (giro UX 11/11, punto 32): Stato sync read «Quasi

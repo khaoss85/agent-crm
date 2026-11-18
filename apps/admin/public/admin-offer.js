@@ -400,31 +400,16 @@ export function createOfferDetail(deps) {
   }
 
   /**
-   * The quotes of an offer and, as soon as they land, every quote's lines
-   * and versions (backlog:94eabbd4762f): each card is read while the rest
-   * of the page still reads, and fills its own place when ready — never
-   * holding the page (review Muse #871).
-   * @param {string} id @param {number} token
+   * The quotes of an offer (backlog:94eabbd4762f): the list is read while
+   * the rest of the page still reads; every quote's lines and versions
+   * fill their own place when ready — never holding the page
+   * (review Muse #871). The cards are painted after the schema lands, so
+   * the card already opened by the head («Apri il preventivo» on the
+   * newest quote, backlog:ea616e16ebac) paints no second link.
+   * @param {string} id
    */
-  /**
-   * @param {string} id @param {number} token @param {Promise<boolean>} commercialRead whether the head carries the quote actions
-   */
-  function readQuotes(id, token, commercialRead) {
-    const read = Promise.all([
-      fetchLinked('quote', 'opportunityId', id),
-      Promise.resolve(commercialRead).then((commercial) => Boolean(commercial), () => false),
-    ]).then(([quotes, commercial]) => {
-      // backlog:bfc070243427: where the head carries the main «Apri il
-      // preventivo» action (commercial composed), the newest quote's card
-      // drops its own link — one quote on the page, one open action. Where
-      // the head carries nothing, every card keeps its link: the only way
-      // to open the quote.
-      const existingId = commercial ? latestQuote(quotes.rows)?.id ?? false : false;
-      return {
-        quotes,
-        cards: quotes.rows.map((quote) => paintQuote(quote, token, { openLink: quote?.id !== existingId })),
-      };
-    });
+  function readQuotes(id) {
+    const read = fetchLinked('quote', 'opportunityId', id);
     read.catch(() => {});
     return read;
   }
@@ -493,11 +478,7 @@ export function createOfferDetail(deps) {
       offerRead.catch(() => {});
       const schemaRead = client.request('/api/schema');
       schemaRead.catch(() => {});
-      // Backlog bfc070243427: the schema decides whether the head carries
-      // the quote actions — read beside the page, never after it.
-      const commercialRead = schemaRead.then((schema) => Boolean(commercialBlock(schema)), () => false);
-      commercialRead.catch(() => {});
-      const quotesFirst = readQuotes(offerId, token, commercialRead);
+      const quotesFirst = readQuotes(offerId);
       const auditFirst = readAudit(offerId);
       // The team names the referente and the authors by their profile
       // name (backlog:ddf7f416ad22); without it the deal still renders.
@@ -533,12 +514,21 @@ export function createOfferDetail(deps) {
       // list, the history and the team; the price books and each quote's
       // lines and versions fill their own place afterwards.
       const [quotesAnswer, audit, team] = await Promise.all([
-        sameId ? quotesFirst : readQuotes(String(record.id), token, commercialRead),
+        sameId ? quotesFirst : readQuotes(String(record.id)),
         sameId ? auditFirst : readAudit(String(record.id)),
         teamRead,
       ]);
-      quotes = quotesAnswer.quotes;
-      quoteCards = quotesAnswer.cards;
+      quotes = quotesAnswer;
+      // backlog:ea616e16ebac: the head opens the newest quote with the
+      // main action («Apri il preventivo», painted with the page — never
+      // waiting for the price books, which only gate «Crea preventivo»),
+      // so that card paints no second link for the same page — one
+      // visible action per quote. Without the commercial block the head
+      // paints no action, and every card keeps its own link.
+      quoteCards = quotes.rows.map((quote) => paintQuote(quote, token, {
+        hideOpen: Boolean(commercialBlock(schema))
+          && quote?.id === latestQuote(quotes.rows)?.id,
+      }));
       auditItems = audit.items;
       auditUnreadable = audit.unreadable;
       auditTruncated = auditItems.length >= AUDIT_LIMIT;
@@ -643,6 +633,14 @@ export function createOfferDetail(deps) {
     const quotesHead = el('div', 'offer-quotes-head');
     quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     quotesPanel.appendChild(quotesHead);
+    // Review Muse #992 (P2): the newest quote stays reachable while the
+    // price books are still reading — its head action paints with the
+    // page, and the books fill only «Crea preventivo» afterwards.
+    const newestFirst = latestQuote(quotes.rows);
+    if (Boolean(commercialBlock(schema)) && newestFirst !== null) {
+      quotesHead.appendChild(openQuoteLink(newestFirst));
+      quotesHead.setAttribute('data-open-painted', 'true');
+    }
     // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
     // arrive together; while the price books read, their place is grey.
     const emptyLine = quotes.rows.length === 0 ? el('p', 'empty', 'Ancora nessun preventivo per questa offerta.') : null;
@@ -1024,9 +1022,16 @@ export function createOfferDetail(deps) {
   function paintCreateQuote(head, panel, record, token, existing = null, answer = { books: null, error: null }) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
+    // Review Muse #992 (P2): the head action already paints with the page
+    // — never a second «Apri il preventivo» for the same quote.
+    const paintHeadOpen = (parent) => {
+      if (existing === null || head.getAttribute?.('data-open-painted') === 'true') return;
+      parent.appendChild(openQuoteLink(existing));
+      head.setAttribute('data-open-painted', 'true');
+    };
     if (answer.books === null) {
       if (answer.error) logReadFailure('price-books', answer.error);
-      if (existing !== null) head.appendChild(openQuoteLink(existing));
+      paintHeadOpen(head);
       line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
       panel.appendChild(line);
       return;
@@ -1036,7 +1041,7 @@ export function createOfferDetail(deps) {
       .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
     if (books.length === 0) {
       if (existing !== null) {
-        head.appendChild(openQuoteLink(existing));
+        paintHeadOpen(head);
         return;
       }
       line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
@@ -1059,7 +1064,7 @@ export function createOfferDetail(deps) {
     }
     // backlog:a2ea75f705fd: with a quote already there, the main action
     // opens it; a new quote stays possible, as the quiet second choice.
-    if (existing !== null) bar.appendChild(openQuoteLink(existing));
+    if (existing !== null) paintHeadOpen(bar);
     const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
     create.setAttribute('type', 'button');
     create.setAttribute('data-action', 'offer-create-quote');
@@ -1210,10 +1215,8 @@ export function createOfferDetail(deps) {
    * One linked quote: stato, totali per periodo, righe e versioni. Periods
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
-   * the quote screen's `Totali per periodo commerciale`. The quote the head
-   * already opens (backlog:bfc070243427, `openLink: false`) paints no second
-   * «Apri il preventivo» link of its own.
-   * @param {any} quote @param {number} token @param {{openLink?: boolean}} [options]
+   * the quote screen's `Totali per periodo commerciale`.
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean}} [options]
    */
   async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
@@ -1222,7 +1225,11 @@ export function createOfferDetail(deps) {
     const head = el('div', 'offer-quote-head');
     head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
     head.appendChild(el('h4', 'offer-quote-total', quoteTotalSummary(totals, quote.currency)));
-    if (options.openLink !== false) {
+    // backlog:ea616e16ebac: the quotes head already opens this quote with
+    // the main action, so the card paints no second «Apri il preventivo»
+    // for the same page. Other cards keep theirs: every quote stays
+    // reachable exactly once.
+    if (options.hideOpen !== true) {
       const link = el('a', 'offer-quote-open', 'Apri il preventivo');
       link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
       head.appendChild(link);

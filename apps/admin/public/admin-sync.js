@@ -585,6 +585,25 @@ export function grantExpiring(iso, nowMs = Date.now()) {
  * `Importazione`) need an active binding (review #692): a suspended,
  * pending or revoked binding reads `Da sistemare` whatever its health
  * says.
+/**
+ * The one synced rule both views share (backlog:9790f4df7a93): a channel
+ * counts as synchronized only with an active binding behind it AND a first
+ * event already received. Either side alone lies — a linked binding with
+ * zero events (the Stato sync «0 eventi» case) is «in attesa del primo
+ * evento», never «sincronizzato». The scheda's «Identità collegate» must
+ * consult this before printing «↔ sincronizzato»; the Stato sync pill and
+ * hero below already read it through `channelPill`.
+ * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
+ */
+export function channelSynced(input = {}) {
+  const { linked = false, received = 0, lastAt = null } =
+    input !== null && typeof input === 'object' ? input : {};
+  const moved = (typeof lastAt === 'string' && lastAt !== '')
+    || (Number.isSafeInteger(received) && received > 0);
+  return linked === true && moved;
+}
+
+/**
  * @param {{ expiringAt: string | null, importing: boolean, worst: string, lastAt: string | null, received: number }} agg
  * @param {number} nowMs
  * @param {boolean} hasActive whether one binding of the row is active
@@ -594,7 +613,11 @@ function channelPill(agg, nowMs, hasActive) {
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
-  if (calm && agg.lastAt === null && agg.received === 0) return { text: 'in attesa del primo evento', tone: 'attesa' };
+  // backlog:9790f4df7a93: the shared synced rule — a calm linked row with
+  // no first event yet waits, never `Attivo`.
+  if (calm && !channelSynced({ linked: true, received: agg.received, lastAt: agg.lastAt })) {
+    return { text: 'in attesa del primo evento', tone: 'attesa' };
+  }
   if (calm) return { text: 'Attivo', tone: 'attivo' };
   return { text: 'Da sistemare', tone: 'altro' };
 }
