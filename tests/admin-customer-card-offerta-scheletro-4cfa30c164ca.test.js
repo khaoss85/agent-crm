@@ -171,6 +171,11 @@ test('4cfa30c164ca: con un\u2019offerta vera la riga dipinge a profilo arrivato'
   client.gates.get('card').release.resolve(CARD);
   client.gates.get('timeline').release.resolve(TIMELINE);
   await flush();
+  // Backlog 4cfa30c164ca (review P2 testa c4e8586e): scelta esplicita e
+  // misurabile — niente in attesa anche quando l'offerta arrivera: per chi
+  // ha offerte il riquadro appare a lettura arrivata (normale comparsa
+  // progressiva), mai un fantasma che sparisce per chi non ne ha.
+  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta in attesa anche con offerta futura');
   client.gates.get('profile').release.resolve({
     ...EMPTY_PROFILE,
     opportunities: {
