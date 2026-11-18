@@ -2,7 +2,7 @@
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
-import { channelState, countedChannel } from './admin-channels-count.js';
+import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -1322,12 +1322,15 @@ export function createCustomerCardView(deps) {
   /** Whether `node` holds the focus of the page. @param {any} node */
   const hasFocus = (node) => node !== null && node !== undefined && doc?.activeElement === node;
   const el = elFor(doc); // BO-F6-02: shared element builder.
-  // backlog:e381c48581fa: the space's channel state, read once per space
-  // (GET /api/connectors plus GET /api/profile, the same pair Connettori
-  // reads) and kept a minute, so «↔ sincronizzato» is claimed only for a
-  // channel `channelState` calls collegato. Never one of the scheda's own
+  // backlog:e381c48581fa + backlog:9790f4df7a93: the space's channel
+  // state, read once per space (GET /api/connectors plus GET /api/profile,
+  // the same pair Connettori reads, plus GET /api/connectors/activity, the
+  // same counters Stato sync reads) and kept a minute, so «↔ sincronizzato»
+  // is claimed only for a channel `channelState` calls collegato WITH a
+  // first event already received (the shared `channelSynced` rule: zero or
+  // unknown events never read sincronizzato). Never one of the scheda's own
   // reads: the identities paint at once and the claim lands when known.
-  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean } | null> } | null} */
+  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean, activity: unknown } | null> } | null} */
   let spaceChannelsRead = null;
   const readSpaceChannels = () => {
     const spaceId = activeSpaceId();
@@ -1352,7 +1355,12 @@ export function createCustomerCardView(deps) {
           warn('channels', error);
           return null;
         }),
-    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile, profileRead: profile !== null }));
+      client.request(`/api/connectors/activity?spaceId=${encodeURIComponent(spaceId)}`)
+        .then((activity) => activity ?? null, (error) => {
+          warn('activity', error);
+          return null;
+        }),
+    ]).then(([profile, rows, activity]) => (rows === null ? null : { rows, profile, profileRead: profile !== null, activity }));
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
@@ -3378,12 +3386,18 @@ export function createCustomerCardView(deps) {
             continue;
           }
           const linked = channelState(entry.counted, space).state === 'collegato';
-          if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
-          // «non collegato» only when known (review #819 P2): with the
-          // profile unread a Profilo link cannot be ruled out, so the line
-          // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
-          else entry.node.textContent = entry.traffic;
+          // backlog:9790f4df7a93: one synced rule for both views — zero or
+          // unknown events never read sincronizzato, even with two-way
+          // traffic and a fresh update. «non collegato» only when known
+          // (review #819 P2): with the profile unread a Profilo link cannot
+          // be ruled out, so the line keeps the traffic it saw.
+          entry.node.textContent = identitySyncText({
+            linked,
+            both: entry.both,
+            traffic: entry.traffic,
+            received: activityReceived(space.activity, entry.counted),
+            profileRead: space.profileRead,
+          });
         }
       });
     }

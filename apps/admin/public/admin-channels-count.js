@@ -420,3 +420,65 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
   if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
 }
+
+/**
+ * The one synced rule both views share (backlog:9790f4df7a93): a channel
+ * counts as synchronized only with an active binding behind it AND a first
+ * event already received. Recency alone lies — a quiet poll, a failed send
+ * or a reset counter stamps a fresh update instant with zero events (Mac
+ * 18/11: «0 eventi ricevuti · Attivo» beside «aggiornato 1 min fa»), so
+ * only a counted event syncs: `lastAt` stays accepted in the input so
+ * callers keep passing what they have, but it is intentionally not
+ * consulted.
+ * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
+ */
+export function channelSynced(input = {}) {
+  const { linked = false, received = 0 } =
+    input !== null && typeof input === 'object' ? input : {};
+  return linked === true && Number.isSafeInteger(received) && received > 0;
+}
+
+/**
+ * Events really received on one counted channel, from the activity payload
+ * (GET /api/connectors/activity): the sum of the `inbox.received` tallies,
+ * like the Stato sync table aggregates them. Unknown payloads read null
+ * (unknown), never zero: zero must stay a measured zero.
+ * @param {any} activity the activity payload, possibly null
+ * @param {string} channel the counted channel id
+ * @returns {number | null}
+ */
+export function activityReceived(activity, channel) {
+  if (activity === null || typeof activity !== 'object') return null;
+  const entries = Array.isArray(activity.connections) ? activity.connections : null;
+  if (entries === null) return null;
+  let total = 0;
+  let seen = false;
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object') continue;
+    if (countedChannel(entry.channel) !== channel) continue;
+    seen = true;
+    const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
+    if (inbox !== null && Number.isSafeInteger(inbox.received) && inbox.received > 0) total += inbox.received;
+  }
+  return seen ? total : 0;
+}
+
+/**
+ * The final Identità collegate sync line for one channel
+ * (backlog:9790f4df7a93): «↔ sincronizzato» only for a linked channel with
+ * two-way traffic AND a first event already received (the shared
+ * `channelSynced` rule). Zero or unknown events never read sincronizzato —
+ * they read the observed traffic, with «· canale non collegato» appended
+ * only when the profile read proves the channel unlinked.
+ * @param {{ linked?: unknown, both?: unknown, traffic?: unknown, received?: unknown, profileRead?: unknown }} [input]
+ */
+export function identitySyncText(input = {}) {
+  const shape = input !== null && typeof input === 'object' ? input : {};
+  const { linked = false, both = false, traffic = '', received = null, profileRead = false } = shape;
+  if (linked === true && both === true && channelSynced({ linked: true, received })) {
+    return '↔ sincronizzato';
+  }
+  const line = typeof traffic === 'string' && traffic !== '' ? traffic : '—';
+  if (linked !== true && profileRead === true) return `${line} · canale non collegato`;
+  return line;
+}
