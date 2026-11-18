@@ -2463,10 +2463,15 @@ export function createCustomerCardView(deps) {
     };
     // A press on the off row with nothing to copy goes to the message field;
     // with words in the request it is left alone, so they can be selected.
+    // backlog:88ab568cdcba (verifier 17/11): the move is announced in the
+    // aria-live reason line, so the cursor never jumps without saying so.
     field.addEventListener?.('mousedown', (event) => {
       if (row.getAttribute('data-off') !== 'true' || prompt.value !== '') return;
       event.preventDefault?.();
       if (typeof text.focus === 'function') text.focus({ preventScroll: true });
+      if (!line.textContent.includes('cursore')) {
+        line.appendChild(el('span', undefined, ' · Il cursore è nel messaggio al cliente.'));
+      }
     });
     // Keys in the off request field: selection and copy keep working (Tab,
     // arrows, Home/End, Shift, Cmd/Ctrl combinations); any key that would
