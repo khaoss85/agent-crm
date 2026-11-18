@@ -714,6 +714,9 @@ export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Rip
 /** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
 export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
 
+/** An empty Nome reads this: the name is missing, never taken. */
+export const AGENT_NAME_MISSING_NOTE = 'Dagli un nome: è quello che scrivi dopo la @.';
+
 /**
  * The error one field of «Nuovo agente» shows: the live check of Nome
  * first, else the error Crea left on that field.
@@ -750,7 +753,7 @@ export function checkNewAgent(form, agents = []) {
   // create-agent keeps instructions on one line: the lines of the textarea
   // join with a space, never a 400 for an Enter the operator typed.
   const instructions = line(form?.instructions);
-  if (name === '') return { error: 'Dagli un nome: è quello che scrivi dopo la @.', field: 'name' };
+  if (name === '') return { error: AGENT_NAME_MISSING_NOTE, field: 'name' };
   if (name.length > NEW_AGENT_LIMITS.name) return { error: `Il nome è troppo lungo: al massimo ${NEW_AGENT_LIMITS.name} caratteri.`, field: 'name' };
   if (role === '') return { error: 'Scrivi in poche parole di cosa si occupa.', field: 'role' };
   if (role.length > NEW_AGENT_LIMITS.role) return { error: `«Di cosa si occupa» è troppo lungo: al massimo ${NEW_AGENT_LIMITS.role} caratteri.`, field: 'role' };
@@ -1762,12 +1765,15 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // backlog:f06d06f242d6: a name already in the team shows at once, while
     // typing — not after the other fields — and goes as soon as it changes.
     const checkName = () => {
-      // An empty name is said at Crea, not while typing — but a stale
-      // live line goes at once, so an empty Nome never keeps showing
-      // «already taken» while Crea has not spoken yet.
+      // backlog:776cf3469e64 — an emptied Nome reads the missing-name error
+      // at once: a stale «already taken» — the live line or Crea's — must
+      // never cover an empty field.
       if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') {
-        if (form.nameError === '') return;
-        form.nameError = '';
+        form.nameError = AGENT_NAME_MISSING_NOTE;
+        if (form.field === 'name') {
+          form.error = '';
+          form.field = null;
+        }
         const cleared = fieldErrorOf(form, 'name');
         if (cleared !== '') showFieldError(nameRow, name, cleared);
         else clearFieldError(nameRow, name);

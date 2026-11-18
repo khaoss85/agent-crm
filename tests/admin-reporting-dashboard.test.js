@@ -782,7 +782,7 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
     insights: [],
   }, []);
   assert.deepEqual(named.team.map((entry) => entry.owner).slice(1), ['Senza referente']);
-  assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
+  assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }, '2026-11-30T00:00:00.000Z'),
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 

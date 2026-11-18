@@ -61,8 +61,10 @@ export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi 
  * the space): what the channel card counts, in words — each customer once,
  * in the channel of their first contact, over the four weeks the bars show.
  * @param {{ total?: unknown, weeks?: Array<{ week?: unknown }> }} breakdown
+ * @param {unknown} [nowIso] today as an ISO instant; the stated range ends
+ * today, never past it (backlog:776cf3469e64) — without it, today
  */
-export function channelsLede(breakdown) {
+export function channelsLede(breakdown, nowIso = null) {
   const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
   const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
   const day = (iso) => new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' })
@@ -76,7 +78,15 @@ export function channelsLede(breakdown) {
     || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))
     || Number.isNaN(Date.parse(`${lastStart}T00:00:00.000Z`))) return count;
   const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · ogni cliente conta una volta, nel canale del primo contatto`;
+  // backlog:776cf3469e64 — in the running month the last week holds today:
+  // the stated range ends today, never at a future Sunday the first
+  // contacts cannot have filled yet. An unreadable clock keeps the week end.
+  const today = (() => {
+    const at = Date.parse(String(nowIso ?? new Date().toISOString()));
+    return Number.isNaN(at) ? null : new Date(at).toISOString().slice(0, 10);
+  })();
+  const end = today !== null && today < lastEnd ? today : lastEnd;
+  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(end)} · ogni cliente conta una volta, nel canale del primo contatto`;
 }
 
 /**
