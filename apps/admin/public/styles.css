@@ -421,6 +421,9 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer-skeleton .bo-offer-value .ui-skeleton { height: 36px; }
 .bo-offer-skeleton .offer-fact .ui-skeleton { height: 14px; margin-top: 4px; }
 .bo-offer-skeleton .offer-quotes .ui-skeleton, .bo-offer-skeleton .offer-history .ui-skeleton { height: 14px; margin: 10px 0 0; }
+/* backlog:bfc070243427 (seguito): the skeleton reserves the actions row, so
+ * «Modifica» and «Cambia stato» land on a bar their own size. */
+.bo-offer-skeleton .bo-offer-actions .ui-skeleton { height: 34px; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -453,6 +456,13 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-back + .quote-offer-link { margin-left: 16px; }
 .quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-offer-link:hover { text-decoration: underline; }
+/* backlog:bfc070243427 (seguito): the list exit reads like the other two
+ * top links — never the browser-default purple underline — with the same
+ * gap after «Apri l’offerta» (or after the way back when the offer is
+ * unreadable and paints no link). */
+.quote-offer-link + .quote-list-link, .quote-back + .quote-list-link { margin-left: 16px; }
+.quote-list-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-list-link:hover { text-decoration: underline; }
 /* Voce 47b89e19: the version history link, same accent treatment as the offer link. */
 .quote-version-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-version-open:hover { text-decoration: underline; }

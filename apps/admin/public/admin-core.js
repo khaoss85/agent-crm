@@ -454,13 +454,21 @@ export function parseModuleRoute(hash) {
   // backlog:bfc070243427: #/quotes/<id>/lista names the quotes list as the
   // origin — the detail's «←» goes back there, like the offer page names
   // its scheda origin under #/offerte/<id>/cliente/….
+  // backlog:bfc070243427 (seguito): #/quotes/<id>/offerta/<offer> names the
+  // offer as the origin — a quote opened from its offer goes back to the
+  // offer, never to the customer scheda.
   if (rawParts.length && rawParts[0] === 'quotes') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length === 1) return { view: 'quotes' };
-    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista')) return { view: 'invalid' };
+    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista') && !(rawParts.length === 4 && rawParts[2] === 'offerta')) return { view: 'invalid' };
     const quoteId = safeDecode(rawParts[1]);
     if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
     if (rawParts.length === 3) return { view: 'quote-detail', quoteId, from: 'quotes' };
+    if (rawParts.length === 4) {
+      const offerId = safeDecode(rawParts[3]);
+      if (offerId === null || offerId === '' || offerId.includes('/')) return { view: 'invalid' };
+      return { view: 'quote-detail', quoteId, from: { offer: offerId } };
+    }
     return { view: 'quote-detail', quoteId };
   }
   // Work routes: #/work and #/work/<id> (Work v1, ADR-030). Same canonical

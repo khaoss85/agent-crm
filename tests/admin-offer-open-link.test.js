@@ -90,7 +90,7 @@ test('ea616e16ebac: a single quote is opened by one visible action only', async 
   assert.equal(countOpen(mount), 1, '«Apri il preventivo» paints exactly once');
   const open = mount.findAll('a').find((node) => node.textContent === 'Apri il preventivo');
   assert.ok(open, 'the single action is there');
-  assert.equal(open.getAttribute('href'), '#/quotes/q1', 'it opens the quote');
+  assert.equal(open.getAttribute('href'), '#/quotes/q1/offerta/off1', 'it opens the quote');
   assert.equal(open.getAttribute('data-action'), 'offer-open-quote', 'it stays the main action');
 });
 
@@ -105,11 +105,11 @@ test('ea616e16ebac: with two quotes every quote stays reachable exactly once', a
   await flushAll();
   assert.equal(countOpen(mount), 2, 'one action per quote, never two for the same one');
   const main = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
-  assert.equal(main?.getAttribute('href'), '#/quotes/q-new', 'the main action opens the newest quote');
-  const older = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q-old');
+  assert.equal(main?.getAttribute('href'), '#/quotes/q-new/offerta/off1', 'the main action opens the newest quote');
+  const older = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q-old/offerta/off1');
   assert.equal(older?.textContent, 'Apri il preventivo', 'the older quote keeps its own link');
   assert.equal(
-    mount.findAll('a').filter((node) => node.getAttribute('href') === '#/quotes/q-new').length,
+    mount.findAll('a').filter((node) => node.getAttribute('href') === '#/quotes/q-new/offerta/off1').length,
     1,
     'the newest quote is linked once',
   );
@@ -130,14 +130,14 @@ test('review-992-P2: the newest quote stays reachable while the price books are 
   const rendering = view.renderOfferDetail('off1');
   await flushAll(25);
   assert.equal(countOpen(mount), 1, 'one «Apri il preventivo» before the books land');
-  const early = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q-new');
+  const early = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q-new/offerta/off1');
   assert.equal(early?.textContent, 'Apri il preventivo', 'the newest quote is already openable');
   releaseBooks();
   await rendering;
   await flushAll();
   assert.equal(countOpen(mount), 1, 'still one «Apri il preventivo» after the books land');
   assert.equal(
-    mount.findAll('a').filter((node) => node.getAttribute('href') === '#/quotes/q-new').length,
+    mount.findAll('a').filter((node) => node.getAttribute('href') === '#/quotes/q-new/offerta/off1').length,
     1,
     'the newest quote is linked once',
   );
@@ -154,7 +154,7 @@ test('ea616e16ebac: without the commercial block the card keeps its link', async
   });
   await view.renderOfferDetail('off1');
   await flushAll();
-  const open = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1');
+  const open = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1/offerta/off1');
   assert.ok(open, 'the quote stays reachable when the head paints no action');
   assert.equal(open.textContent, 'Apri il preventivo', 'the link says where it goes');
 });

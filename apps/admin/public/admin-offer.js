@@ -344,19 +344,21 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
     // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
-    // The skeleton mirrors the real paint: once the offer is read and its
-    // close date is known to be missing, the row is skipped instead of a
-    // grey bar that would vanish on paint. With no record yet (first paint)
-    // the date is still unknown, so the row keeps its bar.
+    // The skeleton keeps the final's grid: a row the final skips is skipped
+    // here with the same predicates on the data known so far. The trail
+    // never rides the skeleton, and an empty trail names nobody, so its row
+    // is never held; an empty team resolves exactly like an unknown name.
     const known = record === null ? {} : {
       'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    const labels = ['Referente', 'Stato'];
-    if (record === null || close !== null) labels.push('Chiusura prevista');
-    labels.push('Creata da', 'Creata il', 'Ultima modifica');
-    for (const label of labels) {
+    const skeletonLabels = [];
+    if (record === null || personLabel(record.owner, []) !== null) skeletonLabels.push('Referente');
+    skeletonLabels.push('Stato');
+    if (record === null || close !== null) skeletonLabels.push('Chiusura prevista');
+    skeletonLabels.push('Creata il', 'Ultima modifica');
+    for (const label of skeletonLabels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
@@ -364,6 +366,12 @@ export function createOfferDetail(deps) {
       facts.appendChild(cell);
     }
     sheet.appendChild(facts);
+    // backlog:bfc070243427 (seguito): the skeleton reserves the actions row
+    // too, so «Modifica» and «Cambia stato» do not push the Preventivo block
+    // down when they paint with the final.
+    const actionsHold = el('div', 'bo-offer-actions');
+    actionsHold.appendChild(uiSkeleton(doc, { width: '230px' }));
+    sheet.appendChild(actionsHold);
     page.appendChild(sheet);
     for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
       const card = el('div', cls);
@@ -534,6 +542,7 @@ export function createOfferDetail(deps) {
       quoteCards = quotes.rows.map((quote) => paintQuote(quote, token, {
         hideOpen: Boolean(commercialBlock(schema))
           && quote?.id === latestQuote(quotes.rows)?.id,
+        offerId,
       }));
       auditItems = audit.items;
       auditUnreadable = audit.unreadable;
@@ -647,7 +656,7 @@ export function createOfferDetail(deps) {
     // page, and the books fill only «Crea preventivo» afterwards.
     const newestFirst = latestQuote(quotes.rows);
     if (Boolean(commercialBlock(schema)) && newestFirst !== null) {
-      quotesHead.appendChild(openQuoteLink(newestFirst));
+      quotesHead.appendChild(openQuoteLink(offerId, newestFirst));
       quotesHead.setAttribute('data-open-painted', 'true');
     }
     // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
@@ -1008,10 +1017,22 @@ export function createOfferDetail(deps) {
     box.appendChild(wrap);
   }
 
-  /** The main action beside an existing quote: open it. @param {{id: string}} quote */
-  function openQuoteLink(quote) {
+  /**
+   * backlog:bfc070243427 (seguito): a quote opened from its offer names the
+   * offer as the origin (`#/quotes/<id>/offerta/<offer>`), so the detail's
+   * «←» returns to the offer it came from, never to the scheda.
+   * @param {unknown} offerId @param {unknown} quoteId
+   */
+  function offerQuoteHref(offerId, quoteId) {
+    const quote = `#/quotes/${encodeURIComponent(typeof quoteId === 'string' ? quoteId : '')}`;
+    if (typeof offerId !== 'string' || offerId === '' || typeof quoteId !== 'string' || quoteId === '') return quote;
+    return `${quote}/offerta/${encodeURIComponent(offerId)}`;
+  }
+
+  /** The main action beside an existing quote: open it. @param {unknown} offerId @param {{id: string}} quote */
+  function openQuoteLink(offerId, quote) {
     const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
-    open.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
+    open.setAttribute('href', offerQuoteHref(offerId, quote.id));
     open.setAttribute('data-action', 'offer-open-quote');
     return open;
   }
@@ -1035,7 +1056,7 @@ export function createOfferDetail(deps) {
     // — never a second «Apri il preventivo» for the same quote.
     const paintHeadOpen = (parent) => {
       if (existing === null || head.getAttribute?.('data-open-painted') === 'true') return;
-      parent.appendChild(openQuoteLink(existing));
+      parent.appendChild(openQuoteLink(record.id, existing));
       head.setAttribute('data-open-painted', 'true');
     };
     if (answer.books === null) {
@@ -1103,7 +1124,7 @@ export function createOfferDetail(deps) {
         const quoteId = created?.result?.quote?.id;
         if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
         toast('Preventivo creato: aggiungi le righe.');
-        navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
+        navigate(offerQuoteHref(offerId, quoteId));
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
@@ -1366,7 +1387,7 @@ export function createOfferDetail(deps) {
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
-   * @param {any} quote @param {number} token @param {{hideOpen?: boolean}} [options]
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string}} [options]
    */
   async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
@@ -1381,7 +1402,7 @@ export function createOfferDetail(deps) {
     // reachable exactly once.
     if (options.hideOpen !== true) {
       const link = el('a', 'offer-quote-open', 'Apri il preventivo');
-      link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
+      link.setAttribute('href', offerQuoteHref(options.offerId, quote.id));
       head.appendChild(link);
     }
     panel.appendChild(head);
