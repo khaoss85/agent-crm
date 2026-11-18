@@ -1287,6 +1287,96 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
 }
 
 /**
+ * Series scope (backlog:6acf0a73bfc3): «solo questo / questo e i successivi /
+ * tutti» for reschedule and cancel. The scope is explicit only when the
+ * caller names it — legacy callers without `scope` keep the single-row
+ * behavior exactly. A scope wider than one on a row that belongs to no
+ * series is refused naming `scope`, before any write. A scoped write never
+ * touches Google: the link probe below refuses a linked series with 409
+ * before the first grid write (the Google-side series writes are
+ * backlog:bb13ef1823ad), and a local-only series converges grid-only.
+ */
+const SERIES_SCOPES = Object.freeze(['single', 'following', 'all']);
+
+function validateSeriesScope(value) {
+  if (value === undefined || value === null) return 'single';
+  const scope = String(value).trim();
+  if (!SERIES_SCOPES.includes(scope)) {
+    throw new ValidationError('scope must be one of single, following, all: solo questo, questo e i successivi, tutti', {
+      field: 'scope',
+    });
+  }
+  return scope;
+}
+
+function requireSeriesScopeSpaceId(record, what) {
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError(`spaceId is required: a scoped series ${what} is gated on the space switch`, { field: 'spaceId' });
+  }
+  return record.spaceId;
+}
+
+function orderSeriesSiblings(rows) {
+  return [...rows].sort((a, b) => {
+    const ai = typeof a?.occurrenceIndex === 'number' ? a.occurrenceIndex : Number.MAX_SAFE_INTEGER;
+    const bi = typeof b?.occurrenceIndex === 'number' ? b.occurrenceIndex : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    if (a?.startsAt !== b?.startsAt) return String(a?.startsAt ?? '').localeCompare(String(b?.startsAt ?? ''));
+    return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+  });
+}
+
+/**
+ * The rows a scope covers, read before the first write. Siblings share the
+ * anchor's `seriesKey` (head first: `occurrenceIndex` 0, then start time).
+ * `single` is the named row alone; `following` runs from the named row to
+ * the tail; `all` is every sibling. The anchor always belongs to its own
+ * scope, even when the store no longer lists it.
+ */
+async function seriesScopePlan(appointments, anchor, scope) {
+  const key = typeof anchor?.seriesKey === 'string' && anchor.seriesKey !== '' ? anchor.seriesKey : null;
+  if (key === null) {
+    if (scope !== 'single') {
+      throw new ValidationError('scope following and all need a series occurrence: this appointment belongs to no series', {
+        field: 'scope',
+      });
+    }
+    return { siblings: [anchor], head: anchor, anchor, targets: [anchor] };
+  }
+  const stored = await appointments.listWhere({ seriesKey: key });
+  const listed = (Array.isArray(stored) ? stored : []).filter(Boolean);
+  const siblings = orderSeriesSiblings(
+    listed.some((row) => row && row.id === anchor.id) ? listed : [anchor, ...listed],
+  );
+  const head = siblings[0] ?? anchor;
+  const index = siblings.findIndex((row) => row && row.id === anchor.id);
+  const targets = scope === 'single' ? [anchor] : scope === 'all' ? siblings : siblings.slice(index < 0 ? 0 : index);
+  return { siblings, head, anchor, targets };
+}
+
+/**
+ * A linked series refuses every scope with 409 BEFORE the first grid write —
+ * one gate on the shared output, so «solo questo», «questo e i successivi»
+ * and «tutti» cannot diverge from Google on different paths. The probe reads
+ * the head and every in-scope row (a series counts as linked when any of
+ * them is): unlinked keys fall through to the grid-only path. Without the
+ * composed `seriesScopeLink` handle the series stays grid-only, exactly as
+ * on main without calendar-sync.
+ */
+async function refuseLinkedSeriesScope(calendarSync, probeKeys, scope, spaceId) {
+  if (typeof calendarSync?.seriesScopeLink !== 'function') return;
+  const keys = [...new Set((Array.isArray(probeKeys) ? probeKeys : []).filter((key) => typeof key === 'string' && key !== ''))];
+  for (const sourceKey of keys) {
+    const probe = await calendarSync.seriesScopeLink(sourceKey, { spaceId });
+    if (probe?.linked === true) {
+      throw new AppError('Le serie di Google Calendar si modificano da Google, per ora', {
+        code: 'APPOINTMENTS_SERIES_SCOPE_GOOGLE', status: 409, details: { scope },
+      });
+    }
+  }
+}
+
+/**
  * Move one booking to a new slot (backlog:bdca2010d471): the governed write
  * behind dragging a calendar event to another day or hour, or stretching its
  * bottom edge. The caller names the row by exactly one of `id` / `sourceKey`
@@ -1342,6 +1432,21 @@ export async function rescheduleAppointment(context, request) {
   if (endsAt.ms - startsAt.ms > MAX_SLOT_MS) {
     throw new ValidationError('an appointment slot is at most 24 hours: a longer hold is not a booking', { field: 'endsAt' });
   }
+  // An explicit series scope is validated before any row is touched, like the
+  // calendar edge below: the spaceId it is gated on is required up front, so
+  // a missing or foreign space never takes the local-only path. A wide scope
+  // never rides the single-row calendar push: scoped writes are grid-only.
+  const scope = validateSeriesScope(record.scope);
+  const scoped = record.scope !== undefined && record.scope !== null;
+  let spaceId = null;
+  if (scoped) {
+    spaceId = requireSeriesScopeSpaceId(record, 'reschedule');
+    if (scope !== 'single' && record.calendar !== undefined && record.calendar !== null) {
+      throw new ValidationError('calendar cannot ride a following/all series scope: scoped series writes are grid-only', {
+        field: 'calendar',
+      });
+    }
+  }
   // A named calendar is validated before any row is touched: a statically
   // preventable miscomposition fails here, never after a committed move the
   // caller received an error for — the same order the confirm path keeps.
@@ -1350,13 +1455,14 @@ export async function rescheduleAppointment(context, request) {
   // confirm path: without it a bound calendar would answer
   // CALENDAR_GRANT_UNKNOWN after the row already moved.
   let calendarId = null;
-  let spaceId = null;
   let calendarPush = null;
   if (record.calendar !== undefined && record.calendar !== null) {
-    if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
-      throw new ValidationError('spaceId is required: a calendar move is gated on the space switch', { field: 'spaceId' });
+    if (spaceId === null) {
+      if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+        throw new ValidationError('spaceId is required: a calendar move is gated on the space switch', { field: 'spaceId' });
+      }
+      spaceId = record.spaceId;
     }
-    spaceId = record.spaceId;
     calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
     const calendarSync = context?.calendarSync ?? null;
     if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
@@ -1394,6 +1500,18 @@ export async function rescheduleAppointment(context, request) {
   // re-reads inside the member chain, so the check and the write see the
   // winner of any race that committed between the two reads.
   const first = await lookup();
+  // An explicit scope resolves its rows and probes the Google link before the
+  // first write: a linked series refuses 409 here, the grid never changes.
+  let scopePlan = null;
+  if (scoped) {
+    scopePlan = await seriesScopePlan(appointments, first, scope);
+    await refuseLinkedSeriesScope(
+      context?.calendarSync ?? null,
+      [scopePlan.head?.sourceKey, ...scopePlan.targets.map((row) => row?.sourceKey)],
+      scope,
+      spaceId,
+    );
+  }
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
@@ -1455,6 +1573,99 @@ export async function rescheduleAppointment(context, request) {
       moved: true,
     };
   };
+  // A wide scope on a local-only series shifts every in-scope row by the
+  // anchor's slot delta, so the series keeps its rhythm: the requested slot
+  // must keep the anchor duration, never restretch one row. Every in-scope
+  // row is pre-checked before the first write — the scope commits
+  // all-or-nothing, never a half-moved series. An already-terminal
+  // occurrence is skipped, never blocking: it stays where it is while the
+  // rest shifts. A scoped write is grid-only: no calendar push rides it.
+  const scopedWide = scoped && scope !== 'single';
+  const scopedCritical = async () => {
+    const anchor = await lookup();
+    if (APPOINTMENT_TERMINAL.includes(anchor.status)) {
+      throw new AppError(
+        `An appointment in state "${anchor.status}" cannot be rescheduled; it is terminal and moves nowhere`,
+        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: anchor.status, to: null } },
+      );
+    }
+    const plan = await seriesScopePlan(appointments, anchor, scope);
+    const anchorMs = Date.parse(anchor.startsAt);
+    const anchorDuration = Date.parse(anchor.endsAt) - anchorMs;
+    if (endsAt.ms - startsAt.ms !== anchorDuration) {
+      throw new ValidationError('a following/all scope shifts the series by the slot delta: startsAt and endsAt must keep the row duration', {
+        field: 'endsAt',
+      });
+    }
+    const deltaMs = startsAt.ms - anchorMs;
+    const fresh = new Map();
+    for (const target of plan.targets) {
+      fresh.set(target.id, await appointments.get(target.id));
+    }
+    const anchorFresh = fresh.get(anchor.id) ?? anchor;
+    if (deltaMs === 0) {
+      return { appointment: anchorFresh, moved: false, occurrences: plan.targets.map((target) => fresh.get(target.id) ?? target) };
+    }
+    const held = await appointments.listWhere({ teamMemberId: anchor.teamMemberId });
+    const inScopeIds = new Set(plan.targets.map((row) => row?.id));
+    const others = held.filter((row) => row && !inScopeIds.has(row.id));
+    const moves = [];
+    for (const target of plan.targets) {
+      const row = fresh.get(target.id);
+      if (!row || APPOINTMENT_TERMINAL.includes(row.status)) continue;
+      const startMs = Date.parse(row.startsAt) + deltaMs;
+      const endMs = Date.parse(row.endsAt) + deltaMs;
+      const newStartsAt = new Date(startMs).toISOString();
+      const newEndsAt = new Date(endMs).toISOString();
+      const dueAt = row.reminderDueAt ?? null;
+      if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
+        const dueMs = Date.parse(dueAt);
+        if (Number.isFinite(dueMs) && startMs <= dueMs) {
+          throw new AppError(
+            `The stored reminder is due at ${dueAt}: the new slot starts at ${newStartsAt}, at or after the reminder, `
+            + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
+            { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
+          );
+        }
+      }
+      const blocks = await ownerBlocksFor(context.calendarSync, row.teamMemberId, newStartsAt, newEndsAt);
+      const conflict = findOverlap(
+        { teamMemberId: row.teamMemberId, startMs, endMs },
+        [...others, ...blocks],
+      );
+      if (conflict) {
+        if (conflict.kind === OWNER_BLOCK_KIND) {
+          throw new AppError(
+            `Il membro "${row.teamMemberId}" ha un impegno del titolare in questa fascia oraria `
+            + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
+            + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+            { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: null, status: null } },
+          );
+        }
+        throw new AppError(
+          `Il membro "${row.teamMemberId}" ha già un altro appuntamento in questa fascia oraria `
+          + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
+          + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+          { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+        );
+      }
+      moves.push({ row, newStartsAt, newEndsAt });
+    }
+    const writtenById = new Map();
+    for (const move of moves) {
+      writtenById.set(move.row.id, await appointments.applyManaged(
+        move.row.id,
+        { startsAt: move.newStartsAt, endsAt: move.newEndsAt },
+        { actor: who },
+      ));
+    }
+    const occurrences = plan.targets.map((target) => writtenById.get(target.id) ?? fresh.get(target.id) ?? target);
+    return {
+      appointment: writtenById.get(anchor.id) ?? anchorFresh,
+      moved: true,
+      occurrences,
+    };
+  };
   // The move serializes on the appointment identity as well as the member:
   // withMemberBooking outside, withAppointmentAdvance inside, always in
   // this order. A move racing a cancel or a confirm on the same row can no
@@ -1463,13 +1674,15 @@ export async function rescheduleAppointment(context, request) {
   // refuses 409 or advances the winner's row, never a terminal row silently
   // moved to a new slot.
   const recordId = safeText(first.id, 'id', MAX_ID);
-  const { appointment, moved } = await withMemberBooking(
+  const outcome = await withMemberBooking(
     memberId,
     () => withAppointmentAdvance(
       recordId,
-      runInTransaction ? () => runInTransaction(critical) : critical,
+      runInTransaction ? () => runInTransaction(scopedWide ? scopedCritical : critical) : (scopedWide ? scopedCritical : critical),
     ),
   );
+  const { appointment, moved } = outcome;
+  const occurrences = outcome.occurrences ?? [appointment];
   // The calendar edge was validated above, before any row was touched: the
   // push rides the idempotent path. A runtime push failure must not throw —
   // the moved row is already committed and the caller would observe a
