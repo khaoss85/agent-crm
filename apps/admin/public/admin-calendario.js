@@ -4364,6 +4364,19 @@ export function createCalendarioView(deps) {
         const withoutPerson = { ...draft };
         delete withoutPerson.teamMemberId;
         state.draftFill = withoutPerson;
+        // The outsider name may still belong to an existing customer: propose
+        // them in the customer search, never as the on-duty person. No
+        // auto-pick — homonyms stay the operator's explicit choice. A
+        // customer the operator already picked stays: the phrase never
+        // clears an explicit choice (backlog:3aabaea07bfe).
+        if (!(state.customerPick != null && typeof state.customerPick.id === 'string' && state.customerPick.id !== '')) {
+          state.customerPick = null;
+          state.customerQuery = member;
+          state.customerItems = [];
+          state.customerError = null;
+          state.customerPartial = false;
+          await searchCustomers(member);
+        }
         return;
       }
       const searchIds = memberIds.length > 0 ? memberIds : [member];
