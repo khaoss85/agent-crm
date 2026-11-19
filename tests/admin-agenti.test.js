@@ -999,3 +999,34 @@ test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-other', sourceKey: 'r-2', outcome: 'proposed' }]), 'Fatto', 'la proposta di un altro non conta');
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-done', sourceKey: 'r-3', outcome: 'applied' }]), 'Fatto', 'un giro applicato non è da approvare');
 });
+  AGENT_NO_ENGINE_LABEL,
+test('Team rows: la stessa parola di stato delle card Agenti (b9b5e6bda)', () => {
+  const doc = createFakeDocument();
+  const hand = { id: 3, sourceKey: 'custom-agent:presti:v1.prova-verifica-44', spaceId: 'presti', name: 'Prova verifica 44', role: 'Verifica', status: 'active' };
+  const cards = buildAgentCards({ agents: [RIAGGANCIO, REPORT, hand], assignments: [], runs: [], nowIso: NOW, catalog: CATALOG });
+  const rows = renderTeamAgentRows(doc, [RIAGGANCIO, REPORT, hand], CATALOG);
+  assert.ok(rows);
+  assert.deepEqual(rows.findAll('a').map((node) => node.textContent), cards.map((card) => card.statusLabel));
+  assert.ok(textOf(rows).includes(AGENT_NO_ENGINE_LABEL), 'la riga scritta a mano non legge «Attivo»');
+  // Senza lettura del catalogo la chiave scritta a mano resta senza motore.
+  const bare = renderTeamAgentRows(doc, [hand]);
+  assert.ok(textOf(bare).includes(AGENT_NO_ENGINE_LABEL));
+  const paused = renderTeamAgentRows(doc, [REPORT]);
+  assert.ok(textOf(paused).includes('In pausa'));
+});
+
+test('Riattiva chiede con le parole dello stato che torna (b9b5e6bda)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const hand = { id: 2, sourceKey: 'custom-agent:presti:v1.mano', spaceId: 'presti', name: 'Mano', role: 'Fa cose', instructions: 'Guarda.', status: 'paused' };
+  const client = driveClient({ rows: [hand] });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'retire-agent').dispatch('click', {});
+  await flush();
+  const text = textOf(mount);
+  assert.ok(text.includes(`Mano torna ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}. Continuo?`), 'la conferma usa le parole del badge');
+  assert.ok(!text.includes('torna attivo'), 'mai «attivo» per un agente che aspetta il motore');
+});
+

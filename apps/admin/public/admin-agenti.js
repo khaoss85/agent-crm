@@ -788,14 +788,23 @@ export function newAgentErrorText(error) {
 
 /**
  * Agent rows for the Team (Spazi e accessi): the same row idiom as the
- * people, with an «Agente» badge. Returns null when there is nothing to
- * add, so the Team stays exactly as it was.
- * @param {any} doc @param {Array<any> | null} agents
+ * people, with an «Agente» badge. The state link reads the same word as
+ * the Agenti card of the same agent (backlog:b9b5e6bda): paused stays
+ * «In pausa», an agent nothing runs reads «Pronto, in attesa del motore».
+ * Returns null when there is nothing to add, so the Team stays exactly as
+ * it was.
+ * @param {any} doc @param {Array<any> | null} agents @param {Array<any> | null} [catalog]
  */
-export function renderTeamAgentRows(doc, agents) {
+export function renderTeamAgentRows(doc, agents, catalog = null) {
   if (!Array.isArray(agents)) return null;
   const rows = agents.filter((row) => text(row?.name) !== null);
   if (rows.length === 0) return null;
+  // Same engine rule as buildAgentCards: the catalogue keys name the agents
+  // this space can run. Without a catalogue read a hand-written key still
+  // has no engine, so the Team never reads «Attivo» where Agenti does not.
+  const engines = Array.isArray(catalog)
+    ? new Set(catalog.map((entry) => entry?.agentSourceKey).filter((key) => typeof key === 'string'))
+    : null;
   // Own classes (bo-agent-*), never bo-spazi-member: the people count of
   // the Team reads that class, and an agent is not a person.
   const wrap = el(doc, 'div', 'bo-agent-team');
@@ -812,7 +821,10 @@ export function renderTeamAgentRows(doc, agents) {
     identity.appendChild(names);
     item.appendChild(identity);
     item.appendChild(uiBadge(doc, { authority: 'agent', text: 'Agente' }));
-    const link = el(doc, 'a', 'bo-agent-team-link', AGENT_STATUS_LABEL[row.status === 'paused' ? 'paused' : 'active']);
+    const paused = row.status === 'paused';
+    const engine = engines === null ? !isHandAgentKey(row.sourceKey) : engines.has(String(row.sourceKey ?? ''));
+    const status = paused ? 'paused' : engine ? 'active' : 'waiting';
+    const link = el(doc, 'a', 'bo-agent-team-link', status === 'waiting' ? AGENT_NO_ENGINE_LABEL : AGENT_STATUS_LABEL[status]);
     link.setAttribute('href', '#/agenti');
     item.appendChild(link);
     wrap.appendChild(item);
@@ -1524,8 +1536,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   function renderRetireBox(card, paused, entry) {
     const boxEl = el(documentNode, 'div', 'bo-agent-retire');
     if (entry.confirm && !entry.busy) {
+      // backlog:b9b5e6bda: the Riattiva confirm reads the same word as the
+      // state it brings back — the badge's own label, never a fixed
+      // «attivo» when the agent waits for the engine.
+      const backLabel = card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL;
       boxEl.appendChild(el(documentNode, 'p', null, paused
-        ? `${card.name} torna attivo e riceve di nuovo incarichi. Continuo?`
+        ? `${card.name} torna ${lowerFirst(backLabel)}${card.engine ? ' e riceve di nuovo incarichi' : ''}. Continuo?`
         : `Ritiro ${card.name}? Resta nel team ma non riceve più incarichi; quelli dati restano.`));
       const confirmBtn = uiButton(documentNode, {
         variant: 'primary', small: true, label: 'Conferma',
