@@ -3030,3 +3030,5 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
 .pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
 .pipeline-off-list .pipeline-off-meta { color: var(--muted); }
+/* ece111d80305: «Link riunione» appears only for an Online place. */
+.cal-field[hidden] { display: none; }
