@@ -102,6 +102,14 @@ export const SETTINGS_AREAS = Object.freeze([
  */
 export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
 
+/**
+ * Reason shown by every schema-driven voice while the space's schema has
+ * not been read yet (backlog:312dd81f83ba, ritorno 1): the menu waits
+ * instead of claiming «non composto in questo spazio» for a space it has
+ * not seen. A space known to lack the package keeps the reason above.
+ */
+export const SCHEMA_LOADING_REASON = 'Spazio in caricamento…';
+
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
   oggi: 'Chiedi: «cosa è più urgente oggi?»',
@@ -637,12 +645,39 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
  * Squadre only when the same package serves squads (squadsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
+ * `schemaKnown: false` while the space's schema has not been read yet:
+ * every voice the schema drives waits with the loading reason instead of
+ * claiming the package is missing (backlog:312dd81f83ba, ritorno 1).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, schemaKnown?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, schemaKnown = true } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
+  if (schemaKnown !== false) {
+    return buildKnownShellNav({ pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, firstPipeline });
+  }
+  // The schema has not answered yet: schema-driven voices wait. Voices that
+  // need no schema (Oggi, Calendario, Reporting…) keep their shape, and
+  // Sequenze stays out until the schema says it is composed.
+  const items = SHELL_ITEMS.map((item) => {
+    if (item.id === 'clienti' || item.id === 'pipeline' || item.id === 'agenti' || item.id === 'squadre' || item.id === 'sequenze') {
+      return { ...item, route: null, available: false, disabledReason: SCHEMA_LOADING_REASON };
+    }
+    if (item.route === null) {
+      return { ...item, available: false, disabledReason: `In arrivo con ${item.story}` };
+    }
+    return { ...item, available: true, disabledReason: '' };
+  });
+  return items;
+}
+
+/**
+ * Build the sidebar model from a schema already read: generated modules are
+ * the "personalizzati" group, the first composed pipeline backs Pipeline.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, firstPipeline?: { name?: unknown, label?: unknown } }} input
+ */
+function buildKnownShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, firstPipeline = null } = {}) {
   const items = SHELL_ITEMS.map((item) => {
     if (item.id === 'clienti') {
       if (customerDataAvailable) {

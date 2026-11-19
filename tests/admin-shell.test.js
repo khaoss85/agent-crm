@@ -643,6 +643,32 @@ test('Clienti is available only when the customer-data package is composed', () 
   }
 });
 
+// backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): senza la
+// copia dello schema il menu mente — Clienti, Pipeline, Agenti e Squadre
+// «non composto» o «non attivi», Sequenze assente. Finché lo schema non è
+// letto davvero, le voci che dipendono da lui aspettano: mai un falso «non
+// composto». Red before the cure: no loading state exists.
+test('312dd81f83ba: before the schema arrives the menu waits instead of claiming «non composto»', () => {
+  const nav = buildShellNav({ schemaKnown: false });
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  for (const id of ['clienti', 'pipeline', 'agenti', 'squadre']) {
+    assert.equal(byId[id].available, false, `${id} still waits for the schema`);
+    assert.ok(!/non composto|non attiv/i.test(byId[id].disabledReason), `${id} never claims «non composto» before the schema`);
+    assert.match(byId[id].disabledReason, /caricamento/i, `${id} says it is loading`);
+  }
+  // Voices that need no schema keep their shape while the schema loads.
+  for (const [id, route] of [['oggi', '#/'], ['calendario', '#/calendario'], ['reporting', '#/reporting']]) {
+    assert.equal(byId[id].available, true, `${id} never waits for the schema`);
+    assert.equal(byId[id].route, route);
+  }
+  // Once the schema is known, the real composition paints as before: a
+  // space known to lack the package still says «non composto».
+  const known = buildShellNav({ customerDataAvailable: false, schemaKnown: true });
+  assert.match(known.find((item) => item.id === 'clienti').disabledReason, /non composto/);
+  const unknown = buildShellNav();
+  assert.match(unknown.find((item) => item.id === 'clienti').disabledReason, /non composto/, 'callers that never heard of the flag keep the old shape');
+});
+
 test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
   // The whole chain the shell runs after the schema arrives: envelope in,
   // sidebar voices out. Every link is a hash route, so it reaches the same
