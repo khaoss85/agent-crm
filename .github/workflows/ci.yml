@@ -407,11 +407,12 @@ jobs:
     # re-anchor, the freshness gate (`--require-current`) and the realign PR
     # moved to `verify` with the measurement; this job never starts
     # `measure-suite.js` and never fails for a stale-but-agreeing ledger.
-    # Its own lane: a newer push supersedes this check, and it never cancels
-    # — nor waits on — a scheduled measurement already running.
+    # Its own lane: pushes queue behind a run already going and each one runs
+    # to a verdict — a newer push never supersedes this check — and it never
+    # cancels — nor waits on — a scheduled measurement already running.
     concurrency:
       group: ci-main-claims
-      cancel-in-progress: true
+      cancel-in-progress: false
     if: ${{ github.event_name == 'push' }}
     steps:
       # Clean checkout every job (backlog:f16911e3): no checkout reuse;
