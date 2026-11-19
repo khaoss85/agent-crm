@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "name": "custom-field-value",
-  "description": "One customer's value for one operator-defined property (backlog:434cc39a): the per-subject row beside the contact or company record, keyed by subject and field key. One row per subject and field: setting the same field again rewrites the value (an edit), never a second row. Values are operator-entered or human-confirmed AI proposals; the definition owns the type and every write is validated against it.",
+  "description": "One customer's value for one operator-defined property (backlog:434cc39a, backlog:c6c56dad): the per-subject row beside the contact or company record, keyed by subject and field key. One row per subject and field: setting the same field again rewrites the value (an edit), never a second row. Values are operator-entered or human-confirmed AI proposals; the definition owns the type and every write is validated against it. An AI-filled value carries its source; a value without a source was entered by a person.",
   "table": "custom_field_values",
   "fields": [
     {
@@ -46,6 +46,14 @@
       "required": false,
       "unique": false,
       "column": "value",
+      "writable": "managed"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "source",
       "writable": "managed"
     },
     {

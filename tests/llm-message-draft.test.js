@@ -4,8 +4,11 @@ import assert from 'node:assert/strict';
 import { AppError, ValidationError } from '../packages/core/index.js';
 import {
   MESSAGE_DRAFT_KINDS,
+  MESSAGE_DRAFT_PLAYBOOK_FIELDS,
   assertMessageDraftInput,
+  assertMessageDraftPlaybook,
   buildMessageDraftPrompt,
+  buildPlaybookContextBlock,
   draftCustomerMessage,
   parseMessageDraftResponse,
 } from '../packages/llm/src/message-draft.js';
@@ -274,4 +277,67 @@ test('draft text validation matches the composer fence: tab refuses here as it r
   });
   assert.equal(composerTimelineRefusal('Ciao\nMarco'), null, 'the composer keeps line feeds');
   assert.equal(parseMessageDraftResponse(withNewline, CHANNELS).corta, 'Ciao\nMarco');
+});
+
+test('the composer draft receives the playbook as context: different playbooks, different prompts (backlog:ad7e03ac)', async () => {
+  const base = {
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  };
+  const gym = {
+    companyName: 'Presti Group',
+    products: 'Abbonamento mensile\nPersonal training',
+    tone: 'Energico ma mai pressante.',
+    hours: 'Lun-Ven 6:30-22:00.',
+  };
+  const flowers = {
+    companyName: 'Fiori Arvo',
+    products: 'Mazzo del giorno',
+    tone: 'Gentile.',
+    hours: 'Lun-Sab 9:00-19:00.',
+  };
+  const seenGym = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: seenGym }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    ...base,
+    playbook: gym,
+  });
+  const seenFlowers = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: seenFlowers }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    ...base,
+    playbook: flowers,
+  });
+  const promptGym = seenGym.request.messages.map((message) => message.content).join('\n');
+  const promptFlowers = seenFlowers.request.messages.map((message) => message.content).join('\n');
+  assert.ok(promptGym.includes('Personal training'), 'the gym playbook product reaches the model');
+  assert.ok(!promptGym.includes('Mazzo del giorno'), 'the other playbook never leaks in');
+  assert.ok(promptFlowers.includes('Mazzo del giorno'), 'the flower playbook product reaches the model');
+  assert.ok(!promptFlowers.includes('Personal training'), 'the gym playbook never leaks in');
+  assert.notEqual(promptGym, promptFlowers, 'the same request produces a different context');
+  assert.ok(promptGym.includes('conferma lo spostamento alle 18'), 'the intent still travels');
+});
+
+test('no playbook keeps the prompt as on main (backlog:ad7e03ac)', () => {
+  const prompt = buildMessageDraftPrompt({
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma',
+    connectedChannels: CHANNELS,
+  }).messages.map((message) => message.content).join('\n');
+  assert.ok(!prompt.includes('Playbook dello spazio'), 'no block without a playbook');
+  assert.equal(buildPlaybookContextBlock(null), null);
+  assert.equal(buildPlaybookContextBlock({}), null, 'an empty playbook behaves like none');
+  assert.equal(buildPlaybookContextBlock({ companyName: '  ' }), null, 'a blank playbook behaves like none');
+  assert.throws(() => assertMessageDraftPlaybook('Presti Group'), ValidationError);
+  assert.throws(() => assertMessageDraftPlaybook({ products: 42 }), ValidationError);
+  assert.throws(() => assertMessageDraftPlaybook({ tone: 'x'.repeat(2001) }), ValidationError);
+  assert.deepEqual(Object.keys(assertMessageDraftPlaybook({ companyName: 'Presti' })).sort(),
+    [...MESSAGE_DRAFT_PLAYBOOK_FIELDS].sort());
 });

@@ -357,9 +357,19 @@ export const PERSONAL_MAIL_DOMAINS = new Set([
 ]);
 
 /**
+ * Documentation and test domains (RFC 2606): never a customer. A label from
+ * one (`x@esempio.invalid` → `Esempio`) would paint a placeholder as a
+ * brand, so the registrable domain of such an address is null — the reader
+ * falls to «senza nome», like for an unreadable address. Only the last
+ * label counts (`example.com` stays a registrable domain).
+ */
+const RESERVED_TOP_LABELS = new Set(['example', 'invalid', 'localhost', 'test']);
+
+/**
  * The registrable domain of an address, lowercase, technical subdomains
  * dropped (`x@identity-reachout.bounces.google.com` → `google.com`). Null
- * when the value is not an address with a dotted domain.
+ * when the value is not an address with a dotted domain, or when the
+ * domain is a documentation/test one (see RESERVED_TOP_LABELS).
  * @param {unknown} email
  * @returns {string | null}
  */
@@ -369,6 +379,7 @@ export function registrableDomain(email) {
   if (at <= 0) return null;
   const labels = text.slice(at + 1).split('.').filter((label) => label !== '');
   if (labels.length < 2 || labels.some((label) => !/^[\p{L}\p{N}-]+$/u.test(label))) return null;
+  if (RESERVED_TOP_LABELS.has(labels[labels.length - 1])) return null;
   const lastTwo = labels.slice(-2).join('.');
   if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(lastTwo)) return labels.slice(-3).join('.');
   return lastTwo;

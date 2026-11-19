@@ -13,6 +13,10 @@ The server uses newline-delimited JSON-RPC over stdio. Diagnostics are written o
 - `crm_get_trace`
 - `crm_scaffold_module`
 - `crm_doctor`
+- `crm_read_playbook`
+- `crm_create_assignment`
+- `crm_list_proposals`
+- `crm_decide_proposal`
 
 ## Resources
 

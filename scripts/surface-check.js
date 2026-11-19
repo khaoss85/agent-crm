@@ -49,10 +49,17 @@ export const SURFACE_BUDGET = Object.freeze({
       + 'descriptions start competing rather than dividing, and the wrong one fires.',
   },
   alwaysOnTools: {
-    max: 10,
+    max: 13,
     why: 'Tool definitions consume context before any work starts. Both major harness vendors '
       + 'publish the same guidance — keep an always-loaded namespace small, around ten functions, '
-      + 'and defer the rest behind search. This is the always-on count, not the capability count.',
+      + 'and defer the rest behind search. This is the always-on count, not the capability count. '
+      + 'Raised 10 → 13 on 2026-11-16, and the gate is why the question got asked at all: '
+      + 'backlog:5752407ae9b3 ships four genuinely new answers an external agent cannot get today '
+      + '(read the space playbook, give a teammate agent an assignment, list and decide the '
+      + 'human-approval proposals) and takes nothing out. Thirteen is where it stops: the next '
+      + 'tool that wants a place in the always-on namespace pays for it by folding an existing '
+      + 'tool into a sibling rather than by moving this number again. A ceiling raised twice '
+      + 'is not a ceiling.',
   },
   commandsAcrossSkills: {
     max: 11,

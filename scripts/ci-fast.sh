@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The PR gate's eight phases under ONE machine lock.
+# The PR gate's nine phases under ONE machine lock.
 #
 # The accordo-ci runner shares a 16 GB Mac with other factories under a
 # single heavy-job machine lock. Eight separately locked steps, each capped
@@ -115,6 +115,15 @@ run_lane() {
   "$@"
 }
 
+# The pilot-browser gate (backlog:ae2d5d3c). Its own lane, beside the
+# others: on the Linux runner it overlaps the slow lanes instead of
+# stretching the wall time, and on the shared Mac it runs serially with
+# its own elapsed time on the log. A diff that does not touch the served
+# client skips inside the script in ~1 s and pays nothing.
+pilot_browser_gate() {
+  BASE_REF="$BASE_REF" bash scripts/ci-pilot-browser.sh
+}
+
 # The touched tests can rebuild site/dist (tests/site-pages.test.js runs
 # scripts/site-build.js) and gtm:check rebuilds and reads it: one after the
 # other, never together, in one lane beside the others (Muse P2 on #444).
@@ -150,6 +159,7 @@ run_phase_now() {
 
 run_phase 'npm run check' npm run check
 run_lane 'tests of the touched files, then public claims and packaging agree' touched_then_gtm
+run_lane 'pilot browser on this head' pilot_browser_gate
 run_phase 'smoke demo' npm run smoke
 run_phase 'published quote approval recipe' bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
 run_phase 'truth document agrees with its authorities' npm run repo:truth -- --check --drift-advisory --base "origin/$BASE_REF"
@@ -186,9 +196,9 @@ run_phase 'package surfaces still match the baseline' node --no-warnings --test 
 # main on schedule: backlog:ea9b4bba). This phase runs those four tests on
 # every PR (~15 s: two composed-project inspections), so a PR that changes
 # the composition and leaves a pin behind fails here, on the PR, instead of
-# on main at the next scheduled measure. The fix is a repin: record the live
-# fingerprint (`crm solution check <plan> --json`), recompute the plan
-# fingerprint, and update the paired evidence pins.
+# on main at the next scheduled measure. The fix is a repin, never a hand-edit:
+# `npm run repin:example-pins` (scripts/repin-example-pins.js) recomputes every
+# pin from its live authority and rewrites the drifted example files.
 run_phase 'checked-in plan pins still bind' bash -c 'node --no-warnings --test --test-name-pattern="the shipped example is current against this repository, and check says so" tests/solution-plan.test.js && node --no-warnings --test --test-name-pattern="the shipped Service solution plan validates, and checks against a composed project" tests/service-operations-integration.test.js && node --no-warnings --test --test-name-pattern="the shipped M14b2 solution plan validates, and checks against a composed project" tests/delivery-change-acceptance-integration.test.js && node --no-warnings --test --test-name-pattern="every source artifact the checked-in documents cite is present with exactly that hash" tests/solution-verify.test.js'
 
 if [ "$(parallel_cap)" -gt 1 ]; then
@@ -214,4 +224,4 @@ if [ "$(parallel_cap)" -gt 1 ]; then
   fi
 fi
 
-echo "ci-fast: all 8 phases passed in $((SECONDS - started))s of the ${budget}s total lock budget"
+echo "ci-fast: all 9 phases passed in $((SECONDS - started))s of the ${budget}s total lock budget"

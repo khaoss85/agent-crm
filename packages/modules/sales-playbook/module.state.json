@@ -1,0 +1,114 @@
+{
+  "stateVersion": 2,
+  "module": "sales-playbook",
+  "revision": 1,
+  "fingerprint": "3f85c1ea70777a1881cadc16013ae989b9711617d4a50d8136945471a99c8760",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "sales-playbook",
+    "description": "The space's sales playbook: who the space is, what it sells, to whom, in what tone. One row per space, read and edited by the member; the AI proposes it from a site or a description but nothing is saved until the member confirms. Keyed by opaque control-plane space id.",
+    "table": "sales_playbooks",
+    "fields": [
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "companyName",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "company_name",
+        "writable": "managed"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "description",
+        "writable": "managed"
+      },
+      {
+        "name": "website",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "website",
+        "writable": "managed"
+      },
+      {
+        "name": "products",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "products",
+        "writable": "managed"
+      },
+      {
+        "name": "idealCustomer",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "ideal_customer",
+        "writable": "managed"
+      },
+      {
+        "name": "tone",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "tone",
+        "writable": "managed"
+      },
+      {
+        "name": "avoidTopics",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "avoid_topics",
+        "writable": "managed"
+      },
+      {
+        "name": "links",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "links",
+        "writable": "managed"
+      },
+      {
+        "name": "hours",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "hours",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_sales_playbooks",
+      "checksum": "5e3096d7f369afe1cb38e6084086b50fa6cfb43813f6855609cc3048b7b1b1cf",
+      "sql": "CREATE TABLE IF NOT EXISTS sales_playbooks (\n  id TEXT PRIMARY KEY,\n  space_id TEXT UNIQUE,\n  company_name TEXT,\n  description TEXT,\n  website TEXT,\n  products TEXT,\n  ideal_customer TEXT,\n  tone TEXT,\n  avoid_topics TEXT,\n  links TEXT,\n  hours TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_sales_playbooks",
+      "checksum": "95b794fea6e726ec5300b7649b32b6e3869fb39ee147bf897e35b6608fecfa13",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"sales_playbooks\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"space_id\" TEXT UNIQUE,\n  \"company_name\" TEXT,\n  \"description\" TEXT,\n  \"website\" TEXT,\n  \"products\" TEXT,\n  \"ideal_customer\" TEXT,\n  \"tone\" TEXT,\n  \"avoid_topics\" TEXT,\n  \"links\" TEXT,\n  \"hours\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "3f85c1ea70777a1881cadc16013ae989b9711617d4a50d8136945471a99c8760"
+      }
+    },
+    "evolutions": []
+  }
+}

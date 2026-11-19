@@ -1,8 +1,8 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/lead-to-won.plan.json",
-  "planFingerprint": "c11d0a84c7a0c2f1bdd358bf91227dfc354b125a9ac1b49b9ece983b49763531",
-  "applicationInspectionFingerprint": "4e15c789a521d7bc698863518a3ec09abf5c6975209e65ef3d5babb1ee6ef8e7",
+  "planFingerprint": "e868adf013454620cc4a365a4c16568b9bb200ba6230ce12e957c880ae906c4d",
+  "applicationInspectionFingerprint": "eda55b58a8bfd5ea559de4fe487706823dff33dae72230d29d6ac8b713ca0e58",
   "requirements": [
     {
       "requirementId": "step:step.publish-dwell-view",

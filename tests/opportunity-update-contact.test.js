@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
+import { createHttpServer } from '../apps/server/src/index.js';
 
 /**
  * backlog:619b477c0464 — an offer filed under the company only (the pilot's
@@ -35,6 +36,24 @@ test('619b477c0464: an offer with no contact is tied to its person, audited, and
   // The scheda's profile reads offers by contact: it now holds this one.
   const listed = app.services.opportunities.list({ companyId: offer.companyId });
   assert.equal(listed.find((row) => row.id === offer.id)?.contactId, bea.id);
+});
+
+test('ae79e0db693c: HTTP PATCH still refuses contactId (in-process only), writing nothing', async (t) => {
+  const { app, bea, offer } = await setup(t);
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(async () => { await new Promise((r) => server.close(r)); });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/opportunities/${offer.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-actor-type': 'user', 'x-actor-id': 'seed-esempio' },
+    body: JSON.stringify({ contactId: bea.id }),
+  });
+  assert.equal(response.status, 400);
+  await response.text();
+  assert.equal(app.services.opportunities.get(offer.id).contactId ?? null, null, 'the refused PATCH writes nothing');
 });
 
 test('619b477c0464: a contact of another company, an empty or an unknown one is refused before any write', async (t) => {

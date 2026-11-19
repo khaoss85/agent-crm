@@ -35,7 +35,7 @@
 import { NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
-import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -61,30 +61,10 @@ export function catalogFor(channel) {
   return CONNECTOR_CATALOG.find((entry) => entry.channel === channel) ?? null;
 }
 
-// Direction from the channel matrix of packages/channels/README.md (BO-F1-01):
-// the five channels that send through the outbox, and the three catalog
-// channels that are inbound-only by contract (CHANNEL_SEND_UNSUPPORTED).
-// `sms` has no dedicated adapter in packages/channels, so its direction is
-// undeclared here — the detail says so instead of guessing.
-export const DIRECTION_BY_CHANNEL = Object.freeze({
-  whatsapp: 'in-out',
-  instagram: 'in-out',
-  telegram: 'in-out',
-  facebook: 'in-out',
-  email: 'in-out',
-  tiktok: 'in-only',
-  voice: 'in-only',
-  'site-form': 'in-only',
-});
-
-/**
- * @param {string} channel
- * @returns {'in-out' | 'in-only' | null} null when the matrix declares none.
- */
-export function directionOf(channel) {
-  const direction = /** @type {Record<string, string>} */ (DIRECTION_BY_CHANNEL)[channel];
-  return direction === 'in-out' || direction === 'in-only' ? direction : null;
-}
+// The direction matrix lives in the catalog (./admin-connectors.js), shared
+// with the customer scheda: one definition, re-exported here so the detail
+// callers keep their import.
+export { DIRECTION_BY_CHANNEL, directionOf };
 
 /**
  * One declared consumer of a connector: a real framework unit plus the
@@ -399,13 +379,13 @@ export function detailSections({ entry, connection, spaceId = null }) {
 
   const dettagliTecniciLines = connection === null
     ? [
-        `Canale: ${channel === '' ? '—' : channel}.`,
+        'Canale: nessun canale collegato.',
         direction === null
           ? 'Direzione: non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
           : `Direzione: ${direction === 'in-out' ? 'entrata e uscita' : 'solo entrata'}.`,
       ]
     : [
-        `Canale: ${typeof connection.channel === 'string' ? connection.channel : channel}.`,
+        `Canale: ${label}.`,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
         `Stato: ${statusLabel(connection.status)}.`,

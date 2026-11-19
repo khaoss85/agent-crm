@@ -52,10 +52,10 @@ function compose(nowIso = MON_07, options = {}) {
   return { database, modules, ops };
 }
 
-test('the catalogue holds the five ready-made squad templates', () => {
+test('the catalogue holds the six ready-made squad templates', () => {
   assert.deepEqual(
     SQUAD_TEMPLATES.map((entry) => entry.slug),
-    ['lead-generation', 'social-posting', 'sales-outreach', 'discovery', 'contenuti'],
+    ['lead-generation', 'social-posting', 'sales-outreach', 'outreach', 'discovery', 'contenuti'],
   );
   for (const entry of SQUAD_TEMPLATES) {
     assert.ok(entry.objective.length > 0);

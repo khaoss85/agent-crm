@@ -23,7 +23,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/operations.js",
-          "sha256": "d9d3c985eefa5026a8d727d1704bc68b8525fc24d5e8f4f4b8a656011740a2f6"
+          "sha256": "06d89307f6608dda3019ffeae2640a0d2d98a16d1fd0ad1d636a4faaf4896dc2"
         }
       ]
     },
@@ -52,7 +52,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/import.js",
-          "sha256": "59add5012ee90d75403d6dba0b307b42e62dfa25c51c4d8fd5ffa93f25b743db"
+          "sha256": "7cc0e2545c2b98438f4bd2d384bc28f97dbb5b4e1ec5785945b23687b028a6e7"
         }
       ]
     },
@@ -87,7 +87,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/actions.js",
-          "sha256": "efe308e5511048dadf41668f3733f6248177f00e9b5375ef11299952ae357d47"
+          "sha256": "ad332928989232f4d3c99d2f2d8c59d7d9539eaf259ec7c862d24b658ad738ed"
         }
       ]
     },
@@ -110,7 +110,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/profile.js",
-          "sha256": "78ea89133c898c60886e923481746fbfb489acf0bacf4c6ad6a0feea4149138c"
+          "sha256": "a9418a8587fa3f1aadbfce1d4821f81cf73879004e8a78b0e017ff3fca456dc5"
         }
       ]
     },
@@ -171,7 +171,7 @@
         }
       ],
       "partial": {
-        "reason": "\"returns the same run\" is observed exactly \u2014 the same run id and the same payload-derived key. \"Creates no second one\" is observed by the journey's own assertion that the run count did not move, but the scenario can only see a lower bound (atLeast), because two later imports in the same run legitimately add runs of their own"
+        "reason": "\"returns the same run\" is observed exactly — the same run id and the same payload-derived key. \"Creates no second one\" is observed by the journey's own assertion that the run count did not move, but the scenario can only see a lower bound (atLeast), because two later imports in the same run legitimately add runs of their own"
       }
     },
     {
@@ -265,18 +265,18 @@
         {
           "kind": "source.artifact",
           "path": "apps/admin/public/admin-customer-data.js",
-          "sha256": "35ca379abe08fd01fb364c70e17e4c60f1971611aede5e41c3d086c93fd895a3"
+          "sha256": "53722569723b4f439f210b199e8d171f930db413cb67ac4771813ef9bc6abfa1"
         }
       ],
       "partial": {
-        "reason": "the server-side claim is observed exactly, over a composition holding no other package at all. That a *rendered* section shows it is not observable from here \u2014 DX6 drives no browser, and the 32-check Chromium matrix in docs/ADMIN_SMOKE.md is a manual gate outside CI"
+        "reason": "the server-side claim is observed exactly, over a composition holding no other package at all. That a *rendered* section shows it is not observable from here — DX6 drives no browser, and the 32-check Chromium matrix in docs/ADMIN_SMOKE.md is a manual gate outside CI"
       }
     }
   ],
   "limitations": [
     {
       "code": "PLAN_TARGETS_THE_JOURNEY_COMPOSITION_NOT_THIS_REPOSITORY",
-      "message": "this plan is written against the application the customer-identity journey composes \u2014 the customer-data package over the host's own Company and Contact, and nothing else \u2014 which is not the composition this repository's own root has. The digest it pins is reproduced by that journey, so every application fact is cited where it was observed and none is cited from this repository's AX1 report"
+      "message": "this plan is written against the application the customer-identity journey composes — the customer-data package over the host's own Company and Contact, and nothing else — which is not the composition this repository's own root has. The digest it pins is reproduced by that journey, so every application fact is cited where it was observed and none is cited from this repository's AX1 report"
     },
     {
       "code": "MATCHING_IS_EXACT_ONLY",

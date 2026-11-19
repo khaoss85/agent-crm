@@ -1,13 +1,13 @@
 {
   "stateVersion": 2,
   "module": "custom-field-def",
-  "revision": 1,
-  "fingerprint": "84344a5211d0ba8920ec0e5c2e1241e27f563dd9d770a64f6e9df82d1bc13de4",
+  "revision": 2,
+  "fingerprint": "f9e85f8a663a4d5f21e39348c98780716f6c21332797edfa0f4f9093a73aeb7a",
   "manifest": {
     "manifestVersion": 1,
-    "revision": 1,
+    "revision": 2,
     "name": "custom-field-def",
-    "description": "One operator-defined customer property (backlog:434cc39a): a space-wide field with a key, an Italian label and a type (testo, numero, data, si-no, scelta). Definitions are space-wide: every scheda, filter and list column reads the same set. The framework never invents one: a definition is a human decision, and a value without a definition is refused.",
+    "description": "One operator-defined customer property (backlog:434cc39a, backlog:c6c56dad): a space-wide field with a key, an Italian label and a type (testo, numero, data, si-no, scelta, punteggio). Definitions are space-wide: every scheda, filter and list column reads the same set. The framework never invents one: a definition is a human decision, and a value without a definition is refused. Punteggio is a 0-100 score the AI can fill from a question.",
     "table": "custom_field_defs",
     "fields": [
       {
@@ -47,7 +47,8 @@
           "numero",
           "data",
           "si-no",
-          "scelta"
+          "scelta",
+          "punteggio"
         ]
       },
       {

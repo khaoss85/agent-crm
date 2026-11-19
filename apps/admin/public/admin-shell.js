@@ -1,6 +1,6 @@
 // @ts-check
 
-import { sessionRoleLabel } from './admin-session.js';
+import { readSessionProfile, sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
@@ -52,6 +52,9 @@ export const SHELL_ITEMS = Object.freeze([
   // (Dan 11/11) gives Sequenze its voice back when the sequences module is
   // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
+  // backlog:0d2d8f2e puts «Squadre» in the sidebar: the teams of agents
+  // with their backlog A, backlog B, routines and advisor metric.
+  { id: 'squadre', label: 'Squadre', group: 'native', route: null, story: 'backlog:0d2d8f2e', icon: 'squadre' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
   // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
@@ -420,21 +423,21 @@ export function spaceInitialsFor(name) {
 
 /**
  * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
- * each readable with white text (WCAG AA, ratios in styles.css next to
- * the `.bo-space-badge--pN` rules). The palette fits in one screen of
- * CSS instead of one rule per hue.
+ * each readable with the paper text (WCAG AA >= 4.5:1, ratios in
+ * styles.css next to the `.bo-space-badge--pN` rules). The palette fits
+ * in one screen of CSS instead of one rule per hue.
  */
 const SPACE_BADGE_PALETTE = [
   { h: 0, s: 60, l: 42 },
-  { h: 23, s: 60, l: 42 },
-  { h: 45, s: 60, l: 34 },
-  { h: 68, s: 60, l: 30 },
-  { h: 90, s: 60, l: 32 },
-  { h: 113, s: 60, l: 33 },
-  { h: 135, s: 60, l: 33 },
-  { h: 158, s: 60, l: 32 },
-  { h: 180, s: 60, l: 32 },
-  { h: 203, s: 60, l: 42 },
+  { h: 23, s: 60, l: 40 },
+  { h: 45, s: 60, l: 31 },
+  { h: 68, s: 60, l: 27 },
+  { h: 90, s: 60, l: 29 },
+  { h: 113, s: 60, l: 30 },
+  { h: 135, s: 60, l: 30 },
+  { h: 158, s: 60, l: 30 },
+  { h: 180, s: 60, l: 29 },
+  { h: 203, s: 60, l: 39 },
   { h: 225, s: 60, l: 42 },
   { h: 248, s: 60, l: 42 },
   { h: 270, s: 60, l: 42 },
@@ -514,12 +517,21 @@ export function spaceSwitcherLabel(spaces) {
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
  * the name — the first unused candidate, so «Presti Group» and «Prova
  * Validazione B1» read differently even when both arrive as «PR».
+ * Rows outside the host's live member list (backlog:ca7008cac764) carry
+ * `needsAccess`: visited mounts the session profile does not name may land
+ * on the space login instead of switching, so the menu marks them instead
+ * of promising a seamless switch. Without a member list every row reads
+ * as a plain switch, like before.
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
+ * @param {Array<string> | null} [memberIds] ids the session profile names
  */
-export function spaceMenuItems(spaces, activeId) {
+export function spaceMenuItems(spaces, activeId, memberIds = null) {
   const list = Array.isArray(spaces) ? spaces : [];
   const seen = new Set();
+  const memberSet = memberIds == null ? null : new Set(
+    (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
+  );
   return list.map((space, index) => {
     const name = typeof space?.name === 'string' ? space.name : '';
     const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
@@ -546,6 +558,7 @@ export function spaceMenuItems(spaces, activeId) {
       badgeClass: spaceBadgeClass(space?.id),
       keyHint: index < 9 ? `⌘${index + 1}` : '',
       active: space.id === activeId,
+      needsAccess: memberSet !== null && space.id !== activeId && !memberSet.has(space.id),
     };
   });
 }
@@ -563,7 +576,7 @@ export function spaceMenuItems(spaces, activeId) {
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
   if (view === 'dashboard') return mounted === true;
-  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
 /**
@@ -579,9 +592,10 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean }} input
+ * Squadre only when the same package serves squads (squadsAvailable).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -603,6 +617,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+    }
+    if (item.id === 'squadre') {
+      if (squadsAvailable) {
+        return { ...item, route: '#/squadre', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
@@ -700,7 +720,29 @@ export function createShellView({
     state.activeSpaceId = state.spaces[0].id;
   }
 
+  // backlog:ca7008cac764: the host's live member list — the session
+  // profile's spaces. Rows outside it are visited mounts the host may no
+  // longer know, so opening one can land on the space login; the menu
+  // marks them instead of promising a seamless switch. Without a session
+  // (local development) every pick switches in-tab: nothing is marked.
+  const sessionMemberIds = (() => {
+    try {
+      const ids = readSessionProfile(doc)?.spaces?.map((entry) => entry?.id);
+      return Array.isArray(ids) ? ids : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
+
+  // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
+  // every local space switch drops it, so the bar never names for a moment
+  // the previous space's agent before the new space's read lands.
+  function switchSpace(id) {
+    if (state.activeSpaceId !== id) state.aiAgentName = '';
+    state.activeSpaceId = id;
+  }
 
   function clearMount(mount) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -784,7 +826,7 @@ export function createShellView({
     // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
     // per-space colors, so two spaces never read the same; the button label
     // lists only the shortcuts that exist.
-    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId, sessionMemberIds);
     const space = items.find((entry) => entry.active) ?? items[0];
     const switcherLabel = spaceSwitcherLabel(state.spaces);
 
@@ -817,14 +859,23 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
+      // backlog:09644bb7e7e9: il nome va a capo per intero (CSS) e resta
+      // comunque tutto a un hover di distanza.
+      pick.setAttribute('title', entry.name);
       const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
       if (entry.keyHint !== '') pick.appendChild(el(doc, 'span', 'bo-space-key', entry.keyHint));
+      // backlog:ca7008cac764: a row the session profile does not name may
+      // land on the space login instead of switching — the menu says so.
+      if (entry.needsAccess === true) {
+        pick.appendChild(el(doc, 'span', 'bo-space-pick-note bo-muted', 'può chiedere l\u2019accesso'));
+        pick.setAttribute('title', 'Questo spazio potrebbe chiedere di accedere di nuovo');
+      }
       if (entry.active) pick.appendChild(el(doc, 'span', 'bo-space-check', '✓'));
       else pick.addEventListener('click', () => {
-        state.activeSpaceId = entry.id;
+        switchSpace(entry.id);
         onPickSpace(entry.id);
         renderSidebar();
         renderTopbar();
@@ -832,13 +883,25 @@ export function createShellView({
       menu.appendChild(pick);
     }
     const manage = el(doc, 'button', 'bo-space-manage', 'Gestisci spazi e accessi');
-    manage.addEventListener('click', () => go(SETTINGS_ROUTE));
+    // backlog:2302655b1fcf: the entry opens Spazi e accessi directly, never
+    // the settings index — the route is read from the tab it opens, not a copy.
+    const spaziAccessi = SETTINGS_AREAS.find((area) => area.id === 'spazi-accessi');
+    manage.addEventListener('click', () => go(spaziAccessi?.route ?? '#/spazi-accessi'));
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
     // One voice row: icon, label, then the voice's live badge, if any.
     // Clienti carries the live client count (grey pill, BO-F6-01);
     // Impostazioni carries the real "things to fix" count (yellow pill).
+    // backlog:09644bb7e7e9: every row ends with exactly one 20px trailing
+    // element — the badged voices keep their pinned `is-empty` placeholder
+    // (backlog:b76770f82fe9), the others get a neutral hidden slot — so all
+    // rows measure the same and no «0» ever shows before the real number.
+    function appendPillSlot(link) {
+      const slot = el(doc, 'span', 'bo-pill-slot');
+      slot.setAttribute('aria-hidden', 'true');
+      link.appendChild(slot);
+    }
     function appendVoice(container, item) {
       const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
         + (item.id === state.activeScreenId ? ' active' : '')
@@ -864,12 +927,26 @@ export function createShellView({
           const pill = el(doc, 'span', 'bo-count', countText);
           if (state.clientCountExact === false) pill.setAttribute('title', 'conteggio parziale: la scansione è limitata');
           link.appendChild(pill);
+        } else {
+          // backlog:b76770f82fe9: the pill's room stays reserved while the
+          // count is unknown, so the rows below never move when it lights.
+          const empty = el(doc, 'span', 'bo-count is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
         }
       }
       if (item.id === 'impostazioni') {
         const badgeText = settingsBadge(state.fixCount);
-        if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        if (badgeText !== '') {
+          link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        } else {
+          // backlog:b76770f82fe9: same reserved room for the fix count.
+          const empty = el(doc, 'span', 'bo-badge is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
+        }
       }
+      if (item.id !== 'clienti' && item.id !== 'impostazioni') appendPillSlot(link);
       container.appendChild(link);
     }
 
@@ -1038,7 +1115,14 @@ export function createShellView({
       else openDrawer();
     });
     topbar.appendChild(menuToggle);
-    const path = el(doc, 'div', 'bo-crumb', crumb(space.name, screenLabelFor(state.activeScreenId)));
+    // backlog:dd6a01de569b: the crumb keeps "<space> / <screen>" on desktop,
+    // but on a phone the bar above already names the space — the space part
+    // gets its own span so the ≤700px stylesheet can drop the repetition
+    // while desktop, textContent and screen readers keep the full path.
+    const screen = screenLabelFor(state.activeScreenId);
+    const path = el(doc, 'div', 'bo-crumb');
+    path.appendChild(el(doc, 'span', 'bo-crumb-space', crumb(space.name, '')));
+    path.appendChild(el(doc, 'span', 'bo-crumb-screen', screen));
     path.setAttribute('aria-label', 'Percorso');
     topbar.appendChild(path);
 
@@ -1127,7 +1211,7 @@ export function createShellView({
       const spaceId = resolveSpaceShortcut(event, state.spaces);
       if (spaceId !== null) {
         if (typeof event.preventDefault === 'function') event.preventDefault();
-        state.activeSpaceId = spaceId;
+        switchSpace(spaceId);
         onPickSpace(spaceId);
         renderSidebar();
         renderTopbar();
@@ -1146,6 +1230,17 @@ export function createShellView({
       if (typeof event?.stopPropagation === 'function') event.stopPropagation();
       closeDrawer();
     }, true);
+    // backlog:dd6a01de569b: the sticky bar needs an edge once the page
+    // slides under it — otherwise bar and content read as one surface.
+    // The stylesheet draws the edge (phone only); here only the flag.
+    const paintTopbarScrolled = () => {
+      const y = typeof win.scrollY === 'number' ? win.scrollY
+        : typeof win.pageYOffset === 'number' ? win.pageYOffset
+        : 0;
+      if (typeof topbar.classList?.toggle === 'function') topbar.classList.toggle('bo-topbar-scrolled', y > 0);
+    };
+    win.addEventListener('scroll', paintTopbarScrolled, { passive: true });
+    paintTopbarScrolled();
   }
 
   renderSidebar();
@@ -1172,9 +1267,9 @@ export function createShellView({
     setSpaces(spaces, activeId) {
       if (Array.isArray(spaces) && spaces.length > 0) state.spaces = spaces;
       if (typeof activeId === 'string' && state.spaces.some((space) => space.id === activeId)) {
-        state.activeSpaceId = activeId;
+        switchSpace(activeId);
       } else if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
-        state.activeSpaceId = state.spaces[0].id;
+        switchSpace(state.spaces[0].id);
       }
       renderSidebar();
       renderTopbar();
@@ -1213,6 +1308,21 @@ export function renderUnknownRoute({ doc, mount }) {
 export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
 
 /**
+ * Backlog 2302655b1fcf: the settings header both the Impostazioni index and
+ * Personalizzazione paint — one component (h2.panel-title plus its
+ * subtitle), so the two pages keep the same title, subtitle and hero size.
+ * The 46px hero size comes from the `.panel.personalizzazione` ancestor both
+ * pages paint around it (styles.css), never from a copied rule.
+ * @param {any} doc
+ * @param {any} box the panel the header opens
+ * @param {{ title?: string, subtitle?: string }} [options]
+ */
+export function paintSettingsHead(doc, box, { title = '', subtitle = '' } = {}) {
+  box.appendChild(el(doc, 'h2', { text: title, cls: 'panel-title' }));
+  box.appendChild(el(doc, 'p', { text: subtitle, cls: 'muted' }));
+}
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -1222,8 +1332,17 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
-  mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
+  // backlog:2302655b1fcf: the index paints the same chrome as every other
+  // settings screen — the IMPOSTAZIONI tab row (no tab underlined: the index
+  // is none of the areas) above the shared header component, never the
+  // «Backoffice» kicker the other screens dropped.
+  mount.appendChild(settingsTabs(doc, { activeId: null, fixCount, navigate }));
+  const panel = el(doc, 'div', { cls: 'panel personalizzazione' });
+  mount.appendChild(panel);
+  paintSettingsHead(doc, panel, {
+    title: 'Impostazioni',
+    subtitle: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+  });
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(
@@ -1238,7 +1357,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
-  mount.appendChild(summary);
+  panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {
     summary.setAttribute('role', 'status');
     const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
@@ -1263,12 +1382,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
           count = null;
         }
         // The operator may have left meanwhile: repaint only the panel
-        // still on screen, never over the screen just opened.
-        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        // still on screen, never over the screen just opened. Both links
+        // of the chain must hold: the summary in its panel and the panel
+        // in the mount (clearing the mount detaches the panel but leaves
+        // the summary inside it).
+        if (summary.parentNode !== panel || panel.parentNode !== mount) return;
         renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
       });
     });
-    mount.appendChild(retry);
+    panel.appendChild(retry);
   }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
@@ -1298,7 +1420,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     }
     list.appendChild(row);
   }
-  mount.appendChild(list);
+  panel.appendChild(list);
 }
 
 /**
@@ -1389,6 +1511,7 @@ export function shellScreenFor(target) {
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'squadre': return { id: 'squadre', label: 'Squadre' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':

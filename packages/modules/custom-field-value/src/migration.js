@@ -28,6 +28,28 @@ export const customFieldValueMigrations = [
       "CREATE INDEX IF NOT EXISTS custom_field_values_subject_id ON custom_field_values(subject_id);" + '\n' +
       "CREATE INDEX IF NOT EXISTS custom_field_values_field_key ON custom_field_values(field_key);",
   },
+  {
+    name: "evolve_custom_field_values_r2",
+    sql:
+      "CREATE TABLE custom_field_values__evolve__r2 (" + '\n' +
+      "  id TEXT PRIMARY KEY," + '\n' +
+      "  source_key TEXT UNIQUE," + '\n' +
+      "  subject_resource TEXT," + '\n' +
+      "  subject_id TEXT," + '\n' +
+      "  field_key TEXT," + '\n' +
+      "  value TEXT," + '\n' +
+      "  source TEXT," + '\n' +
+      "  updated_by TEXT," + '\n' +
+      "  created_at TEXT NOT NULL," + '\n' +
+      "  updated_at TEXT NOT NULL" + '\n' +
+      ") STRICT;" + '\n' +
+      "INSERT INTO custom_field_values__evolve__r2 (id, source_key, subject_resource, subject_id, field_key, value, source, updated_by, created_at, updated_at) SELECT id, source_key, subject_resource, subject_id, field_key, value, NULL, updated_by, created_at, updated_at FROM custom_field_values;" + '\n' +
+      "DROP TABLE custom_field_values;" + '\n' +
+      "ALTER TABLE custom_field_values__evolve__r2 RENAME TO custom_field_values;" + '\n' +
+      "CREATE INDEX IF NOT EXISTS custom_field_values_subject_resource ON custom_field_values(subject_resource);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS custom_field_values_subject_id ON custom_field_values(subject_id);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS custom_field_values_field_key ON custom_field_values(field_key);",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

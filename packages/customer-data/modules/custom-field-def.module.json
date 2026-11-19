@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "name": "custom-field-def",
-  "description": "One operator-defined customer property (backlog:434cc39a): a space-wide field with a key, an Italian label and a type (testo, numero, data, si-no, scelta). Definitions are space-wide: every scheda, filter and list column reads the same set. The framework never invents one: a definition is a human decision, and a value without a definition is refused.",
+  "description": "One operator-defined customer property (backlog:434cc39a, backlog:c6c56dad): a space-wide field with a key, an Italian label and a type (testo, numero, data, si-no, scelta, punteggio). Definitions are space-wide: every scheda, filter and list column reads the same set. The framework never invents one: a definition is a human decision, and a value without a definition is refused. Punteggio is a 0-100 score the AI can fill from a question.",
   "fields": [
     {
       "name": "sourceKey",
@@ -29,7 +29,8 @@
         "numero",
         "data",
         "si-no",
-        "scelta"
+        "scelta",
+        "punteggio"
       ],
       "writable": "managed"
     },

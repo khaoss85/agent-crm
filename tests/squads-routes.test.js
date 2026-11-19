@@ -33,14 +33,14 @@ async function post(base, path, body) {
   return { status: response.status, body: await response.json() };
 }
 
-test('catalogue lists the five ready-made squad templates', async () => {
+test('catalogue lists the six ready-made squad templates', async () => {
   const app = createAccordoApp({ dbPath: ':memory:' });
   try {
     await withServer(app, async (base) => {
       const response = await fetch(`${base}/api/squads/catalog`, { headers: USER_HEADERS });
       assert.equal(response.status, 200);
       const body = await response.json();
-      assert.equal(body.squads.length, 5);
+      assert.equal(body.squads.length, 6);
       assert.deepEqual(body.squads.map((entry) => entry.slug), SQUAD_TEMPLATES.map((entry) => entry.slug));
     });
   } finally {

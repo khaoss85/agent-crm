@@ -332,12 +332,18 @@ export class OpportunityService {
    * Voce 96e7b579: the pipeline card edits importo, data di chiusura and
    * referente in place. A partial patch — only the keys present are
    * touched, and at least one editable key must be present. Anything else
-   * (companyId, contactId, stage, pipeline-managed keys included) is
-   * refused rather than silently dropped, so an edit can never move the
-   * customer, the lifecycle stage or the pipeline position of an offer.
+   * (companyId, stage, pipeline-managed keys included) is refused rather
+   * than silently dropped, so an edit can never move the customer, the
+   * lifecycle stage or the pipeline position of an offer.
+   *
+   * Voce 619b477c0464 (segue P3 di agent-crm#852): contactId is editable
+   * too, in-process only — an offer filed under the company only can be
+   * tied to the person it is for, as long as that person belongs to the
+   * offer's company (same rule as create). The HTTP PATCH keeps its three
+   * fields and still refuses contactId.
    *
    * @param {string} id
-   * @param {{valueCents?: unknown, expectedCloseDate?: unknown, owner?: unknown}} patch
+   * @param {{valueCents?: unknown, expectedCloseDate?: unknown, owner?: unknown, contactId?: unknown}} patch
    * @param {{actor?: unknown}} [context]
    */
   async update(id, patch, context = {}) {

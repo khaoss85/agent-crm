@@ -2,6 +2,16 @@
 
 import { createHash } from 'node:crypto';
 import { AppError, ConflictError, ValidationError } from '../../core/index.js';
+import {
+  capForChannel,
+  countChannelSendsToday,
+  isInsideSendWindow,
+  matchSuppression,
+  nextRomeDayStartMs,
+  nextWindowStartMs,
+  normalizeSuppressionValue,
+  parsePlaybookHours,
+} from './send-policy.js';
 
 /**
  * **Sequences — BO-F3-03, the backoffice follow-up sequences (backlog:22bb154a72ea).**
@@ -16,7 +26,9 @@ import { AppError, ConflictError, ValidationError } from '../../core/index.js';
  * composition passes in). No import from any other domain package — the key
  * helpers below are restated here on purpose, like every other package does.
  *
- * Four invariants, one per acceptance criterion:
+ * Eight invariants, one per acceptance criterion (the first four are the
+ * original BO-F3-03 set, the last four are the space send rules from
+ * backlog:b6f8a6504a24 — they bind every send agents or sequences propose):
  *
  * 1. **Stop on reply.** Every sweep looks for an applied inbox row from
  *    each active enrollment's recipient recorded after the enrollment — due
@@ -36,6 +48,20 @@ import { AppError, ConflictError, ValidationError } from '../../core/index.js';
  * 4. **Metrics from records.** Counts are computed from enrollment and send
  *    rows on every read — no stored counters exist to drift after a crash
  *    or a race.
+ * 5. **Sending window.** Days and hours come from the space playbook
+ *    (`sales-playbook` `hours`). A due step outside the window waits for
+ *    the next window start: nothing is queued and no proposal forms. No
+ *    playbook row — or hours the parser does not cover — means no
+ *    constraint, so older spaces send exactly as before.
+ * 6. **Daily per-channel cap.** Past the cap a send waits for the next day;
+ *    the approval proposal says so (`Tetto giornaliero … raggiunto`). A
+ *    human approval recorded for the exact step overrides the cap.
+ * 7. **One active journey.** Enrolling a person with an active enrollment
+ *    in another sequence of the same space refuses with
+ *    `SEQUENCE_ALREADY_ENROLLED` — the person finishes the first journey.
+ * 8. **Do-not-contact.** A listed domain or contact never forms a
+ *    proposal: the step is refused row-locally with the list's reason
+ *    (`DO_NOT_CONTACT: <reason>`) and the cursor moves on.
  */
 
 /** Enrollment lifecycle. Terminal states never fire again. */
@@ -190,6 +216,83 @@ function trustedReadable(modules, name) {
     });
   }
   return service;
+}
+
+/**
+ * Optional record handle for the space send rules (backlog:b6f8a6504a24).
+ * Null when the composition does not provide the module: no rule, no
+ * refusal — older compositions send exactly as before instead of failing
+ * on a table they never created.
+ */
+function optionalReadable(modules, name) {
+  const service = modules?.get?.(name)?.service;
+  return service && typeof service.listWhere === 'function' ? service : null;
+}
+
+/**
+ * The active do-not-contact entry listing one enrollment's recipient or
+ * subject, or null. A read failure throws: the caller records it and never
+ * fires past a list it cannot see.
+ */
+async function matchSpaceSuppression(modules, enrollment) {
+  const service = optionalReadable(modules, 'sequence-suppression');
+  if (!service) return null;
+  const rows = await service.listWhere({ spaceId: enrollment.spaceId, status: 'active' });
+  return matchSuppression({ recipient: enrollment.recipient, subjectId: enrollment.subjectId, rows });
+}
+
+/**
+ * The space's send windows from its playbook `hours`, or null when the
+ * composition carries no playbook, the space compiled none, or the text
+ * carries no usable window — all three mean «no constraint». A read
+ * failure throws: the caller records it and retries the enrollment on the
+ * next sweep instead of sending outside a window it cannot read.
+ */
+async function spaceSendWindows(modules, spaceId) {
+  const service = modules?.get?.('sales-playbook')?.service ?? null;
+  if (!service) return null;
+  let row = null;
+  if (typeof service.getBySpace === 'function') {
+    row = await service.getBySpace(spaceId);
+  } else if (typeof service.listWhere === 'function') {
+    row = (await service.listWhere({ spaceId }))[0] ?? null;
+  } else {
+    return null;
+  }
+  const hours = row && typeof row.hours === 'string' ? row.hours : null;
+  return parsePlaybookHours(hours);
+}
+
+/**
+ * Whether the space already spent today's per-channel cap, and where a
+ * refused send resumes: the next Rome day's first window start (or Rome
+ * midnight when the playbook sets no window).
+ */
+async function spaceChannelCap(modules, { spaceId, channel, nowMs }) {
+  const cap = capForChannel(channel);
+  const steps = trusted(modules, 'sequence-step');
+  const sends = trusted(modules, 'sequence-send');
+  const [allSteps, allSends] = await Promise.all([
+    steps.listWhere({ spaceId }),
+    sends.listWhere({ spaceId }),
+  ]);
+  const stepsByKey = new Map();
+  for (const step of Array.isArray(allSteps) ? allSteps : []) {
+    if (step && typeof step.sequenceSourceKey === 'string' && Number.isInteger(step.stepOrder)) {
+      stepsByKey.set(`${step.sequenceSourceKey} ${step.stepOrder}`, step);
+    }
+  }
+  const used = countChannelSendsToday({ nowMs, channel, sends: allSends, stepsByKey });
+  if (used < cap) return { reached: false, resumeAt: null, used, cap };
+  const windows = await spaceSendWindows(modules, spaceId);
+  const dayStart = nextRomeDayStartMs(nowMs);
+  const resumeMs = windows === null ? dayStart : nextWindowStartMs(dayStart, windows);
+  return {
+    reached: true,
+    resumeAt: new Date(resumeMs === null ? dayStart : resumeMs).toISOString(),
+    used,
+    cap,
+  };
 }
 
 /**
@@ -447,6 +550,14 @@ export async function advanceSequences({
   };
   /** Enrollments the sweep cannot see the inbox of: never fired blind. */
   const blindEnrollments = new Set();
+  /**
+   * Send keys this sweep's due pass already handled (claimed, queued, or
+   * crash-attempted): the confirm pass behind it recovers rows left by
+   * earlier sweeps, never rows the due pass just touched — otherwise a
+   * crash between the outbox enqueue and the job-id write would recover
+   * inside the same sweep and the retry contract below would drift.
+   */
+  const dueClaimed = new Set();
   const blindKey = (enrollment) => `${enrollment.spaceId} ${enrollment.sourceKey}`;
   const noteInboxBlind = (enrollment, error) => {
     const details = error && typeof error === 'object' ? error.details : null;
@@ -706,6 +817,16 @@ export async function advanceSequences({
       current = enrollment;
     }
     if (!current || current.status !== 'active') return false;
+    // A listed domain or contact never forms a proposal, so the stop pass
+    // reads no inbox for it — a recipient the channel adapter cannot map
+    // (an email on a WhatsApp step) still reaches the due pass, which
+    // refuses with the list's reason. A suppression read failure falls
+    // through: the due pass records it and refuses to send (fail closed).
+    try {
+      if (await matchSpaceSuppression(modules, current)) return false;
+    } catch {
+      // Fall through to the inbox read below.
+    }
     let inboxRows;
     try {
       inboxRows = await loadEnrollmentInbox(current);
@@ -853,7 +974,37 @@ export async function advanceSequences({
       const step = live[0];
       const messageKey = sequenceMessageKey(current.spaceId, current.sourceKey, step.stepOrder);
 
-      // 1. Stop on reply: the first recorded reply ends the enrollment.
+      // 1a. Do-not-contact first: a listed domain or contact never forms a
+      // proposal, so the sweep refuses before reading the inbox — a
+      // recipient the channel adapter cannot map (an email on a WhatsApp
+      // step) still blocks with the list's reason instead of going blind.
+      // The cursor moves on like every other terminal refusal.
+      let suppression = null;
+      try {
+        suppression = await matchSpaceSuppression(modules, current);
+      } catch (error) {
+        noteSweepError(current, error, 'due');
+        continue;
+      }
+      if (suppression) {
+        let pre = null;
+        try {
+          pre = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
+        } catch (error) {
+          noteSweepError(current, error, 'due');
+          continue;
+        }
+        const recorded = await recordTerminalSkip({
+          seqKey, current, step, messageKey, nowIso,
+          detail: `DO_NOT_CONTACT: ${suppression.reason}`,
+          pre,
+        });
+        await moveCursorAfterSkip(current, ordered, step);
+        if (recorded) summary.skipped += 1;
+        continue;
+      }
+
+      // 1b. Stop on reply: the first recorded reply ends the enrollment.
       // Without the inbox — or without the reply window — this sweep
       // cannot know, so it fails closed and never fires. The window
       // resolution is the same connectionKey-then-channel lookup as the
@@ -894,6 +1045,51 @@ export async function advanceSequences({
         continue;
       }
 
+      // 1c. Sending window from the space playbook: outside the window the
+      // step waits for the next window start — nothing is queued and no
+      // proposal forms. No playbook (or hours the parser does not cover)
+      // means no constraint.
+      let sendWindows = null;
+      try {
+        sendWindows = await spaceSendWindows(modules, current.spaceId);
+      } catch (error) {
+        noteSweepError(current, error, 'due');
+        continue;
+      }
+      if (sendWindows !== null && !isInsideSendWindow(nowMs, sendWindows)) {
+        const start = nextWindowStartMs(nowMs, sendWindows);
+        if (start !== null) {
+          try {
+            await enrollments.applyManaged(current.id, {
+              nextDueAt: new Date(start).toISOString(), decidedAt: nowIso,
+            }, { actor: timer });
+          } catch (error) {
+            noteSweepError(current, error, 'due');
+          }
+        }
+        continue;
+      }
+
+      // 1d. Daily per-channel cap: past the cap the step waits for the next
+      // day — the approval proposal below says so. A human approval
+      // recorded for this exact step overrides the cap (tracked in
+      // `humanApproved`); every other automatic send waits.
+      let capReached = false;
+      let capResumeAt = null;
+      try {
+        const cap = await spaceChannelCap(modules, {
+          spaceId: current.spaceId, channel: step.channel, nowMs,
+        });
+        capReached = cap.reached;
+        capResumeAt = cap.resumeAt;
+      } catch (error) {
+        noteSweepError(current, error, 'due');
+        continue;
+      }
+      const capNote = capReached
+        ? ` Tetto giornaliero ${step.channel} raggiunto: l'invio parte domani.`
+        : '';
+
       // 2. Permission gate: without send-without-approval the step becomes
       // a human-decided proposal and waits — never queued. An approval the
       // human already recorded for this exact step unblocks it even while
@@ -904,9 +1100,13 @@ export async function advanceSequences({
       // the sweep fires the next enrollment instead of throwing out.
       try {
         const verdict = await gateFor(current.spaceId);
+        // A human approval recorded for this exact step overrides the daily
+        // cap below: the person saw the proposal and said send.
+        let humanApproved = false;
         if (!verdict || verdict.decision !== 'allow') {
           const pre = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
           const decided = await readStoredProposal(current.spaceId, pre[0] ?? null);
+          if (decided === 'approved') humanApproved = true;
           if (decided === 'refused') {
             const recorded = await recordTerminalSkip({
               seqKey, current, step, messageKey, nowIso,
@@ -925,7 +1125,7 @@ export async function advanceSequences({
                 permission: SEQUENCE_SEND_PERMISSION,
                 actionKind: 'sequence-step-send',
                 actionKey: messageKey,
-                summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval`,
+                summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval${capNote}`,
                 actor: timer,
               });
             } catch (error) {
@@ -963,6 +1163,7 @@ export async function advanceSequences({
                   continue;
                 }
                 if (late !== 'approved') throw error;
+                humanApproved = true;
                 queueAllowedRacing = true;
               }
             }
@@ -991,10 +1192,38 @@ export async function advanceSequences({
                   if (!isWinnerConflict(error)) throw error;
                 }
               }
+              // Past the cap the proposal waits for the next day: the step
+              // stays due tomorrow instead of tonight, and the proposal
+              // above already says why.
+              if (capReached && capResumeAt !== null) {
+                try {
+                  await enrollments.applyManaged(current.id, {
+                    nextDueAt: capResumeAt, decidedAt: nowIso,
+                  }, { actor: timer });
+                } catch (error) {
+                  noteSweepError(current, error, 'due');
+                }
+              }
               summary.waitingApproval += 1;
               continue;
             }
           }
+        }
+
+        // Past the daily cap, an automatic send waits for the next day —
+        // nothing is queued and no new row is written. A step the human
+        // already approved for this exact send still fires (see above).
+        if (capReached && !humanApproved) {
+          if (capResumeAt !== null) {
+            try {
+              await enrollments.applyManaged(current.id, {
+                nextDueAt: capResumeAt, decidedAt: nowIso,
+              }, { actor: timer });
+            } catch (error) {
+              noteSweepError(current, error, 'due');
+            }
+          }
+          continue;
         }
 
         // 3. Allowed: personalize and queue through the channels outbox. The
@@ -1062,6 +1291,7 @@ export async function advanceSequences({
           }, { actor: timer });
         }
         const claim = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
+        dueClaimed.add(`${current.spaceId} ${messageKey}`);
         if (!claim) {
           throw new AppError('Sequence send claim vanished before the outbox enqueue', {
             code: 'SEQUENCES_SEND_MISSING', status: 500,
@@ -1143,7 +1373,9 @@ export async function advanceSequences({
 
   // 4. Confirm: re-queue every queued row (the outbox replays the stored
   // job with its current state) and record what the provider answered.
-  // No provider is contacted here — the re-enqueue is a storage read.
+  // A row that already carries a job id replays stored state — a storage
+  // read that creates nothing. A row with no job id yet adopts the job the
+  // recovery enqueue returns, inside the sending window only (see below).
   const queuedRows = [];
   for (const sequence of Array.isArray(rows) ? rows : []) {
     if (!sequence || typeof sequence !== 'object') continue;
@@ -1169,6 +1401,10 @@ export async function advanceSequences({
   for (const row of queuedRows) {
     // One broken confirm row never aborts the confirm pass: its failure is
     // recorded on the summary and the sweep confirms the next row instead.
+    // Rows this sweep's due pass just handled wait for the next sweep: the
+    // due pass already enqueued (or crash-attempted) them, so recovering
+    // here would adopt a job the retry contract still expects empty.
+    if (row && typeof row.messageKey === 'string' && dueClaimed.has(`${row.spaceId} ${row.messageKey}`)) continue;
     let enrollment = null;
     try {
       const enrollmentRows = await enrollments.listWhere({ spaceId: row.spaceId, sourceKey: row.enrollmentSourceKey });
@@ -1177,6 +1413,22 @@ export async function advanceSequences({
       const stepRows = await steps.listWhere({ spaceId: row.spaceId, sequenceSourceKey: row.sequenceSourceKey });
       const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
       if (!step) continue;
+      // Recovery that can still create a job obeys the sending window: a
+      // queued claim with no outbox job yet (a crash between the claim
+      // write and the first enqueue) must not send outside the playbook
+      // window — it waits for the next sweep inside it. A claim that
+      // already carries a job id only replays stored provider state, a
+      // storage read that creates nothing, so it confirms on every sweep.
+      if (!row.jobId) {
+        let sendWindows = null;
+        try {
+          sendWindows = await spaceSendWindows(modules, row.spaceId);
+        } catch (error) {
+          noteSweepError(enrollment, error, 'confirm');
+          continue;
+        }
+        if (sendWindows !== null && !isInsideSendWindow(nowMs, sendWindows)) continue;
+      }
       let requeue = null;
       const confirmVariables = await resolveSendVariables(step, enrollment, row.variables ?? null);
       try {
@@ -1212,6 +1464,16 @@ export async function advanceSequences({
       }
       const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
       const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
+      if (!row.jobId && jobId) {
+        // Recovery adopted its job: a claim written before the first
+        // enqueue learns the outbox job now, so the next sweep replays that
+        // job instead of enqueueing again. The status is untouched — only
+        // the branches below settle the row.
+        const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
+        if (latest[0] && latest[0].status === 'queued') {
+          await sends.applyManaged(latest[0].id, { jobId, decidedAt: nowIso }, { actor: timer });
+        }
+      }
       if (state === 'succeeded') {
         const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
         if (latest[0] && latest[0].status === 'queued') {
@@ -1249,6 +1511,29 @@ export async function advanceSequences({
 function fireMs(current, nowMs) {
   const due = Date.parse(current?.nextDueAt ?? '');
   return Number.isFinite(due) ? due : nowMs;
+}
+
+/**
+ * One in-process enrollment lane per person (backlog:b6f8a6504a24, review
+ * giro 1 P2). The one-active-journey check below reads before it writes,
+ * so two enrollments racing in this process would both pass and both
+ * create. Chaining them per subject makes the second see the first one's
+ * committed row and refuse with SEQUENCE_ALREADY_ENROLLED. This covers one
+ * process: two runtimes sharing one database still need a storage-level
+ * serialized claim (follow-up).
+ */
+const enrollmentLanes = new Map();
+/** @param {string} key @param {() => Promise<any>} run */
+function serializeEnrollment(key, run) {
+  const prev = enrollmentLanes.get(key);
+  const gate = prev ? prev.catch(() => {}) : Promise.resolve();
+  const task = gate.then(run);
+  const settled = task.then(
+    () => { if (enrollmentLanes.get(key) === settled) enrollmentLanes.delete(key); },
+    () => { if (enrollmentLanes.get(key) === settled) enrollmentLanes.delete(key); },
+  );
+  enrollmentLanes.set(key, settled);
+  return task;
 }
 
 /**
@@ -1297,37 +1582,157 @@ export async function enrollSequencePerson({ modules, input, at }) {
   }
   const enrollments = trusted(modules, 'sequence-enrollment');
   const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
-  const existing = await enrollments.listWhere({ spaceId, sourceKey: key });
-  if (existing[0]) return { enrollment: existing[0], replayed: true };
+  // The journey check and the create below run in one per-person lane, so
+  // a concurrent enrollment in this process always sees the committed row.
+  return serializeEnrollment(`${spaceId} ${subjectResource} ${subjectId}`, async () => {
+    // One active journey at a time: a person with an active enrollment in
+    // another sequence of the same space never enters a second one — they
+    // finish the first journey. Re-enrolling in the SAME sequence replays.
+    const actives = await enrollments.listWhere({
+      spaceId, subjectResource, subjectId, status: 'active',
+    });
+    const elsewhere = (Array.isArray(actives) ? actives : [])
+      .filter((row) => row && row.sequenceSourceKey !== sequenceSourceKey);
+    if (elsewhere.length > 0) {
+      throw new AppError('This person is already in an active journey in this space', {
+        code: 'SEQUENCE_ALREADY_ENROLLED', status: 409,
+        details: { sequenceSourceKey: elsewhere[0].sequenceSourceKey },
+      });
+    }
+    const existing = await enrollments.listWhere({ spaceId, sourceKey: key });
+    if (existing[0]) return { enrollment: existing[0], replayed: true };
+    const row = {
+      sourceKey: key,
+      sequenceSourceKey,
+      spaceId,
+      subjectResource,
+      subjectId,
+      subjectLabel,
+      recipient,
+      connectionKey,
+      vars: JSON.stringify(vars),
+      status: 'active',
+      currentStep: 0,
+      nextDueAt: atIso,
+      enrolledAt: atIso,
+      decidedAt: atIso,
+      actorType: actor.type,
+      actorId: actor.id,
+      sourcePackage: SEQUENCES_DOMAIN_REF,
+      sourceAction: 'enroll-sequence-person',
+    };
+    try {
+      const enrollment = await enrollments.createManaged(row, { actor });
+      return { enrollment, replayed: false };
+    } catch (error) {
+      if (!isWinnerConflict(error)) throw error;
+      const winner = await enrollments.listWhere({ spaceId, sourceKey: key });
+      if (!winner[0]) throw error;
+      return { enrollment: winner[0], replayed: true };
+    }
+  });
+}
+
+/** The longest do-not-contact reason a human reads in one line. */
+export const SUPPRESSION_REASON_MAX = 280;
+
+const SUPPRESSION_KINDS = Object.freeze(['contact', 'domain']);
+
+/** @param {unknown} value */
+function checkSuppressionKind(value) {
+  if (typeof value !== 'string' || !SUPPRESSION_KINDS.includes(value.trim().toLowerCase())) {
+    throw new ValidationError('suppression kind must be contact or domain', { field: 'kind' });
+  }
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Validate and normalize one do-not-contact value. Domains travel
+ * lowercased without a leading `@` and need a dot, so `Example` never
+ * blocks the whole space by accident; contacts compare through the same
+ * normalization the sweep matches with.
+ * @param {string} kind @param {unknown} value
+ */
+function checkSuppressionValue(kind, value) {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 256 || CONTROL_RE.test(value)) {
+    throw new ValidationError('suppression value must be bounded single-line text', { field: 'value' });
+  }
+  const text = value.trim();
+  if (kind !== 'domain') return text;
+  const bare = (text.startsWith('@') ? text.slice(1) : text).toLowerCase();
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(bare)) {
+    throw new ValidationError('suppression domain must look like example.it', { field: 'value' });
+  }
+  return bare;
+}
+
+/**
+ * List one domain or contact the space never sends to. Idempotent by the
+ * deterministic entry key: a retry replays the stored row, and re-listing
+ * an unlisted entry reactivates it with the new reason.
+ */
+export async function addSuppression({ modules, input, at }) {
+  const record = input && typeof input === 'object' ? input : {};
+  const actor = requireSequenceActor(record.actor, 'Listing a do-not-contact entry');
+  const spaceId = checkSpaceId(record.spaceId);
+  const kind = checkSuppressionKind(record.kind);
+  const value = checkSuppressionValue(kind, record.value);
+  const reason = boundedLine(record.reason ?? '', 'reason', SUPPRESSION_REASON_MAX);
+  const key = sequenceKey('seq-suppress', spaceId, kind, normalizeSuppressionValue(value));
+  const suppressions = trusted(modules, 'sequence-suppression');
+  const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
   const row = {
-    sourceKey: key,
-    sequenceSourceKey,
-    spaceId,
-    subjectResource,
-    subjectId,
-    subjectLabel,
-    recipient,
-    connectionKey,
-    vars: JSON.stringify(vars),
-    status: 'active',
-    currentStep: 0,
-    nextDueAt: atIso,
-    enrolledAt: atIso,
+    sourceKey: key, spaceId, kind, value, reason, status: 'active',
     decidedAt: atIso,
-    actorType: actor.type,
-    actorId: actor.id,
-    sourcePackage: SEQUENCES_DOMAIN_REF,
-    sourceAction: 'enroll-sequence-person',
+    actorType: actor.type, actorId: actor.id,
   };
+  const existing = await suppressions.listWhere({ spaceId, sourceKey: key });
+  if (existing[0]) {
+    if (existing[0].status === 'active' && existing[0].reason === reason && existing[0].value === value) {
+      return { suppression: existing[0], replayed: true };
+    }
+    await suppressions.applyManaged(existing[0].id, {
+      value, reason, status: 'active', decidedAt: atIso, actorType: actor.type, actorId: actor.id,
+    }, { actor });
+    const reread = await suppressions.listWhere({ spaceId, sourceKey: key });
+    return { suppression: reread[0] ?? { ...existing[0], value, reason, status: 'active' }, replayed: false };
+  }
   try {
-    const enrollment = await enrollments.createManaged(row, { actor });
-    return { enrollment, replayed: false };
+    const suppression = await suppressions.createManaged(row, { actor });
+    return { suppression, replayed: false };
   } catch (error) {
     if (!isWinnerConflict(error)) throw error;
-    const winner = await enrollments.listWhere({ spaceId, sourceKey: key });
+    const winner = await suppressions.listWhere({ spaceId, sourceKey: key });
     if (!winner[0]) throw error;
-    return { enrollment: winner[0], replayed: true };
+    return { suppression: winner[0], replayed: true };
   }
+}
+
+/**
+ * Unlist one do-not-contact entry. The row stays (status `removed`) so the
+ * audit keeps who listed and who unlisted; the sweep only reads `active`.
+ */
+export async function removeSuppression({ modules, input, at }) {
+  const record = input && typeof input === 'object' ? input : {};
+  const actor = requireSequenceActor(record.actor, 'Unlisting a do-not-contact entry');
+  const spaceId = checkSpaceId(record.spaceId);
+  const kind = checkSuppressionKind(record.kind);
+  const value = checkSuppressionValue(kind, record.value);
+  const key = sequenceKey('seq-suppress', spaceId, kind, normalizeSuppressionValue(value));
+  const suppressions = trusted(modules, 'sequence-suppression');
+  const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
+  const existing = await suppressions.listWhere({ spaceId, sourceKey: key });
+  if (!existing[0]) {
+    throw new AppError('Unknown do-not-contact entry in this space', {
+      code: 'SEQUENCE_SUPPRESSION_UNKNOWN', status: 404,
+    });
+  }
+  if (existing[0].status === 'removed') return { suppression: existing[0], replayed: true };
+  await suppressions.applyManaged(existing[0].id, {
+    status: 'removed', decidedAt: atIso, actorType: actor.type, actorId: actor.id,
+  }, { actor });
+  const reread = await suppressions.listWhere({ spaceId, sourceKey: key });
+  return { suppression: reread[0] ?? { ...existing[0], status: 'removed' }, replayed: false };
 }
 
 /** Move one sequence row through its lifecycle, re-reading the state first. */

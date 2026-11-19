@@ -26,20 +26,88 @@
 // It imports nothing, so any screen may import it without a cycle.
 
 /**
+ * The one tile mark per channel (backlog:6d0df351): the same mark on
+ * Connettori, Stato sync and Personalizzazione — Telegram is `TG`
+ * everywhere, SMS is `S`. Channels outside this table (a stored spelling
+ * no screen knows) fall back to their first two letters, never blank.
+ */
+export const CHANNEL_MARKS = Object.freeze({
+  whatsapp: 'WA',
+  instagram: 'IG',
+  facebook: 'FB',
+  tiktok: 'TT',
+  telegram: 'TG',
+  sms: 'S',
+  email: '@',
+  voice: 'TEL',
+  'site-form': 'WEB',
+  calendar: 'CAL',
+  stripe: 'S',
+});
+
+/**
+ * The tile mark of one channel, from the one table above.
+ * @param {unknown} channel
+ */
+export function channelMark(channel) {
+  if (typeof channel === 'string' && Object.hasOwn(CHANNEL_MARKS, channel)) {
+    return CHANNEL_MARKS[channel];
+  }
+  return String(channel ?? '·').slice(0, 2).toUpperCase() || '·';
+}
+
+/**
+ * The one fixed direction line per channel (backlog:6d0df351): the same
+ * line on Connettori, Stato sync and Personalizzazione — Telegram reads
+ * `↔ bidirezionale` everywhere. `sms` has no dedicated adapter in
+ * `packages/channels`, so its direction is undeclared and reads `—`
+ * instead of a guess (the connector detail says so too).
+ */
+export const CHANNEL_DIRECTION_LINES = Object.freeze({
+  whatsapp: '↔ bidirezionale',
+  instagram: '↔ bidirezionale',
+  facebook: '↔ bidirezionale',
+  telegram: '↔ bidirezionale',
+  email: '↔ bidirezionale',
+  voice: '↔ bidirezionale',
+  calendar: '↔ bidirezionale',
+  tiktok: '← in entrata',
+  'site-form': '← in entrata',
+  stripe: '↔ pagamenti e link',
+  sms: '—',
+});
+
+/**
+ * The fixed direction line of one channel, from the one table above.
+ * @param {unknown} channel
+ */
+export function channelDirectionLine(channel) {
+  if (typeof channel === 'string' && Object.hasOwn(CHANNEL_DIRECTION_LINES, channel)) {
+    return CHANNEL_DIRECTION_LINES[channel];
+  }
+  return '—';
+}
+
+/**
  * The prototype's nine fixed channels (BO-F6-16, fetta 2), in Stato sync
- * order: id, the table name, the tile mark and the fixed direction line.
+ * order: id, the table name, the tile mark and the fixed direction line
+ * (both from the single tables above, never literals here).
  * `sms` and `telegram` are connectable in the catalog but outside the nine.
  */
+const fixedChannel = (id, name) => Object.freeze({
+  id, name, mark: channelMark(id), direction: channelDirectionLine(id),
+});
+
 export const NINE_CHANNELS = Object.freeze([
-  Object.freeze({ id: 'whatsapp', name: 'WhatsApp', mark: 'WA', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'instagram', name: 'Instagram', mark: 'IG', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'facebook', name: 'Facebook', mark: 'FB', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'tiktok', name: 'TikTok', mark: 'TT', direction: '← in entrata' }),
-  Object.freeze({ id: 'email', name: 'Email', mark: '@', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'voice', name: 'Telefono', mark: 'TEL', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'site-form', name: 'Form sito', mark: 'WEB', direction: '← in entrata' }),
-  Object.freeze({ id: 'calendar', name: 'Google Calendar', mark: 'CAL', direction: '↔ bidirezionale' }),
-  Object.freeze({ id: 'stripe', name: 'Stripe', mark: 'S', direction: '↔ pagamenti e link' }),
+  fixedChannel('whatsapp', 'WhatsApp'),
+  fixedChannel('instagram', 'Instagram'),
+  fixedChannel('facebook', 'Facebook'),
+  fixedChannel('tiktok', 'TikTok'),
+  fixedChannel('email', 'Email'),
+  fixedChannel('voice', 'Telefono'),
+  fixedChannel('site-form', 'Form sito'),
+  fixedChannel('calendar', 'Google Calendar'),
+  fixedChannel('stripe', 'Stripe'),
 ]);
 
 /** The nine ids, in table order. */
@@ -151,9 +219,10 @@ export function mergeProfileConnections(rows, profile = null) {
       channel,
       account: typeof item.account === 'string' && item.account !== '' ? item.account : null,
       status: 'active',
-      // The profile says this link is connected: Stato sync paints it
-      // `Attivo`, never `In attesa` beside a count that calls it linked
-      // (review #680 P2-1). No grant, no import, no tally is implied.
+      // The profile says this link is connected: it counts as linked,
+      // but with no event yet Stato sync paints it `in attesa del primo
+      // evento`, never `Attivo` (backlog:9790f4df7a93: zero events never
+      // read synced). No grant, no import, no tally is implied.
       health: 'ok',
       source: 'profile',
     }));
@@ -350,4 +419,66 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
       ?? (profileConnects(profile, id) ? '#/profilo' : null);
   if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
+}
+
+/**
+ * The one synced rule both views share (backlog:9790f4df7a93): a channel
+ * counts as synchronized only with an active binding behind it AND a first
+ * event already received. Recency alone lies — a quiet poll, a failed send
+ * or a reset counter stamps a fresh update instant with zero events (Mac
+ * 18/11: «0 eventi ricevuti · Attivo» beside «aggiornato 1 min fa»), so
+ * only a counted event syncs: `lastAt` stays accepted in the input so
+ * callers keep passing what they have, but it is intentionally not
+ * consulted.
+ * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
+ */
+export function channelSynced(input = {}) {
+  const { linked = false, received = 0 } =
+    input !== null && typeof input === 'object' ? input : {};
+  return linked === true && Number.isSafeInteger(received) && received > 0;
+}
+
+/**
+ * Events really received on one counted channel, from the activity payload
+ * (GET /api/connectors/activity): the sum of the `inbox.received` tallies,
+ * like the Stato sync table aggregates them. Unknown payloads read null
+ * (unknown), never zero: zero must stay a measured zero.
+ * @param {any} activity the activity payload, possibly null
+ * @param {string} channel the counted channel id
+ * @returns {number | null}
+ */
+export function activityReceived(activity, channel) {
+  if (activity === null || typeof activity !== 'object') return null;
+  const entries = Array.isArray(activity.connections) ? activity.connections : null;
+  if (entries === null) return null;
+  let total = 0;
+  let seen = false;
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object') continue;
+    if (countedChannel(entry.channel) !== channel) continue;
+    seen = true;
+    const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
+    if (inbox !== null && Number.isSafeInteger(inbox.received) && inbox.received > 0) total += inbox.received;
+  }
+  return seen ? total : 0;
+}
+
+/**
+ * The final Identità collegate sync line for one channel
+ * (backlog:9790f4df7a93): «↔ sincronizzato» only for a linked channel with
+ * two-way traffic AND a first event already received (the shared
+ * `channelSynced` rule). Zero or unknown events never read sincronizzato —
+ * they read the observed traffic, with «· canale non collegato» appended
+ * only when the profile read proves the channel unlinked.
+ * @param {{ linked?: unknown, both?: unknown, traffic?: unknown, received?: unknown, profileRead?: unknown }} [input]
+ */
+export function identitySyncText(input = {}) {
+  const shape = input !== null && typeof input === 'object' ? input : {};
+  const { linked = false, both = false, traffic = '', received = null, profileRead = false } = shape;
+  if (linked === true && both === true && channelSynced({ linked: true, received })) {
+    return '↔ sincronizzato';
+  }
+  const line = typeof traffic === 'string' && traffic !== '' ? traffic : '—';
+  if (linked !== true && profileRead === true) return `${line} · canale non collegato`;
+  return line;
 }

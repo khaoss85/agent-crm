@@ -39,6 +39,8 @@ import { createEnrichmentOptOutModule } from '../enrichment-opt-out/src/index.js
 import * as enrichmentOptOutMigrationSource from '../enrichment-opt-out/src/migration.js';
 import { createExternalIdentityModule } from '../external-identity/src/index.js';
 import * as externalIdentityMigrationSource from '../external-identity/src/migration.js';
+import { createSalesPlaybookModule } from '../sales-playbook/src/index.js';
+import * as salesPlaybookMigrationSource from '../sales-playbook/src/migration.js';
 import { createSequenceModule } from '../sequence/src/index.js';
 import * as sequenceMigrationSource from '../sequence/src/migration.js';
 import { createSequenceEnrollmentModule } from '../sequence-enrollment/src/index.js';
@@ -105,6 +107,7 @@ export const generatedModules = [
   { name: 'enriched-field', createModule: createEnrichedFieldModule, migrations: migrationsOf(enrichedFieldMigrationSource, 'enrichedField', 'enriched-field') },
   { name: 'enrichment-opt-out', createModule: createEnrichmentOptOutModule, migrations: migrationsOf(enrichmentOptOutMigrationSource, 'enrichmentOptOut', 'enrichment-opt-out') },
   { name: 'external-identity', createModule: createExternalIdentityModule, migrations: migrationsOf(externalIdentityMigrationSource, 'externalIdentity', 'external-identity') },
+  { name: 'sales-playbook', createModule: createSalesPlaybookModule, migrations: migrationsOf(salesPlaybookMigrationSource, 'salesPlaybook', 'sales-playbook') },
   { name: 'sequence', createModule: createSequenceModule, migrations: migrationsOf(sequenceMigrationSource, 'sequence', 'sequence') },
   { name: 'sequence-enrollment', createModule: createSequenceEnrollmentModule, migrations: migrationsOf(sequenceEnrollmentMigrationSource, 'sequenceEnrollment', 'sequence-enrollment') },
   { name: 'sequence-send', createModule: createSequenceSendModule, migrations: migrationsOf(sequenceSendMigrationSource, 'sequenceSend', 'sequence-send') },

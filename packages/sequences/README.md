@@ -18,6 +18,11 @@ at the first recorded reply (backlog:22bb154a72ea).
 - The permission verdict comes from `space-permission-gate@1`
   (`send-without-approval`, off by default): without it a due step becomes
   a human-decided approval proposal (the permission notice) and waits.
+- The send rules read the space's own rows and nothing else: the
+  `sales-playbook` `hours` for the sending window, the `sequence-step` and
+  `sequence-send` rows for the daily per-channel cap, and the
+  `sequence-suppression` rows for do-not-contact. A missing module means
+  no rule, never a refusal — old compositions keep sending as before.
 
 ## Composition
 
@@ -35,7 +40,7 @@ createSequencesPackage({
 `requires: [{ package: 'space-permissions', capability: 'space-permission-gate', version: 1 }]`
 keeps a composition without the gate fail-closed at startup.
 
-## The four guarantees
+## The eight guarantees
 
 1. **Stop on reply.** Before a due step fires, the sweep looks for an
    applied inbox row from the enrolled recipient recorded after the
@@ -57,6 +62,24 @@ keeps a composition without the gate fail-closed at startup.
    (`active`, `paused`, `stopped-replied`, `completed`) and fires by step
    (`queued`, `waiting-approval`, `sent`, `dead-letter`, `skipped`). No
    stored counters exist to drift after a crash or a race.
+5. **Sending window.** Days and hours come from the space playbook
+   (`sales-playbook` `hours`, e.g. `Lun-Ven 6:30-22:00`). A due step
+   outside the window waits for the next window start: nothing is queued
+   and no proposal forms. No playbook row — or hours the parser does not
+   cover — means no constraint, so older spaces send as before.
+6. **Daily per-channel cap.** Past the cap (Kombo-observed defaults: 40
+   messages a day, 20 for WhatsApp) a send waits for the next day; the
+   approval proposal says so (`Tetto giornaliero … raggiunto`). A human
+   approval recorded for the exact step overrides the cap. Per-space
+   overrides are a follow-up, not faked here.
+7. **One active journey.** Enrolling a person with an active enrollment in
+   another sequence of the same space refuses with
+   `SEQUENCE_ALREADY_ENROLLED`. Re-enrolling in the same sequence replays.
+8. **Do-not-contact.** A listed domain or contact (`sequence-suppression`,
+   `add-suppression`/`remove-suppression`; removal keeps the row as
+   `removed` for the audit) never forms a proposal: the step is refused
+   row-locally with the list's reason (`DO_NOT_CONTACT: <reason>`) before
+   any inbox read, and the cursor moves on.
 
 ## Personalization
 

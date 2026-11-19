@@ -369,8 +369,24 @@ export function leadNamesForEmail(email) {
   }
   const at = text.lastIndexOf('@');
   const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
-  const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
+  // A reply token names the mailbox, never a surname (backlog:088b639d96a2:
+  // `apple.reply@…` was stored as «Apple Reply»): dropped from
+  // address-derived names, but only when another token remains (review
+  // rev-agent-crm-955-d7262d39). A reply-only local part (`reply@…`) keeps
+  // its token and reads `Reply`, as before this PR. A display name the
+  // sender typed keeps its words (readableName only drops such a word past
+  // a kept surname).
+  const rawTokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean);
+  const nonReply = rawTokens.filter((token) => !/^(?:reply|replies)$/i.test(token));
+  const tokens = (nonReply.length > 0 ? nonReply : rawTokens)
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
+  // No fallback to the domain label here (backlog:088b639d96a2): an empty
+  // local part (`+tag@…`, `---@…`) names nobody and refuses, with no writes
+  // (rev-agent-crm-606, arbitration 06/11). A technical mailbox already took
+  // the domain-label path above.
+  if (tokens.length === 0) {
+    throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
+  }
   const firstName = tokens[0] ?? local.slice(0, 64);
   if (firstName === '' || !/[\p{L}\p{N}]/u.test(firstName)) {
     throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
@@ -391,7 +407,19 @@ export function leadNamesForEmail(email) {
  * @param {{firstName?: string|null, lastName?: string|null, email: unknown}} sender
  */
 export function contactNamesFor(sender) {
-  const fallback = leadNamesForEmail(sender.email);
+  // The email fallback is lazy (review rev-agent-crm-955-d7262d39): it is
+  // read only when the typed names need it, so a valid display name never
+  // throws because of the address fallback.
+  /** @type {{ firstName: string, lastName: string } | undefined} */
+  let cachedFallback;
+  let hasFallback = false;
+  const fallback = () => {
+    if (!hasFallback) {
+      cachedFallback = leadNamesForEmail(sender.email);
+      hasFallback = true;
+    }
+    return cachedFallback;
+  };
   // The pieces a name repeats from its own address are dropped field by
   // field (production 10/11, seguito P3 di #743): `Amazon.it It` as first
   // name reads `Amazon.it`, and a last name keeps only what the first name
@@ -407,10 +435,19 @@ export function contactNamesFor(sender) {
     const rest = joined.split(/\s+/).filter((word) => word !== '').slice(said).join(' ');
     last = rest !== '' ? rest : null;
   }
-  if (first === null) return { firstName: fallback.firstName, lastName: last ?? fallback.lastName };
+  if (first === null) {
+    const fb = fallback();
+    return { firstName: fb.firstName, lastName: last ?? fb.lastName };
+  }
   if (last !== null) return { firstName: first, lastName: last };
-  const agrees = first.toLowerCase() === fallback.firstName.toLowerCase();
-  return { firstName: first, lastName: agrees ? fallback.lastName : '—' };
+  let fb = null;
+  try {
+    fb = fallback();
+  } catch {
+    return { firstName: first, lastName: '—' };
+  }
+  const agrees = first.toLowerCase() === fb.firstName.toLowerCase();
+  return { firstName: first, lastName: agrees ? fb.lastName : '—' };
 }
 
 /**

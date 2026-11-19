@@ -24,7 +24,7 @@ export class CustomFieldValueService {
     this.manifest = Object.freeze({
       name: "custom-field-value",
       table: "custom_field_values",
-      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"fieldKey","column":"field_key","type":"string"},{"name":"value","column":"value","type":"string"},{"name":"updatedBy","column":"updated_by","type":"string"}]),
+      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"fieldKey","column":"field_key","type":"string"},{"name":"value","column":"value","type":"string"},{"name":"source","column":"source","type":"string"},{"name":"updatedBy","column":"updated_by","type":"string"}]),
     });
   }
 
@@ -71,6 +71,7 @@ export class CustomFieldValueService {
       subjectId: null,
       fieldKey: null,
       value: null,
+      source: null,
       updatedBy: null,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -90,6 +91,9 @@ export class CustomFieldValueService {
     if (Object.hasOwn(patch, 'value')) {
       customFieldValue.value = patch.value === null ? null : requiredString(patch.value, 'value');
     }
+    if (Object.hasOwn(patch, 'source')) {
+      customFieldValue.source = patch.source === null ? null : requiredString(patch.source, 'source');
+    }
     if (Object.hasOwn(patch, 'updatedBy')) {
       customFieldValue.updatedBy = patch.updatedBy === null ? null : requiredString(patch.updatedBy, 'updatedBy');
     }
@@ -103,6 +107,7 @@ export class CustomFieldValueService {
           { column: 'subject_id', value: customFieldValue.subjectId },
           { column: 'field_key', value: customFieldValue.fieldKey },
           { column: 'value', value: customFieldValue.value },
+          { column: 'source', value: customFieldValue.source },
           { column: 'updated_by', value: customFieldValue.updatedBy },
           { column: 'created_at', value: customFieldValue.createdAt },
           { column: 'updated_at', value: customFieldValue.updatedAt }
@@ -171,7 +176,7 @@ export class CustomFieldValueService {
 
   /** @param {Record<string, unknown>} filters */
   #where(filters) {
-    const columns = {"id":"id","sourceKey":"source_key","subjectResource":"subject_resource","subjectId":"subject_id","fieldKey":"field_key","value":"value","updatedBy":"updated_by"};
+    const columns = {"id":"id","sourceKey":"source_key","subjectResource":"subject_resource","subjectId":"subject_id","fieldKey":"field_key","value":"value","source":"source","updatedBy":"updated_by"};
     /** @type {string[]} */
     const predicates = [];
     for (const [field, value] of Object.entries(filters ?? {})) {
@@ -225,6 +230,11 @@ export class CustomFieldValueService {
         assignments.push({ column: 'value', value: value });
         changes.value = value;
       }
+      if (Object.hasOwn(patch, 'source')) {
+        const value = patch.source === null ? null : requiredString(patch.source, 'source');
+        assignments.push({ column: 'source', value: value });
+        changes.source = value;
+      }
       if (Object.hasOwn(patch, 'updatedBy')) {
         const value = patch.updatedBy === null ? null : requiredString(patch.updatedBy, 'updatedBy');
         assignments.push({ column: 'updated_by', value: value });
@@ -263,6 +273,7 @@ function mapCustomFieldValueRow(row) {
     subjectId: row.subject_id,
     fieldKey: row.field_key,
     value: row.value,
+    source: row.source ?? null,
     updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

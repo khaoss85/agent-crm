@@ -13,7 +13,7 @@
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
-import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -32,6 +32,12 @@ function auditActionLabel(action) {
   if (action === 'opportunity.created') return 'Creata';
   if (action === 'opportunity.updated') return 'Offerta aggiornata';
   if (action === 'opportunity.stage_changed') return 'Cambio di stato';
+  // backlog:bf1bc20a: one row per link creation — a mint, never a send
+  // (review Muse #905 P1 still holds: no «Offerta inviata» here).
+  if (action === 'opportunity.quote_link_shared') return 'Link creato';
+  if (action === 'opportunity.quote_link_regenerated') return 'Nuovo link creato';
+  if (action === 'quote.quote_link_shared') return 'Link creato';
+  if (action === 'quote.quote_link_regenerated') return 'Nuovo link creato';
   return 'Variazione registrata';
 }
 
@@ -48,12 +54,15 @@ function historyLine(entry, schema, record, people = []) {
   // backlog:a060a4aa65b6: the day and the hour, like «Storia stati».
   const when = italianDateTime(entry?.createdAt) ?? '—';
   const who = actorLabel(entry, record, people);
+  // backlog:bfc070243427: an actor the reads cannot name paints no «da —»
+  // tail — the fact stays, the empty author does not.
+  const by = who === '—' ? '' : ` · da ${who}`;
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
   if (move !== null && words !== null) {
-    return { when, what: `Cambio di stato · da ${upperFirst(words.from)} a ${upperFirst(words.to)} · da ${who}` };
+    return { when, what: `Cambio di stato · da ${upperFirst(words.from)} a ${upperFirst(words.to)}${by}` };
   }
-  return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
+  return { when, what: `${auditActionLabel(entry?.action)}${by}` };
 }
 
 /** Italian label of a quote status; unknown states stay an em dash. */
@@ -335,19 +344,21 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
     // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
-    // The skeleton mirrors the real paint: once the offer is read and its
-    // close date is known to be missing, the row is skipped instead of a
-    // grey bar that would vanish on paint. With no record yet (first paint)
-    // the date is still unknown, so the row keeps its bar.
+    // The skeleton keeps the final's grid: a row the final skips is skipped
+    // here with the same predicates on the data known so far. The trail
+    // never rides the skeleton, and an empty trail names nobody, so its row
+    // is never held; an empty team resolves exactly like an unknown name.
     const known = record === null ? {} : {
       'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    const labels = ['Referente', 'Stato'];
-    if (record === null || close !== null) labels.push('Chiusura prevista');
-    labels.push('Creata da', 'Creata il', 'Ultima modifica');
-    for (const label of labels) {
+    const skeletonLabels = [];
+    if (record === null || personLabel(record.owner, []) !== null) skeletonLabels.push('Referente');
+    skeletonLabels.push('Stato');
+    if (record === null || close !== null) skeletonLabels.push('Chiusura prevista');
+    skeletonLabels.push('Creata il', 'Ultima modifica');
+    for (const label of skeletonLabels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
@@ -355,6 +366,12 @@ export function createOfferDetail(deps) {
       facts.appendChild(cell);
     }
     sheet.appendChild(facts);
+    // backlog:bfc070243427 (seguito): the skeleton reserves the actions row
+    // too, so «Modifica» and «Cambia stato» do not push the Preventivo block
+    // down when they paint with the final.
+    const actionsHold = el('div', 'bo-offer-actions');
+    actionsHold.appendChild(uiSkeleton(doc, { width: '230px' }));
+    sheet.appendChild(actionsHold);
     page.appendChild(sheet);
     for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
       const card = el('div', cls);
@@ -397,17 +414,16 @@ export function createOfferDetail(deps) {
   }
 
   /**
-   * The quotes of an offer and, as soon as they land, every quote's lines
-   * and versions (backlog:94eabbd4762f): each card is read while the rest
-   * of the page still reads, and fills its own place when ready — never
-   * holding the page (review Muse #871).
-   * @param {string} id @param {number} token
+   * The quotes of an offer (backlog:94eabbd4762f): the list is read while
+   * the rest of the page still reads; every quote's lines and versions
+   * fill their own place when ready — never holding the page
+   * (review Muse #871). The cards are painted after the schema lands, so
+   * the card already opened by the head («Apri il preventivo» on the
+   * newest quote, backlog:ea616e16ebac) paints no second link.
+   * @param {string} id
    */
-  function readQuotes(id, token) {
-    const read = fetchLinked('quote', 'opportunityId', id).then((quotes) => ({
-      quotes,
-      cards: quotes.rows.map((quote) => paintQuote(quote, token)),
-    }));
+  function readQuotes(id) {
+    const read = fetchLinked('quote', 'opportunityId', id);
     read.catch(() => {});
     return read;
   }
@@ -476,7 +492,7 @@ export function createOfferDetail(deps) {
       offerRead.catch(() => {});
       const schemaRead = client.request('/api/schema');
       schemaRead.catch(() => {});
-      const quotesFirst = readQuotes(offerId, token);
+      const quotesFirst = readQuotes(offerId);
       const auditFirst = readAudit(offerId);
       // The team names the referente and the authors by their profile
       // name (backlog:ddf7f416ad22); without it the deal still renders.
@@ -512,12 +528,22 @@ export function createOfferDetail(deps) {
       // list, the history and the team; the price books and each quote's
       // lines and versions fill their own place afterwards.
       const [quotesAnswer, audit, team] = await Promise.all([
-        sameId ? quotesFirst : readQuotes(String(record.id), token),
+        sameId ? quotesFirst : readQuotes(String(record.id)),
         sameId ? auditFirst : readAudit(String(record.id)),
         teamRead,
       ]);
-      quotes = quotesAnswer.quotes;
-      quoteCards = quotesAnswer.cards;
+      quotes = quotesAnswer;
+      // backlog:ea616e16ebac: the head opens the newest quote with the
+      // main action («Apri il preventivo», painted with the page — never
+      // waiting for the price books, which only gate «Crea preventivo»),
+      // so that card paints no second link for the same page — one
+      // visible action per quote. Without the commercial block the head
+      // paints no action, and every card keeps its own link.
+      quoteCards = quotes.rows.map((quote) => paintQuote(quote, token, {
+        hideOpen: Boolean(commercialBlock(schema))
+          && quote?.id === latestQuote(quotes.rows)?.id,
+        offerId,
+      }));
       auditItems = audit.items;
       auditUnreadable = audit.unreadable;
       auditTruncated = auditItems.length >= AUDIT_LIMIT;
@@ -583,13 +609,21 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     // backlog:bfc070243427: an unknown close date paints no row — never an
     // empty «Chiusura prevista —» field.
-    const factRows = [
-      ['Referente', personLabel(record.owner, people) ?? '—'],
-      ['Stato', stageLabel(schema, record)],
-    ];
+    // backlog:bfc070243427: like «Creata da» below, an owner the reads
+    // cannot name paints no row — never an empty «Referente —» field.
+    // personLabel returns null (never a dash) for an unknown owner.
+    const referente = personLabel(record.owner, people);
+    const factRows = [];
+    if (referente !== null && referente !== '') factRows.push(['Referente', referente]);
+    factRows.push(['Stato', stageLabel(schema, record)]);
     if (close !== null) factRows.push(['Chiusura prevista', close]);
+    // backlog:bfc070243427: an author the reads cannot name paints no row —
+    // never an empty «Creata da —» field, named or not. Naming an
+    // existing-but-unresolved author stays with backlog:a2ea75f705fd and the
+    // person-identifier family (backlog:91f4e2f0d650); once they name them,
+    // the row paints.
+    if (creator !== null && creator !== '—') factRows.push(['Creata da', creator]);
     factRows.push(
-      ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     );
@@ -617,6 +651,14 @@ export function createOfferDetail(deps) {
     const quotesHead = el('div', 'offer-quotes-head');
     quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     quotesPanel.appendChild(quotesHead);
+    // Review Muse #992 (P2): the newest quote stays reachable while the
+    // price books are still reading — its head action paints with the
+    // page, and the books fill only «Crea preventivo» afterwards.
+    const newestFirst = latestQuote(quotes.rows);
+    if (Boolean(commercialBlock(schema)) && newestFirst !== null) {
+      quotesHead.appendChild(openQuoteLink(offerId, newestFirst));
+      quotesHead.setAttribute('data-open-painted', 'true');
+    }
     // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
     // arrive together; while the price books read, their place is grey.
     const emptyLine = quotes.rows.length === 0 ? el('p', 'empty', 'Ancora nessun preventivo per questa offerta.') : null;
@@ -772,12 +814,19 @@ export function createOfferDetail(deps) {
     const save = async (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       if (busy) return;
-      const cents = euroToCents(inputs.value.value);
+      const rawValue = String(inputs.value.value ?? '').trim();
+      const cents = euroToCents(rawValue);
       const owner = String(inputs.owner.value ?? '').trim();
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
-      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250,00).';
+      // backlog:18cdf78c: a negative amount is refused as negative, never
+      // as missing — euroToCents answers null for both.
+      if (cents === null) {
+        failures.value = rawValue.startsWith('-')
+          ? 'Il valore non può essere negativo, in euro (es. 250,00).'
+          : 'Il valore è obbligatorio, in euro (es. 250,00).';
+      }
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
@@ -795,7 +844,13 @@ export function createOfferDetail(deps) {
         await renderOfferDetail(offerId);
       } catch (error) {
         busy = false;
-        errorNode.textContent = humanReadError(error, { failed: 'Modifica non riuscita. Riprova più tardi.' });
+        // backlog:18cdf78c: «Modifica → Salva» è una scrittura: il rifiuto
+        // del server porta il motivo vero (400 dati non validi, 404
+        // offerta sparita), mai «Riprova più tardi».
+        errorNode.textContent = humanWriteError(error, {
+          failed: 'Modifica non riuscita. Riprova più tardi.',
+          notComposed: 'Offerta non trovata, ricarica.',
+        });
         errorNode.setAttribute('class', 'field-error');
       }
     };
@@ -810,8 +865,13 @@ export function createOfferDetail(deps) {
     const cancelButton = el('button', undefined, 'Annulla');
     cancelButton.setAttribute('type', 'button');
     cancelButton.addEventListener('click', cancelEdit);
-    form.appendChild(saveButton);
-    form.appendChild(cancelButton);
+    // backlog:18cdf78c: Salva and Annulla share their own actions row, so a
+    // shown error never pushes them onto a second line — the message keeps
+    // its own full-width line above (see styles.css).
+    const actions = el('div', 'offer-edit-actions');
+    actions.appendChild(saveButton);
+    actions.appendChild(cancelButton);
+    form.appendChild(actions);
     wrap.appendChild(form);
     wrap.__save = save;
     wrap.__cancelEdit = cancelEdit;
@@ -957,10 +1017,22 @@ export function createOfferDetail(deps) {
     box.appendChild(wrap);
   }
 
-  /** The main action beside an existing quote: open it. @param {{id: string}} quote */
-  function openQuoteLink(quote) {
+  /**
+   * backlog:bfc070243427 (seguito): a quote opened from its offer names the
+   * offer as the origin (`#/quotes/<id>/offerta/<offer>`), so the detail's
+   * «←» returns to the offer it came from, never to the scheda.
+   * @param {unknown} offerId @param {unknown} quoteId
+   */
+  function offerQuoteHref(offerId, quoteId) {
+    const quote = `#/quotes/${encodeURIComponent(typeof quoteId === 'string' ? quoteId : '')}`;
+    if (typeof offerId !== 'string' || offerId === '' || typeof quoteId !== 'string' || quoteId === '') return quote;
+    return `${quote}/offerta/${encodeURIComponent(offerId)}`;
+  }
+
+  /** The main action beside an existing quote: open it. @param {unknown} offerId @param {{id: string}} quote */
+  function openQuoteLink(offerId, quote) {
     const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
-    open.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
+    open.setAttribute('href', offerQuoteHref(offerId, quote.id));
     open.setAttribute('data-action', 'offer-open-quote');
     return open;
   }
@@ -980,9 +1052,16 @@ export function createOfferDetail(deps) {
   function paintCreateQuote(head, panel, record, token, existing = null, answer = { books: null, error: null }) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
+    // Review Muse #992 (P2): the head action already paints with the page
+    // — never a second «Apri il preventivo» for the same quote.
+    const paintHeadOpen = (parent) => {
+      if (existing === null || head.getAttribute?.('data-open-painted') === 'true') return;
+      parent.appendChild(openQuoteLink(record.id, existing));
+      head.setAttribute('data-open-painted', 'true');
+    };
     if (answer.books === null) {
       if (answer.error) logReadFailure('price-books', answer.error);
-      if (existing !== null) head.appendChild(openQuoteLink(existing));
+      paintHeadOpen(head);
       line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
       panel.appendChild(line);
       return;
@@ -992,7 +1071,7 @@ export function createOfferDetail(deps) {
       .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
     if (books.length === 0) {
       if (existing !== null) {
-        head.appendChild(openQuoteLink(existing));
+        paintHeadOpen(head);
         return;
       }
       line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
@@ -1015,7 +1094,7 @@ export function createOfferDetail(deps) {
     }
     // backlog:a2ea75f705fd: with a quote already there, the main action
     // opens it; a new quote stays possible, as the quiet second choice.
-    if (existing !== null) bar.appendChild(openQuoteLink(existing));
+    if (existing !== null) paintHeadOpen(bar);
     const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
     create.setAttribute('type', 'button');
     create.setAttribute('data-action', 'offer-create-quote');
@@ -1045,7 +1124,7 @@ export function createOfferDetail(deps) {
         const quoteId = created?.result?.quote?.id;
         if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
         toast('Preventivo creato: aggiungi le righe.');
-        navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
+        navigate(offerQuoteHref(offerId, quoteId));
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
@@ -1067,7 +1146,10 @@ export function createOfferDetail(deps) {
    * backlog:7fa422415232: «Invia offerta» on an approved quote — the /bo end
    * of the offer link. One press mints the public acceptance link through the
    * quote `share-link` action; the server reuses the live link of the same
-   * version, so a second press shows the same URL instead of a new one. The
+   * version, so a second press shows the same URL instead of a new one. When
+   * the live link is lost (backlog:bf1bc20a: its token left with the first
+   * answer), «Crea un nuovo link» revokes it and mints a fresh one through
+   * `regenerate-link`, with an inline confirm. The
    * ready Italian message stays on screen for the operator to send from the
    * scheda composer. Review Muse #905 (P1): a mint is never an «Offerta
    * inviata» row in the server-audit Cronologia — this button never sends,
@@ -1088,6 +1170,12 @@ export function createOfferDetail(deps) {
     /** @type {null | {key: string}} */
     let pending = null;
     let busy = false;
+    // Review #995 (Muse P2, Codex P2): «Invia offerta» and «Crea un nuovo
+    // link» never run together — one shared in-flight guard: send waits
+    // while a regeneration runs and a regeneration waits while a send
+    // runs, with both buttons disabled meanwhile. The epoch stays only
+    // as a stale-answer guard for answers that were already superseded.
+    let linkOp = 0;
     const showLink = (url, expiresAt, reused) => {
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
@@ -1103,14 +1191,21 @@ export function createOfferDetail(deps) {
       state.textContent = reused ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.';
     };
     const send = async () => {
-      if (busy) return;
+      // Review #995 P2: one shared in-flight guard — a regeneration that
+      // is still running keeps this send out, and this send keeps a
+      // regeneration out, so a late share answer can never paint over a
+      // fresh regeneration.
+      if (busy || regenBusy) return;
       busy = true;
+      const myOp = ++linkOp;
       // One key per link being minted: a double press, a retry after an
       // uncertain failure or Enter+click mints one link, never two — the
       // same rule as «Crea preventivo» above.
       if (pending === null) pending = { key: submissions.issueKey() };
       button.setAttribute('disabled', 'disabled');
       button.setAttribute('aria-busy', 'true');
+      regenButton.setAttribute('disabled', 'disabled');
+      regenButton.setAttribute('aria-busy', 'true');
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = 'Creo il link…';
       try {
@@ -1120,6 +1215,7 @@ export function createOfferDetail(deps) {
         );
         pending = null;
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         const result = answer?.result ?? answer ?? {};
         const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
         const share = result.share ?? null;
@@ -1134,7 +1230,7 @@ export function createOfferDetail(deps) {
         if (url === null) {
           line.setAttribute('class', 'field-error offer-share-line');
           line.textContent = result.alreadyExisted === true
-            ? 'Il link esiste già ma non è più visibile qui: cercalo nella cronologia.'
+            ? 'Il link esiste già ma non è visibile qui. Premi «Crea un nuovo link»: il vecchio smetterà di funzionare.'
             : 'Link non creato: la risposta è senza link. Riprova più tardi.';
           return;
         }
@@ -1144,12 +1240,17 @@ export function createOfferDetail(deps) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         line.setAttribute('class', 'field-error offer-share-line');
         line.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
       } finally {
         busy = false;
         button.removeAttribute('disabled');
         button.setAttribute('aria-busy', 'false');
+        if (!regenBusy) {
+          regenButton.removeAttribute('disabled');
+          regenButton.setAttribute('aria-busy', 'false');
+        }
       }
     };
     button.addEventListener('click', () => { void send(); });
@@ -1157,6 +1258,125 @@ export function createOfferDetail(deps) {
     box.appendChild(line);
     box.appendChild(state);
     box.__share = send;
+    // backlog:bf1bc20a: «Crea un nuovo link» when the live link is lost
+    // (its token left with the first answer): revokes the old link and mints
+    // a fresh one through the quote `regenerate-link` action, so the
+    // operator ends with one working link. Inline two-step, never a native
+    // dialog: the first press arms, the second press runs, «Annulla» disarms.
+    const regenButton = el('button', 'secondary', 'Crea un nuovo link');
+    regenButton.setAttribute('type', 'button');
+    regenButton.setAttribute('data-action', 'offer-share-regenerate');
+    const regenCancel = el('button', 'secondary', 'Annulla');
+    regenCancel.setAttribute('type', 'button');
+    regenCancel.setAttribute('data-action', 'offer-share-regenerate-cancel');
+    /** @type {null | {key: string}} */
+    let regenPending = null;
+    let regenArmed = false;
+    let regenBusy = false;
+    let regenCancelShown = false;
+    const disarmRegen = () => {
+      regenArmed = false;
+      regenButton.textContent = 'Crea un nuovo link';
+      regenButton.setAttribute('data-action', 'offer-share-regenerate');
+      if (regenCancelShown) {
+        box.removeChild(regenCancel);
+        regenCancelShown = false;
+      }
+    };
+    const runRegen = async () => {
+      // Review #995 P2: the other half of the shared guard — a send that
+      // is still running keeps this regeneration out.
+      if (regenBusy || busy) return;
+      regenBusy = true;
+      const myOp = ++linkOp;
+      // One key per link being minted: a double press mints one link,
+      // never two — the same rule as «Invia offerta» above.
+      if (regenPending === null) regenPending = { key: submissions.issueKey() };
+      regenButton.setAttribute('disabled', 'disabled');
+      regenButton.setAttribute('aria-busy', 'true');
+      button.setAttribute('disabled', 'disabled');
+      button.setAttribute('aria-busy', 'true');
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = 'Creo il nuovo link…';
+      try {
+        const answer = await client.request(
+          `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/regenerate-link`,
+          { method: 'POST', idempotencyKey: regenPending.key, body: JSON.stringify({}) },
+        );
+        regenPending = null;
+        if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
+        const result = answer?.result ?? answer ?? {};
+        const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+        const expiresAt = typeof result.share?.expiresAt === 'string' ? result.share.expiresAt : null;
+        if (fresh === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        const url = offerShareUrl(spaceOrigin, fresh);
+        if (url === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        shareLinks.set(quote.id, { url, expiresAt });
+        disarmRegen();
+        showLink(url, expiresAt, false);
+        state.textContent = 'Nuovo link pronto: il vecchio non funziona più. Invialo dal composer della scheda.';
+        toast('Nuovo link pronto: il vecchio non funziona più.');
+      } catch (error) {
+        if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
+        const code = error?.code ?? null;
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) {
+          regenPending = null;
+        }
+        // Review #995 P2 (giro 2): a lost contest (409 QUOTE_LINK_CONTEST)
+        // means another regeneration won and revoked the bearer behind our
+        // cached URL — forget it, so the next send asks for «Crea un nuovo
+        // link» instead of painting a dead link. The only failure that may
+        // keep the cache is the accepted receipt (QUOTE_LINK_ALREADY_ACCEPTED):
+        // that link stays valid. Every other failure is uncertain — the new
+        // link may have committed while its answer was lost — so only a
+        // fresh token may paint a ready link again.
+        if (code !== 'QUOTE_LINK_ALREADY_ACCEPTED') shareLinks.delete(quote.id);
+        disarmRegen();
+        line.setAttribute('class', 'field-error offer-share-line');
+        if (code === 'QUOTE_LINK_ALREADY_ACCEPTED') {
+          line.textContent = 'Il link è già stato accettato: resta come ricevuta e non si può rinnovare.';
+          return;
+        }
+        line.textContent = humanWriteError(error, { failed: 'Nuovo link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        regenBusy = false;
+        regenButton.removeAttribute('disabled');
+        regenButton.setAttribute('aria-busy', 'false');
+        if (!busy) {
+          button.removeAttribute('disabled');
+          button.setAttribute('aria-busy', 'false');
+        }
+      }
+    };
+    regenButton.addEventListener('click', () => {
+      if (regenBusy || busy) return;
+      if (!regenArmed) {
+        regenArmed = true;
+        regenButton.textContent = 'Sì, crea un nuovo link';
+        regenButton.setAttribute('data-action', 'offer-share-regenerate-confirm');
+        line.setAttribute('class', 'bo-muted offer-share-line');
+        line.textContent = 'Il vecchio link smetterà di funzionare. Continuare?';
+        box.appendChild(regenCancel);
+        regenCancelShown = true;
+        return;
+      }
+      void runRegen();
+    });
+    regenCancel.addEventListener('click', () => {
+      disarmRegen();
+    });
+    box.appendChild(regenButton);
     const known = shareLinks.get(quote.id);
     if (known) showLink(known.url, known.expiresAt, true);
     panel.appendChild(box);
@@ -1167,17 +1387,24 @@ export function createOfferDetail(deps) {
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string}} [options]
    */
-  async function paintQuote(quote, token) {
+  async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
     panel.setAttribute('data-quote', quote.id);
     const totals = parseTotals(quote.totalsJson);
     const head = el('div', 'offer-quote-head');
     head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
     head.appendChild(el('h4', 'offer-quote-total', quoteTotalSummary(totals, quote.currency)));
-    const link = el('a', 'offer-quote-open', 'Apri il preventivo');
-    link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
-    head.appendChild(link);
+    // backlog:ea616e16ebac: the quotes head already opens this quote with
+    // the main action, so the card paints no second «Apri il preventivo»
+    // for the same page. Other cards keep theirs: every quote stays
+    // reachable exactly once.
+    if (options.hideOpen !== true) {
+      const link = el('a', 'offer-quote-open', 'Apri il preventivo');
+      link.setAttribute('href', offerQuoteHref(options.offerId, quote.id));
+      head.appendChild(link);
+    }
     panel.appendChild(head);
     // backlog:7fa422415232: only an approved quote has a version to share —
     // the server refuses the action on any other state with 409.
@@ -1277,10 +1504,11 @@ function quoteTotalSummary(totals, currency) {
 
 /**
  * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
- * decided it (`name@version` from the version record), never nothing.
+ * decided it, never nothing. backlog:bfc070243427: the name reads as words
+ * (`discountRuleLabel`), never the raw `name@version` id.
  */
 function policyTag(version) {
   return typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
-    ? `${version.policy}@${version.policyVersion}`
+    ? discountRuleLabel(version.policy, version.policyVersion)
     : null;
 }

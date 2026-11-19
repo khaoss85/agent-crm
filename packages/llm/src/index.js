@@ -62,20 +62,49 @@ export {
   openLlmComplete,
 };
 export {
+  CONTACT_BRIEF_LINES,
+  CONTACT_BRIEF_MAX_HISTORY,
+  CONTACT_BRIEF_MAX_HISTORY_TEXT_CHARS,
+  CONTACT_BRIEF_MAX_ITEMS,
+  CONTACT_BRIEF_MAX_ITEM_TEXT_CHARS,
+  CONTACT_BRIEF_MAX_LINE_CHARS,
+  CONTACT_BRIEF_MAX_NAME_CHARS,
+  CONTACT_BRIEF_MAX_SOURCE_CHARS,
+  CONTACT_BRIEF_PURPOSE,
+  assertContactBriefInput,
+  briefCustomer,
+  buildContactBriefPrompt,
+  parseContactBriefResponse,
+} from './contact-brief.js';
+export {
   MESSAGE_DRAFT_KINDS,
   MESSAGE_DRAFT_MAX_CHANNELS,
   MESSAGE_DRAFT_MAX_HISTORY,
   MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS,
   MESSAGE_DRAFT_MAX_INTENT_CHARS,
   MESSAGE_DRAFT_MAX_NAME_CHARS,
+  MESSAGE_DRAFT_MAX_PLAYBOOK_FIELD_CHARS,
   MESSAGE_DRAFT_MAX_SUBJECT_CHARS,
   MESSAGE_DRAFT_MAX_VARIANT_CHARS,
+  MESSAGE_DRAFT_PLAYBOOK_FIELDS,
   MESSAGE_DRAFT_PURPOSE,
   assertMessageDraftInput,
+  assertMessageDraftPlaybook,
   buildMessageDraftPrompt,
+  buildPlaybookContextBlock,
   draftCustomerMessage,
   parseMessageDraftResponse,
 } from './message-draft.js';
+export {
+  SALES_PLAYBOOK_FIELDS,
+  SALES_PLAYBOOK_MAX_FIELD_CHARS,
+  SALES_PLAYBOOK_MAX_SOURCE_CHARS,
+  SALES_PLAYBOOK_PROPOSE_PURPOSE,
+  assertPlaybookProposalInput,
+  buildPlaybookProposalPrompt,
+  parsePlaybookProposalResponse,
+  proposeSalesPlaybook,
+} from './sales-playbook.js';
 export { LLM_ADAPTER_CONTRACT, LLM_MAX_CHARS_PER_TOKEN, LlmRegistries, assertCompletion, assertGenerateInput, validateLlmAdapter } from './adapter.js';
 export { LLM_KIT_CHECKS, runLlmAdapterKit } from './kit.js';
 
@@ -116,7 +145,7 @@ export function createLlmPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: LLM_PACKAGE,
-    version: 3,
+    version: 4,
     label: 'Language-model completions',
     description:
       'One space-scoped LLM path on a single adapter contract: an explicit dry-run without a key, a daily '

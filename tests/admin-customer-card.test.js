@@ -575,7 +575,7 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
   assert.ok(first, 'the service reads as the listino names it');
   assert.ok(first.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00'), first.textContent);
   assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
-  const second = rows.find((node) => node.textContent.includes('Pt single'));
+  const second = rows.find((node) => node.textContent.includes('PT single'));
   assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
   const text = mount.textContent;
   assert.ok(!text.includes('coach-guido'), 'never the member id');
@@ -619,8 +619,10 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     },
   }));
   const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
-  assert.equal(booked.length, 1, 'one cronologia row per confirmed booking');
+  assert.equal(booked.length, 2, 'the confirmed booking and the cancelled one each keep a fissato row');
   assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov'), booked[0].textContent);
+  assert.ok(booked.some((node) => node.textContent.includes('Appuntamento fissato · Lezione di prova · 10 nov 10:00')),
+    'the cancelled booking keeps its fissato row at its slot');
   const text = mount.textContent;
   assert.ok(!text.includes('appointment-booked'), 'never the row key');
   assert.ok(!text.includes('Lezione prova ·'), 'never the slug words when the listino names the service');
@@ -634,6 +636,66 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     0,
     'a channel filter hides the booking row',
   );
+});
+
+// backlog:0d68c387 (repro del NON PASSA 17/11, verifica Mac: due annullamenti
+// senza la riga «Appuntamento fissato» prima, e «Pt singola» invece di
+// «PT singola»). Una prenotazione annullata tiene la sua riga di fissato
+// (allo slot) oltre a quella di annullamento, e la sigla del fallback legge
+// maiuscola come nel listino — mai «Pt singola».
+test('0d68c387: a cancelled «pt-singola» booking keeps its «Appuntamento fissato · PT singola» row', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2026-11-13T10:00:00.000Z', endsAt: '2026-11-13T10:45:00.000Z',
+            serviceKey: 'pt-singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-14T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the cancelled booking keeps its fissato row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('Pt singola'), 'never the lowercase sigla');
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(cancelled.length, 1, 'the cancellation row stays');
+  assert.ok(cancelled[0].textContent.includes('Appuntamento annullato · PT singola ·'), cancelled[0].textContent);
+});
+
+// backlog:0d68c387: the menu and the stored booking may spell the key apart
+// («PT-singola» vs «pt_singola»): the listino name still wins, never the
+// slug words.
+test('0d68c387: the listino name wins when the stored key spells it apart', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'PT-singola', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'pt_singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
 });
 
 // backlog:0d68c387: without the bookable list (an older server, a failed
@@ -724,7 +786,7 @@ test('26afd13657c5: without the listino the Appuntamenti vista still reads slug 
   vista.dispatch('click');
   const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
   assert.ok(recap, 'the recap body paints the vista');
-  assert.ok(recap.textContent.includes('Pt single'), `the vista falls back to slug words: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('PT single'), `the vista falls back to slug words: ${recap.textContent}`);
 });
 
 // backlog:26afd13657c5 (repro del NON PASSA 14/11, verifica Mac 06:5xZ: la
@@ -814,6 +876,154 @@ test('26afd13657c5: the appointment row waits for the listino, never slug words 
   assert.ok(!mount.textContent.includes('Lezione prova'), 'no slug words once the listino has landed');
   const titles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title'));
   assert.ok(titles.some((node) => node.textContent.includes('Lezione di prova')), 'the next appointment names the listino too');
+});
+
+// backlog:d77f434ba40c: with past bookings only the Appuntamenti vista must
+// not claim «Nessun appuntamento prenotato» — the section shows the upcoming
+// ones only, so it says «Nessun appuntamento in programma» and the past stays
+// one link away, in the cronologia.
+test('d77f434ba40c: with past bookings only the vista names the program, with a link down', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 3,
+      truncated: false,
+      items: [10, 11, 12].map((day) => ({
+        id: `past-${day}`, status: 'booked',
+        startsAt: `2020-11-${day}T10:00:00.000Z`, endsAt: `2020-11-${day}T10:45:00.000Z`,
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      })),
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('Nessun appuntamento prenotato'),
+    `never the false empty state with past bookings: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('Nessun appuntamento in programma'),
+    `the vista says it shows upcoming ones only: ${recap.textContent}`);
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  await Promise.resolve();
+});
+
+// backlog:d77f434ba40c, review Codex #1057 (P2): with a channel filter
+// active the «Vedi in cronologia» link resets to Tutti first — otherwise
+// the destination still hides the past bookings the vista advertises.
+test('d77f434ba40c: the past link resets an active channel filter', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'confirmed',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const whatsapp = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp');
+  assert.ok(whatsapp, 'a WhatsApp chip filters the cronologia');
+  whatsapp.dispatch('click');
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'),
+    'the active filter hides the past booking rows');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  assert.ok(mount.textContent.includes('Appuntamento fissato'),
+    'back to Tutti the past booking rows read again');
+});
+
+// backlog:d77f434ba40c, review #1057 (P2): with past bookings only but the
+// listino still in flight the vista holds grey bars — the timeline hides
+// booked rows until the listino lands, so the vista must not advertise
+// cronologia rows that are not on screen yet.
+test('d77f434ba40c: the past-only vista waits for the listino, never a bare link', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'booked',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const gates = new Map();
+  const hold = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const client = stubClient({ timeline: pastOnly });
+  const waiting = { ...client };
+  waiting.request = async (path, options = {}) => {
+    if (path === '/api/appointments/services') return hold('services').promise;
+    return client.request(path, options);
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const shown = createCustomerCardView({ doc, mount, client: waiting }).renderCard('contact', 'c1');
+  await flush();
+  await flush();
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  await flush();
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('in cronologia'),
+    `no advertised past rows before the listino lands: ${recap.textContent}`);
+  assert.ok(!recap.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'no past link before the listino lands');
+  assert.ok(recap.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'),
+    'grey bars while the listino loads');
+  gates.get('services').release.resolve({ services: [{ serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' }] });
+  await shown;
+  await flush();
+  const vistaAfter = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vistaAfter, 'the recap keeps its Appuntamenti vista after the listino');
+  vistaAfter.dispatch('click');
+  await flush();
+  const recapAfter = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recapAfter.textContent.includes('Nessun appuntamento in programma'),
+    `the honest past-only state once the listino lands: ${recapAfter.textContent}`);
+  assert.ok(recapAfter.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'the past link returns with the listino');
+});
+
+// backlog:d77f434ba40c: with no booking at all the honest empty state stays.
+test('d77f434ba40c: with no booking the vista still reads «Nessun appuntamento prenotato»', async () => {
+  const empty = {
+    ...TIMELINE,
+    appointments: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ timeline: empty }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(recap.textContent.includes('Nessun appuntamento prenotato'),
+    `the empty state stays without bookings: ${recap.textContent}`);
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {
@@ -4461,6 +4671,24 @@ test('backlog:88ab568cdcba (was d30d17880f63 review #880): the AI-off state land
   assert.match(aiLine(panel).textContent, /L’AI non è attiva in questo spazio/, 'the reason line says where to write instead');
 });
 
+// backlog:88ab568cdcba (verifier 17/11, live 2026-11-17.md:87): the landing
+// keeps the focus, but a press on the off row («Scrittura con l'AI non
+// disponibile») still moves the cursor to the message field without saying
+// so. The move stays, the silence goes: the press announces where the
+// cursor went.
+test('backlog:88ab568cdcba: with the AI off a press on the empty request row says the cursor moved to the message field', async () => {
+  const client = aiStateClient({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  const { panel } = await openComposerMount({ client, role: 'owner' });
+  const { area } = aiParts(panel);
+  area.__focused = false;
+  const line = aiLine(panel);
+  assert.ok(!line.textContent.includes('cursore'), 'the move is not announced before the press');
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  field.dispatch('mousedown', { preventDefault: () => {} });
+  assert.equal(area.__focused, true, 'the message field still takes the typing');
+  assert.match(line.textContent, /cursore .* nel messaggio/i, 'the press says where the cursor went');
+});
+
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
   for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
     const client = aiStateClient(shape);
@@ -5129,6 +5357,102 @@ test('59def6cb805d review: on a truncated page a one-way sync line names itself 
   assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
 });
 
+// backlog:a5fb0770 — TikTok receives only (matrix capability in-only), so
+// even with an outbound passage recorded it never reads outbound: at most
+// «← in entrata», never «↔ in entrata e in uscita».
+test('a5fb0770: TikTok never reads outbound, even with both directions observed', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 't-in', conversationId: 't3', channel: 'tiktok', direction: 'inbound',
+      sync: 'received', body: 'Ciao dal TikTok', teamAuthorId: null,
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 't-out', conversationId: 't3', channel: 'tiktok', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('tiktok'), '← in entrata', 'TikTok caps at inbound');
+  assert.equal(syncOf('phone'), '→ in uscita', 'voice keeps its real outbound call');
+});
+
+// backlog:a5fb0770 review #966 — the direction union is keyed by counted
+// channel plus handle: inbound on one mailbox plus outbound on another must
+// not read ↔ on both rows.
+test('a5fb0770 review: two mailboxes keep their own direction, no shared ↔', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'a@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'o-out', conversationId: 't5', channel: 'outlook', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'b@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '← in entrata', 'inbound-only mailbox reads inbound');
+  assert.equal(syncOf('outlook'), '→ in uscita', 'outbound-only mailbox reads outbound');
+});
+
+// backlog:a5fb0770 review #966 — the same mailbox under two spellings still
+// unions (case-insensitive): arrivals under Gmail plus replies under Email
+// read ↔ on both rows.
+test('a5fb0770 review: one mailbox under two spellings still unions', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'guido@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'e-out', conversationId: 't5', channel: 'email', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'Guido@PrestiGroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox unions across spellings');
+  assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox unions across spellings');
+});
+
+// backlog:a5fb0770 review #966 — the outbound cap comes from the shared
+// matrix: site-form (in-only) never reads outbound, while voice keeps the
+// outbound of operator-placed calls even though the matrix calls it in-only.
+test('a5fb0770 review: site-form caps outbound from the matrix, voice is exempt', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'w-out', conversationId: 't6', channel: 'web', direction: 'outbound',
+      sync: 'delivered', body: 'strano', teamAuthorId: 'elena',
+      remoteHandle: 'modulo-contatti', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'call', id: 'c-in', conversationId: null, channel: 'phone', direction: 'inbound',
+      sync: 'received', durationSec: 60, teamAuthorId: null,
+      remoteHandle: '+39 333 1234567', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('web'), null, 'in-only site-form never claims outbound');
+  assert.ok(rows.some((node) => node.getAttribute('data-channel') === 'web'), 'the site-form identity still reads');
+  assert.equal(syncOf('phone'), '↔ in entrata e in uscita', 'voice keeps operator-call outbound');
+});
+
 // backlog:e381c48581fa (verifica pilota 51ab9ca): on Ada Rossi's scheda
 // Instagram read «↔ sincronizzato» with Instagram not linked in the space.
 // The production shape: raw GET /api/connectors rows plus GET /api/profile.
@@ -5146,6 +5470,12 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
     ...base,
     async request(path, options = {}) {
       requests.push(path);
+      if (path.startsWith('/api/connectors/activity')) {
+        return { connections: [
+          { connectionKey: 'profile:whatsapp', channel: 'whatsapp', status: 'active', health: 'ok',
+            inbox: { received: 3, lastReceivedAt: '2026-11-17T10:00:00.000Z' }, outbox: { openDeadLetters: 0, lastFailedAt: null } },
+        ] };
+      }
       if (path.startsWith('/api/connectors')) return { connectors: [] };
       if (path === '/api/profile') {
         return { member: {}, connections: { available: true, reason: null, meta: { configured: true },
@@ -5161,7 +5491,15 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
     .find((node) => node.getAttribute('data-channel') === channel)
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'WhatsApp is linked (Profilo): the sync is real');
-  assert.equal(syncOf('instagram'), '↔ in entrata e in uscita · canale non collegato', 'Instagram is not linked: no sync claim');
+  // Review #966: the direction union is per counted channel plus handle —
+  // the guido.presti handle saw inbound only, the +39 handle both. Neither
+  // may claim a sync: Instagram is not linked.
+  const instagramSyncs = mount.findAll('p')
+    .filter((node) => node.getAttribute('data-channel') === 'instagram')
+    .map((node) => node.findAll('span').find((inner) => inner.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null);
+  assert.deepEqual(instagramSyncs,
+    ['← in entrata · canale non collegato', '↔ in entrata e in uscita · canale non collegato'],
+    'each Instagram handle reads its own direction, never a sync claim');
   assert.equal(requests.filter((path) => path === '/api/profile').length, 1, 'one channel-state read per space');
   // The same answer as the shared state the other screens read.
   const { channelState } = await import('../apps/admin/public/admin-channels-count.js');
@@ -5206,7 +5544,10 @@ test('e381c48581fa review: an unread profile never says «non collegato», failu
       .find((node) => node.getAttribute('data-channel') === channel)
       ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
     assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'profile unread: no sync claim, no «non collegato»');
-    assert.equal(syncOf('instagram'), '↔ in entrata e in uscita');
+    // Review #966: the direction union is per counted channel plus handle —
+    // the first Instagram row (guido.presti, inbound only) reads ←, the
+    // +39 row reads ↔. No «non collegato» while the profile is unread.
+    assert.equal(syncOf('instagram'), '← in entrata');
     assert.ok(warned.some((line) => line.includes('bo-scheda profile unreadable') && line.includes('spaceId=presti')),
       'the failed profile read is diagnosable');
     // A channels outage is logged with its code and the space, and the
@@ -5270,9 +5611,11 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
-  // copy — with no open step left the empty azioni block hides like the prototype.
-  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
+  // Voce 2c1c0e149cf9 (seguito 17/11, verifier back AC-3): the card
+  // re-reads the server list, never an optimistic copy — with no open step
+  // left the azioni block stays with its honest empty state.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'with no open step left the azioni block stays');
+  assert.ok(mount.textContent.includes('Nessuna azione aperta.'), 'the empty azioni block says so');
   assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
     'no check without an open step');
 });
@@ -5330,12 +5673,51 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
+test('backlog:1e07362849db: the scheda labels whose figure it shows when quote total and offer value differ', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo 10 ingressi',
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the quote total paints');
+  assert.equal(amount.textContent, '15 €');
+  const note = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(note, 'the figure carries its label');
+  assert.equal(note.textContent, 'preventivo in bozza');
+  const offer = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(offerNote, 'the offer value paints labelled too');
+  assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
+  assert.equal(title.textContent, 'PT single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
@@ -5346,7 +5728,7 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
+  assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
@@ -5361,7 +5743,7 @@ test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» th
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · per Guido Presti', 'the booking reads as held for the client, never by the client');
+  assert.equal(title.textContent, 'PT single · per Guido Presti', 'the booking reads as held for the client, never by the client');
 });
 
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
@@ -5992,9 +6374,20 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca (supervisore 18/11, NON PASSA con #1014 su Ada
+  // Rossi): a prima visita «Offerta» e «Prossimo appuntamento» non si
+  // disegnano finché le letture non dicono se esistono — niente scheletri
+  // fantasma che poi spariscono.
+  assert.equal(sectionTitled(mount, 'Offerta') ?? null, null, 'nessun fantasma Offerta a letture ignote');
+  assert.equal(sectionTitled(mount, 'Prossimo appuntamento') ?? null, null, 'nessun fantasma Appuntamento a letture ignote');
+  // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
+  // skeleton paints only when the previous read of this customer had one —
+  // never on a first visit, and never held by the slow schema read after
+  // the profile was already known empty (see
+  // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
@@ -6475,4 +6868,249 @@ test('a060a4aa65b6: an offer outside any board reads its core stage like the Pip
   assert.equal(state?.textContent, 'Qualificazione');
   const { upperFirst, offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
   assert.equal(state.textContent, upperFirst(offerStageLabel([], { stage: 'qualification' })), 'the same words as the Pipeline off-board list');
+});
+
+// Voce 714433c2af86, VERIFIER_BACK (returns: 1):
+// evidence/supervisor-browser/2026-11-07.md:73 — «AC-3 no: nessun menu per
+// lo stato, il badge "Contatto" in testata è uno span senza azione e il
+// modulo Modifica non ha lo Stato». Repro del NON PASSA: su un contatto
+// senza offerta e senza attività firmata (prove complete a zero) il pill
+// resta l'indicatore derivato condiviso con l'elenco (customer-status.js,
+// mai un menu che scrive a mano), ma ora porta il motivo italiano come
+// tooltip osservabile; lo stato che si cambia da un menu è quello
+// dell'offerta mostrata, attraverso il workflow governato. Rosso sul codice
+// prima della cura (il badge non aveva alcun title), verde dopo.
+test('714433c2af86ac3: il pill derivato spiega il motivo e lo stato offerta si cambia dal menu', async () => {
+  const zeroEvidence = {
+    orders: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+    contracts: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+    subscriptions: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+  };
+  const emptyCommercial = {
+    opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+  };
+  // Il contatto della verifica (nessuna offerta, nessuna attività firmata).
+  const bare = await renderCard(stubClient({
+    profile: { ...PROFILE, ...zeroEvidence, ...emptyCommercial },
+  }));
+  const badge = bare.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-badge');
+  assert.ok(badge, 'the stato pill exists');
+  assert.equal(badge.textContent, 'Contatto', 'the pill reads the derived stato in Italian');
+  assert.equal(badge.getAttribute('title'), 'Nessuna attività firmata collegata',
+    'the pill carries its Italian reason where the verifier looked for the menu');
+  assert.ok(bare.textContent.includes('Nessuna attività firmata collegata'),
+    'Dettagli states the same reason under Stato');
+  assert.equal(
+    bare.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length,
+    0,
+    'with no offer there is no offer stage to move, so no menu',
+  );
+
+  // Con un'offerta in qualificazione lo stato si cambia dal menu.
+  const seen = [];
+  const base = stubClient({ profile: { ...OPPORTUNITY_ONLY_PROFILE, ...zeroEvidence } });
+  const client = recordingClient(base, () => ({ output: { outcome: 'stage_changed' } }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
+  assert.ok(change, 'the Cambia stato menu button exists on the shown offer');
+  change.dispatch('click');
+  const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
+  assert.deepEqual(
+    voices.map((node) => node.textContent),
+    ['Proposta', 'Persa'],
+    'the menu offers the legal Italian moves from qualificazione',
+  );
+  voices.find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1, 'one write for the stage move');
+  assert.equal(client.writes[0].path, '/api/opportunities/o1/stage', 'the move goes through the governed stage route');
+  assert.deepEqual(client.writes[0].body, { targetStage: 'proposal' }, 'the move names its target stage');
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
+});
+// Voce 2c1c0e149cf9 (seguito 17/11, verifier back su 84ebe9e5: AC-2 il menu
+// Offerta si apre a sinistra sotto la sidebar — voci x=156 con sidebar a
+// x=264; AC-3 mancano «Prossime azioni» e «✦ suggeriti» nel Recap).
+// Repro: rosso sul codice prima della cura, verde dopo.
+test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, il Recap mostra Prossime azioni e suggeriti', async () => {
+  // AC-2: il menu condiviso (right:0, largo 290px) usciva dal riquadro
+  // stretto e finiva sotto la barra laterale (voci x=156, sidebar a x=264).
+  // Il vero difetto non è il lato dell'ancora ma l'antenato che ritaglia:
+  // .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole CSS
+  // overflow-x diventa auto e ritaglia il menu anche con left:0/right:auto
+  // (review P2 su 0429edd6). La cura toglie il contenitore di scorrimento
+  // al desktop: nessuna regola .bo-scheda-col-side può ritagliare a 1280px
+  // o più, o una regola min-width la riporta a visible.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const sideClipsAtDesktop = (cssText) => {
+    const baseClips = /\.bo-scheda-col-side\s*\{[^}]*overflow(?:-[xy])?\s*:\s*(auto|scroll|hidden)/.test(cssText);
+    if (!baseClips) return false;
+    const desktopResets = [...cssText.matchAll(/@media\s*\(([^)]*)\)\s*\{[^]*?\.bo-scheda-col-side\s*\{([^}]*)\}/g)];
+    return !desktopResets.some((match) => {
+      const minWidth = match[1].match(/min-width\s*:\s*(\d+)px/);
+      return minWidth && Number(minWidth[1]) >= 1280 && /overflow\s*:\s*visible/.test(match[2]);
+    });
+  };
+  assert.equal(sideClipsAtDesktop(css), false,
+    'no .bo-scheda-col-side clipping ancestor at desktop widths (the Offerta menu would be cut at 1280px+)');
+  // L'ancora resta a destra del bottone, dentro l'area visibile.
+  const offerRules = [...css.matchAll(/\.bo-scheda-offerwrap[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(offerRules.some((body) => /left\s*:\s*0/.test(body) && /right\s*:\s*auto/.test(body)),
+    'the scheda Offerta menu opens right (left:0, right:auto), never under the sidebar');
+  // Il menu si apre davvero dentro il suo wrap, non come finestra diretta.
+  const mount = await renderCard(stubClient());
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  assert.ok(offer, 'the Offerta tile exists');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const wrap = offer.parentNode;
+  assert.ok(wrap && (wrap.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-offerwrap'),
+    'the Offerta tile lives in its menu wrap');
+  const menu = (wrap?.childNodes ?? []).find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-menu'));
+  assert.ok(menu, 'the wrap holds the menu');
+  assert.ok(!(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible after the click');
+  assert.ok(menu.textContent.includes("Crea con l'AI"), 'the menu voices creating with the AI');
+  assert.ok(menu.textContent.includes('Compila manualmente'), 'the menu voices filling in by hand');
+  // AC-3a: con zero passi aperti il titolo resta, con uno stato onesto.
+  const empty = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  assert.ok(empty.textContent.includes('Prossime azioni'), 'the recap keeps its Prossime azioni block with no open step');
+  // Un passo annullato non è una prossima azione.
+  const cancelled = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w8', status: 'cancelled', name: 'Richiamare per la prova' }],
+      },
+    },
+  }));
+  assert.ok(cancelled.textContent.includes('Prossime azioni'), 'the recap keeps its block with only a cancelled step');
+  assert.ok(!cancelled.findAll('button').some((node) => node.getAttribute('data-action') === 'complete-step'),
+    'a cancelled step carries no check');
+  // AC-3b: il passo aperto dall'AI porta il marchio del prototipo.
+  const suggested = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w9', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' }],
+      },
+    },
+  }));
+  assert.ok(suggested.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
+// backlog:0d68c387 verifier-back (ritorno 2, 18/11): fissato oggi per domani e
+// annullato oggi devono stare insieme sotto il giorno dell'evento, non
+// divisi tra giorno dell'appuntamento e giorno dell'annullamento. Repro:
+// rosso sul codice prima della cura (fissato a startsAt), verde dopo
+// (fissato a bookedAt).
+test('0d68c387 verifier-back: fissato oggi per domani e annullato oggi restano insieme sotto oggi', async () => {
+  const base = new Date();
+  base.setUTCHours(12, 0, 0, 0);
+  const bookedAt = new Date(base.getTime() - 2 * 3600e3).toISOString();
+  const decidedAt = new Date(base.getTime() - 3600e3).toISOString();
+  const startsAt = new Date(base.getTime() + 24 * 3600e3).toISOString();
+  const endsAt = new Date(base.getTime() + 25 * 3600e3).toISOString();
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt, endsAt,
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt, bookedAt,
+          },
+        ],
+      },
+    },
+  }));
+  const timelineEl = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-timeline'));
+  assert.ok(timelineEl, 'the cronologia paints');
+  const kids = timelineEl.childNodes;
+  let day = null;
+  let bookedDay = null;
+  let cancelledDay = null;
+  let bookedIdx = -1;
+  let cancelledIdx = -1;
+  kids.forEach((node, idx) => {
+    if (node.tagName === 'H5') day = node.textContent;
+    const cls = String(node.getAttribute?.('class') ?? '');
+    const entry = node.getAttribute?.('data-entry') ?? '';
+    if (entry === 'appointment-booked:b0') { bookedDay = day; bookedIdx = idx; }
+    if (entry === 'appointment-cancelled:b0') { cancelledDay = day; cancelledIdx = idx; }
+    void cls;
+  });
+  assert.ok(bookedIdx !== -1 && cancelledIdx !== -1, 'both rows paint');
+  assert.equal(bookedDay, cancelledDay, 'fissato and annullato share the event day');
+  assert.equal(Math.abs(bookedIdx - cancelledIdx), 1, 'the pair stays adjacent');
+});
+
+// backlog:0d68c387 review Codex P2 su c4f2faa: il fallback maiuscolo vale solo
+// per le sigle vere («PT»), mai per le parole senza vocali («my», «by»).
+test('0d68c387: ordinary vowel-less words stay sentence-case in the fallback', async () => {
+  const mount = await renderCard(stubClient({
+    services: [],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'my-lesson', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · My lesson ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('MY lesson'), 'never the uppercased word');
+});
+
+// backlog:a5fb07706bff verifier-back su 59c2c14 (EVIDENCE_LINE_NOT_PASS 2026-11-17):
+// la riga Email di Fio Neri leggeva «→ in uscita» con Gmail collegato anche
+// quando la stessa casella aveva messaggi in entrata. Repro: rosso sul codice
+// prima della cura (nome visualizzato «Fio Neri <fio@...>» non unisce con
+// «fio@...»), verde dopo.
+test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce entrata e uscita', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'Fio Neri <Fio@PrestiGroup.it>', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'e-out', conversationId: 't5', channel: 'email', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'fio@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
+  assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
 });
