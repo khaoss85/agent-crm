@@ -399,6 +399,72 @@ test('947260f9f036: the shell hides the scheda toast by its owner', () => {
   assert.ok(wiring && /hideToast: \(scope\) => \{ if \(toaster !== null\) toaster\.hideScope\(scope\); \}/.test(wiring[1]));
 });
 
+test('fc09e6f16326: leaving the scheda for another screen hides the Annulla toast; nothing is sent', async () => {
+  const { mount, view, client, toasts, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  const scope = toasts[0].options.scope;
+  // The router leaves the scheda: invalidate like route() does, then suspend.
+  view.invalidate();
+  view.suspendNoteToast();
+  await flush();
+  assert.deepEqual(hidden, [scope], 'the Annulla toast leaves the next screen');
+  assert.equal(client.writes.length, 0, 'the withdrawal still waits — nothing sent yet');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays hidden while the window is open');
+});
+
+test('fc09e6f16326: back on the same customer the Annulla comes back and still works', async () => {
+  const { mount, view, client, toasts, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  const scope = toasts[0].options.scope;
+  view.invalidate();
+  view.suspendNoteToast();
+  await flush();
+  assert.deepEqual(hidden, [scope]);
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(toasts.filter((entry) => entry.text === 'Nota eliminata').length, 2, 'the Annulla toast is shown again');
+  const back = toasts[toasts.length - 1];
+  assert.equal(back.options.scope, scope, 'by its owner, so the next screen can hide it again');
+  assert.equal(back.options.action.label, 'Annulla');
+  back.options.action.run();
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'Annulla still brings the note back');
+  assert.equal(client.writes.length, 0, 'and nothing is ever sent');
+  assert.ok(toasts.some((entry) => entry.text === 'Nota ripristinata'));
+});
+
+test('fc09e6f16326: back on the same customer after the window ends sends, with no toast coming back', async () => {
+  const { mount, view, client, toasts, timer, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  view.suspendNoteToast();
+  await flush();
+  assert.equal(hidden.length, 1, 'the toast left with the screen');
+  timer.endAll();
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(toasts.filter((entry) => entry.text === 'Nota eliminata').length, 1, 'nothing to undo, no Annulla');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined);
+});
+
+test('fc09e6f16326: suspending with nothing waiting hides nothing', async () => {
+  const { view, hidden } = await open();
+  view.suspendNoteToast();
+  await flush();
+  assert.deepEqual(hidden, [], 'no toast to take away');
+});
+
+test('fc09e6f16326: the shell suspends the scheda note toast on a route change', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.ok(/if \(target\.view !== 'customer-card'\) \{\s*customerCardView\.invalidate\(\);[\s\S]*?customerCardView\.suspendNoteToast\(\);/.test(app),
+    'leaving the scheda suspends its note toast next to invalidate()');
+});
+
 test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
   const loaded = { timeline: timelineOf([MINE, THEIRS]) };
   const revised = withRevisedNote(loaded, 'n-mia', 'Nuovo testo');
