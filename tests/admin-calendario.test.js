@@ -3265,7 +3265,8 @@ test('no known team keeps the plain person field', async () => {
 // Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
 // draft naming someone outside the read team roster never prefills
 // «Persona del team» — the choice stays among the team, empty, and the card
-// says the name is not in the team.
+// says the person is unknown (backlog:a16726b5ea76 follow-up: never
+// «non è nel team» for a name the team does not hold).
 test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -3291,7 +3292,7 @@ test('a draft outsider leaves the team choice empty', async () => {
   const choice = mount.querySelector('select[name="teamMemberId"]');
   assert.ok(choice, 'the person stays a choice among the team');
   assert.equal(choice.value, '', 'the outsider name never fills it');
-  assert.ok(mount.textContent.includes('Marco non è nel team'), 'the card says why');
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), 'the card says the person is unknown');
 });
 
 // Fetta 10 (P2 di #481) protected the drafted outsider from a select that
@@ -3569,7 +3570,11 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco', [], homonyms),
+    ['a1', 'a2'],
+    'rows sharing the visible name are searched together (backlog:a16726b5ea76 follow-up)',
+  );
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
@@ -3591,7 +3596,11 @@ test('resolveDraftMemberIds strips the painted ordinal and reads the label (back
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco (1)', [], homonyms), [], 'two real homonyms stay unresolved');
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco (1)', [], homonyms),
+    ['a1', 'a2'],
+    'the painted ordinal is not the name: both rows sharing it are searched (backlog:a16726b5ea76 follow-up)',
+  );
   assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
 });
 
