@@ -853,6 +853,52 @@ test('b9b7912320f8: the add-line panel locks quantity at 1 for a flat-fee offer'
   assert.equal(fresh.__quantity.disabled, false, 'a mixed offer keeps its quantity');
 });
 
+test('b9b7912320f8: adding a line waits for the selected offer model (no stale flat flag)', async () => {
+  // VERIFIER_BACK repro: with a slow component read, switching to a flat-fee
+  // offer and adding at once sent the previous flag (quantity 5 on a flat
+  // fee). The write now awaits the in-flight model read.
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const trialComponents = [
+    { id: 'pc9', offerId: 'o9', componentKey: 'trial', label: 'Lezione di prova', pricingModel: 'flat_fee', chargeType: 'one_time', tierCount: 0 },
+  ];
+  const releaseQueue = [];
+  const inner = stubClient({ lines: [], entries: [ENTRY, trialEntry], components: trialComponents });
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-component/records')) {
+        return new Promise((resolve) => { releaseQueue.push(() => resolve(inner.request(path, options))); });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  // The panel opens on the mixed offer; switch to the flat fee and add
+  // before either component read answers.
+  addPanel.__entry.value = 'o9';
+  addPanel.__entry.dispatch('change');
+  addPanel.__quantity.value = '5';
+  const adding = addPanel.__add();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  while (releaseQueue.length > 0) releaseQueue.shift()();
+  await adding;
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.ok(posts.length > 0, 'the line was sent');
+  assert.equal(JSON.parse(posts[0].body).quantity, 1, 'a flat fee is added with quantity 1 even when its read was still in flight');
+  assert.equal(JSON.parse(posts[0].body).offerId, 'o9', 'the selected offer is the one sent');
+});
+
 test('b9b7912320f8: a failed component read keeps the quantity editable and logs safe fields', async () => {
   const trialEntry = {
     id: 'o9',

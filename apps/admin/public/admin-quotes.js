@@ -874,19 +874,26 @@ export function createQuoteView(deps) {
       });
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
-      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
-        offerId: entrySelect.value,
-        quantity: addFlatOnly ? 1 : Number(quantityInput.value),
-        discountBps: discountFrom(discountInput),
-        expectedRevision: quote.draftRevision,
-      }))));
+      // backlog:b9b7912320f8 (review P1 TOCTOU): the write must use the
+      // model of the offer selected NOW, never the previous one — a pending
+      // component read from an earlier selection must settle first.
+      const sendAddLine = () => withBusy(async () => {
+        await addPanel.__flatSync;
+        return act('add-line', {
+          offerId: entrySelect.value,
+          quantity: addFlatOnly ? 1 : Number(quantityInput.value),
+          discountBps: discountFrom(discountInput),
+          expectedRevision: quote.draftRevision,
+        });
+      });
+      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', sendAddLine));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
       addPanel.appendChild(labelled('Sconto (%)', discountInput));
       addPanel.appendChild(hint);
       addPanel.appendChild(flatNote);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: addFlatOnly ? 1 : Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
+      addPanel.__add = sendAddLine;
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
       addPanel.__discount = discountInput;
