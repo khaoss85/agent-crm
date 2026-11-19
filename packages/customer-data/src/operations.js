@@ -1515,21 +1515,30 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   });
 
   const page = applyCustomerListQuery(rows, query, today);
+  // backlog:5af848afdb63 (seguito 19/11, decisione prodotto): a view whose
+  // dependency module is not composed here is not a view of this space at
+  // all — the served list omits it instead of naming it bare. The composition
+  // is what the served `/api/schema` publishes, so the pills and the schema
+  // agree on which views the space has. A composed but unreadable or partial
+  // dependency still reads bare (unknown, never a false 0), and opening the
+  // view refuses 409 with its reason.
+  const subscriptionComposed = optional(modules, 'subscription') !== null;
   // Per-view pill counts (prototype checklist C10: `<etichetta> <n>`): the
   // same predicate the page applies, counted without pagination over the
   // current explicit filters. A view without a count renders its label
   // only — honest absence, never an exact-looking floor: no count when the
   // subject scan truncated (complete:false), nor for a derived view whose
   // dependency is unreadable or partial here.
-  const views = CUSTOMER_VIEWS.map((view) => {
+  const views = CUSTOMER_VIEWS.flatMap((view) => {
+    if (view.id === 'rinnovi-30-giorni' && !subscriptionComposed) return [];
     const entry = { id: view.id, label: view.label };
-    if (complete !== true) return entry;
-    if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
-    if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
-    if (view.id === 'da-rispondere' && !repliesReadable) return entry;
+    if (complete !== true) return [entry];
+    if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return [entry];
+    if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return [entry];
+    if (view.id === 'da-rispondere' && !repliesReadable) return [entry];
     if (view.id === 'rinnovi-30-giorni'
-      && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
-    return { ...entry, count: filterCustomerRows(rows, query, view, today).length };
+      && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return [entry];
+    return [{ ...entry, count: filterCustomerRows(rows, query, view, today).length }];
   });
   return Object.freeze({
     customerListContract: CUSTOMER_LIST_CONTRACT,

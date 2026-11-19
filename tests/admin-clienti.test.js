@@ -765,6 +765,47 @@ test('a server failure reads as an Italian retry, never technical', async () => 
   assert.ok(!/NOT_FOUND|Error|undefined|NaN/.test(text), 'no technical residue leaks into the screen');
 });
 
+test('5af848afdb63: a failed re-read keeps the title number and the columns count', async () => {
+  // Seguito 19/11: the title holds the last number it knew (or nothing when
+  // never read), the columns toggle keeps its count, and the retry line says
+  // it once — no «Riprova più tardi.» beside the «Riprova» button.
+  let fail = false;
+  const flip = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (fail) throw Object.assign(new Error('boom'), { status: 500 });
+      return {
+        customerListContract: 1, items: [ROW_MARCO, ROW_ANNA],
+        total: 2, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS,
+      };
+    },
+  };
+  const { mount } = await render(flip);
+  assert.equal(mount.findAll('h1')[0].textContent, 'Clienti 2');
+  assert.equal(toolToggle(mount, 'Colonne').getAttribute('aria-label'), 'Colonne: 4 di 8 visibili');
+  // A re-read over the same view and filters fails: the title keeps the last
+  // number it knew and the columns toggle keeps its count.
+  fail = true;
+  toolToggle(mount, 'Ordina').dispatch('click');
+  byAttr(mount, 'button', 'data-sort', 'name').dispatch('click');
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('Riprova'), 'the failure offers a retry');
+  assert.ok(!text.includes('Riprova più tardi'), 'no doubled retry beside the button');
+  assert.equal(mount.findAll('h1')[0].textContent, 'Clienti 2', 'the title keeps its last number');
+  assert.equal(toolToggle(mount, 'Colonne').getAttribute('aria-label'), 'Colonne: 4 di 8 visibili',
+    'the columns count survives the failed read');
+});
+
+test('5af848afdb63: a first read that fails titles bare Clienti, with a retry', async () => {
+  // Never read a number: the title carries none, but the retry is there.
+  const failing = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw Object.assign(new Error('boom'), { status: 500 }); } };
+  const { mount } = await render(failing);
+  assert.equal(mount.findAll('h1')[0].textContent, 'Clienti');
+  assert.ok(byAttr(mount, 'button', 'data-action', 'clienti-retry'), 'the failed first read offers Riprova');
+});
+
 test('the clienti screen renders no raw control', async () => {
   // Acceptance: a control without a ui-* system class fails this screen.
   const rawControls = (root) => {

@@ -267,11 +267,30 @@ export function createCustomerListView(deps) {
   function filterKey() {
     return [activeSpaceId() ?? '', state.q, state.canale, state.stato, state.campo, state.valore].join('|');
   }
+  // backlog:5af848afdb63 (seguito 19/11): the last known title total and
+  // column menus, for a failed read: the title keeps its number (or nothing
+  // when never read) and the columns toggle keeps its count. Keyed like the
+  // pills, plus the view for the title — a total belongs to the view it was
+  // read over.
+  let lastTotal = null;
+  let lastTotalKey = null;
+  let lastColumns = null;
+  let lastColumnsKey = null;
   /** Keep the last answer's view pills (with their numbers) for a later failed read. */
   function rememberViews(key) {
     if (Array.isArray(data?.views)) {
       lastViews = data.views;
       lastViewsKey = key;
+    }
+    // A failed read keeps the last known title number and column menus too —
+    // never a fallback reshuffle.
+    if (Array.isArray(data?.columns)) {
+      lastColumns = data.columns;
+      lastColumnsKey = key;
+    }
+    if (data && !data.error && Number.isFinite(Number(data.total))) {
+      lastTotal = Number(data.total);
+      lastTotalKey = `${key}|${state.vista}`;
     }
   }
   let renderToken = 0;
@@ -420,7 +439,7 @@ export function createCustomerListView(deps) {
         error: humanReadError(error, {
           failed: timedOut
             ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
-            : 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.',
+            : 'L\u2019elenco non si \u00E8 potuto leggere.',
           log: spaceId === null ? undefined : (text, cause) => console.error(text, { ...cause, spaceId }),
         }),
         status: error?.status ?? null,
@@ -626,8 +645,10 @@ export function createCustomerListView(deps) {
     // as an opt-in list column, off until the operator asks for it — the
     // same explicit-boolean rule as the AI budget column.
     const customDefs = Array.isArray(data?.customColumns) ? data.customColumns : [];
+    // backlog:5af848afdb63 (seguito 19/11): the columns toggle keeps the last
+    // menus it knew, so a failed read never reshuffles its count.
     const columnsMeta = [
-      ...(data?.columns ?? FALLBACK_COLUMNS),
+      ...(data?.columns ?? (lastColumns !== null && lastColumnsKey === filterKey() ? lastColumns : FALLBACK_COLUMNS)),
       ...customDefs.map((def) => ({
         id: `campo:${def?.key ?? ''}`,
         label: def?.label ?? def?.key ?? 'campo',
@@ -793,7 +814,11 @@ export function createCustomerListView(deps) {
     const meta = metaOf();
     if (state.columns === null) state.columns = normalizeColumns(meta.columnsMeta, readStoredColumns());
     else state.columns = normalizeColumns(meta.columnsMeta, state.columns);
-    const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
+    // backlog:5af848afdb63 (seguito 19/11): the title keeps the last number it
+    // knew for this view — or nothing when it never read one.
+    const readTotal = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
+    const total = readTotal
+      ?? (lastTotal !== null && lastTotalKey === `${filterKey()}|${state.vista}` ? lastTotal : null);
     frame.title.textContent = total === null ? 'Clienti' : 'Clienti ';
     if (total !== null) frame.title.appendChild(el('span', 'bo-clienti-count', String(total)));
     paintViews(meta);
