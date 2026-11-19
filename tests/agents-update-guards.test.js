@@ -17,13 +17,12 @@ import { ValidationError } from '../packages/core/src/errors.js';
 /**
  * Hand-written prefix guard (review #879 giro 2, backlog:7d169a3b1dd2).
  *
- * `update-agent` only touches hand-written agents
+ * `update-agent` and `set-agent-status` only touch hand-written agents
  * (`custom-agent:<space>:<key>`). A catalogue key (`agent:<space>:<slug>`)
- * posted to it is refused with a 400 ValidationError before any row is
- * read or written, so a production catalogue agent can never be renamed
- * from outside the card. Backlog 8605b6f520c0: `set-agent-status` runs
- * for every team row instead — a catalogue agent pauses and resumes from
- * its own card, by sourceKey like every other row.
+ * posted directly — bypassing the card, which only shows Modifica/Ritira
+ * on hand-written cards — is refused with a 400 ValidationError before any
+ * row is read or written, so a production catalogue agent can never be
+ * renamed, paused or resumed from outside the card.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -102,22 +101,13 @@ test('set-agent-status pauses a hand-written agent and replays the same status',
   assert.equal(replay.duplicate, true);
 });
 
-test('set-agent-status pauses and resumes a catalogue row (backlog:8605b6f520c0)', async () => {
+test('set-agent-status refuses a catalogue key with 400, paused or active', async () => {
   const ops = compose();
-  await ops.createAgent({
-    actor: USER,
-    spaceId: SPACE,
-    sourceKey: CATALOGUE_KEY,
-    name: 'Riaggancio',
-    role: 'Ricontatta i clienti',
-    instructions: 'Trova i clienti fermi e proponi il riaggancio.',
-  });
-  const paused = await ops.setAgentStatus({
-    actor: USER, spaceId: SPACE, agentSourceKey: CATALOGUE_KEY, status: 'paused',
-  });
-  assert.equal(paused.agent.status, 'paused');
-  const resumed = await ops.setAgentStatus({
-    actor: USER, spaceId: SPACE, agentSourceKey: CATALOGUE_KEY, status: 'active',
-  });
-  assert.equal(resumed.agent.status, 'active');
+  await makeHandAgent(ops);
+  for (const status of ['paused', 'active']) {
+    await assert.rejects(
+      ops.setAgentStatus({ actor: USER, spaceId: SPACE, agentSourceKey: CATALOGUE_KEY, status }),
+      (error) => error instanceof ValidationError && error.status === 400,
+    );
+  }
 });

@@ -1392,48 +1392,39 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
     if (draft.done !== '') box.appendChild(el(documentNode, 'p', 'bo-agent-done', draft.done));
     // Backlog 7d169a3b1dd2: a hand-written agent is edited and retired
-    // from its own card. Backlog 8605b6f520c0: a catalogue agent is
-    // retired and resumed from its own card too — the catalogue owns its
-    // rows, so only Modifica stays hand-written; Ritira/Riattiva writes
-    // the row's own status by sourceKey. No native confirm() anywhere:
-    // Ritira asks inline.
-    if (card.id !== null) box.appendChild(renderManage(card));
+    // from its own card — the catalogue owns its rows, so its tiles keep
+    // only Aggiungi. No native confirm() anywhere: Ritira asks inline.
+    if (card.custom && card.id !== null) box.appendChild(renderManage(card));
     return box;
   }
 
   /**
-   * Modifica/Ritira of one team agent: Modifica stays hand-written (the
-   * catalogue owns its rows), while the two-step inline Ritira/Riattiva
-   * runs on every row — catalogue agents could never be stopped before
-   * (backlog:8605b6f520c0). The edit panel keeps the same checks as
-   * «Nuovo agente» (errors next to their field).
+   * Modifica/Ritira of one hand-written agent: the edit panel with the
+   * same checks as «Nuovo agente» (errors next to their field), and the
+   * two-step inline retire.
    * @param {any} card
    */
   function renderManage(card) {
     const manage = el(documentNode, 'div', 'bo-agent-manage');
     const paused = card.status === 'paused';
     const row = el(documentNode, 'div', 'bo-seq-btns');
-    // Backlog 8605b6f520c0: Modifica stays hand-written — the catalogue
-    // owns its rows — while Ritira/Riattiva below runs on every row.
-    const editOpen = card.custom && state.editing.has(card.sourceKey);
-    if (card.custom) {
-      const edit = uiButton(documentNode, {
-        variant: 'secondary', small: true,
-        label: editOpen ? 'Chiudi modifica' : 'Modifica',
-        attrs: { type: 'button', 'data-action': 'edit-agent', 'aria-expanded': editOpen ? 'true' : 'false' },
-      });
-      edit.addEventListener('click', () => {
-        if (state.editSaved !== null && state.editSaved.key === card.sourceKey) state.editSaved = null;
-        if (state.editing.has(card.sourceKey)) state.editing.delete(card.sourceKey);
-        else editOf(card);
-        paint();
-        if (state.editing.has(card.sourceKey)) {
-          const panel = findNode(mount, (node) => node.getAttribute('data-edit') === card.sourceKey);
-          focusFieldError(panel, 'agent-edit-name');
-        }
-      });
-      row.appendChild(edit);
-    }
+    const editOpen = state.editing.has(card.sourceKey);
+    const edit = uiButton(documentNode, {
+      variant: 'secondary', small: true,
+      label: editOpen ? 'Chiudi modifica' : 'Modifica',
+      attrs: { type: 'button', 'data-action': 'edit-agent', 'aria-expanded': editOpen ? 'true' : 'false' },
+    });
+    edit.addEventListener('click', () => {
+      if (state.editSaved !== null && state.editSaved.key === card.sourceKey) state.editSaved = null;
+      if (state.editing.has(card.sourceKey)) state.editing.delete(card.sourceKey);
+      else editOf(card);
+      paint();
+      if (state.editing.has(card.sourceKey)) {
+        const panel = findNode(mount, (node) => node.getAttribute('data-edit') === card.sourceKey);
+        focusFieldError(panel, 'agent-edit-name');
+      }
+    });
+    row.appendChild(edit);
     const retireEntry = state.retiring.get(card.sourceKey) ?? null;
     const retire = uiButton(documentNode, {
       variant: 'secondary', small: true,
@@ -1923,9 +1914,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   /**
    * Backlog 7d169a3b1dd2: a hand-written agent's own Ritira/Riattiva —
    * paused/resumed — through set-agent-status, under one Idempotency-Key
-   * from the bound client. Backlog 8605b6f520c0: the same call runs for a
-   * catalogue agent's own card, by sourceKey like every other team row.
-   * Writing the status it already carries replays.
+   * from the bound client. Writing the status it already carries replays.
    * @param {any} card @param {string} status @param {string} key
    */
   async function setHandAgentStatus(card, status, key) {
@@ -2027,9 +2016,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   /**
    * Backlog 7d169a3b1dd2: Ritira (or Riattiva) a hand-written agent — an
-   * inline Conferma/Annulla two-step, never a native confirm(). Backlog
-   * 8605b6f520c0: the same two-step runs on a catalogue agent's own card.
-   * A refused write rotates the key; an unserved route reads neutral.
+   * inline Conferma/Annulla two-step, never a native confirm(). A refused
+   * write rotates the key; an unserved route reads neutral.
    * @param {any} card @param {boolean} pause
    */
   async function retireAgent(card, pause) {
