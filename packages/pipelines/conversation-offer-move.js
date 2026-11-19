@@ -231,8 +231,19 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   if (decision !== 'accept' && decision !== 'reject') {
     throw new ValidationError('decision must be "accept" or "reject"', { field: 'decision' });
   }
-  if (decision === 'reject' && (typeof reason !== 'string' || reason === '')) {
-    throw new ValidationError('rejecting an offer move requires a reason', { field: 'reason' });
+  const confirmReason = (value) => {
+    const checked = requireText(value, 'reason', QUOTE_MAX);
+    if (checked.trim() === '') {
+      throw new ValidationError('reason must be a non-blank string', { field: 'reason' });
+    }
+    return checked;
+  };
+  let validatedRejectReason = null;
+  if (decision === 'reject') {
+    if (typeof reason !== 'string' || reason === '') {
+      throw new ValidationError('rejecting an offer move requires a reason', { field: 'reason' });
+    }
+    validatedRejectReason = confirmReason(reason);
   }
   // A confirmed move to the lost stage must satisfy the move-stage contract:
   // move-stage refuses a lost move with no reason, so the accept carries the
@@ -242,11 +253,18 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   // uses. An unknown stage is refused, never coerced into a lost move.
   const confirmedSpaceId = requireSpaceId(proposal.spaceId);
   const confirmedOpportunityId = requireText(proposal.opportunityId, 'opportunityId', ID_MAX);
-  if (!findStage(accordoSalesPipeline, proposal.fromStage)) {
+  const currentStage = typeof proposal.fromStage === 'string' ? findStage(accordoSalesPipeline, proposal.fromStage) : null;
+  if (!currentStage) {
     throw new ValidationError('proposal fromStage must be one of the accordo-sales pipeline stages', {
       field: 'proposal.fromStage',
       allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
     });
+  }
+  if (currentStage.type !== 'open' && currentStage.type !== 'renewal') {
+    throw new AppError(
+      `Cannot move out of terminal stage "${currentStage.key}" (${currentStage.type}); reopening is not supported`,
+      { code: 'TERMINAL_STAGE', status: 409, details: { stage: currentStage.key, type: currentStage.type } },
+    );
   }
   const targetStage = typeof proposal.toStage === 'string' ? findStage(accordoSalesPipeline, proposal.toStage) : null;
   if (!targetStage) {
@@ -255,10 +273,22 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
       allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
     });
   }
+  if (proposal.fromStage === proposal.toStage) {
+    throw new ValidationError('toStage must differ from fromStage: a proposal moves the offer somewhere else', {
+      field: 'proposal.toStage',
+      fromStage: proposal.fromStage,
+    });
+  }
   const needsCloseReason = targetStage.type === 'lost';
-  const acceptReason = typeof reason === 'string' && reason !== ''
-    ? reason
-    : (typeof proposal.closeReason === 'string' && proposal.closeReason !== '' ? proposal.closeReason : null);
+  const freshReason = decision === 'accept' && typeof reason === 'string' && reason !== ''
+    ? confirmReason(reason)
+    : null;
+  const suggestedReason = decision === 'accept'
+      && typeof proposal.closeReason === 'string'
+      && proposal.closeReason !== ''
+    ? confirmReason(proposal.closeReason)
+    : null;
+  const acceptReason = freshReason ?? suggestedReason;
   if (decision === 'accept' && needsCloseReason && !acceptReason) {
     throw new ValidationError('accepting a move to the lost stage requires a reason', { field: 'reason' });
   }
@@ -267,7 +297,7 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
     status: decision === 'accept' ? 'confirmed' : 'rejected',
     decidedBy: Object.freeze({ type: actor.type, id: actor.id }),
     decidedAt: nowIso(),
-    reason: typeof reason === 'string' ? reason : null,
+    reason: decision === 'reject' ? validatedRejectReason : freshReason,
   });
   return {
     proposal: decided,

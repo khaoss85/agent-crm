@@ -314,6 +314,68 @@ test('unknown stages and moves out of terminal stages are refused at route time'
   );
 });
 
+// P1 (giro 4): confirm mirrors the route guards — terminal fromStage and
+// same-stage proposals are refused at confirm time, not applied later.
+test('confirm refuses terminal fromStage and same-stage proposals', () => {
+  const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
+  const routed = route(body, 'prova', { messageId: 'wa:msg:60' });
+
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, fromStage: 'perso', toStage: 'proposta' },
+      { actor: PERSON, decision: 'accept' },
+    ),
+    (error) => error.code === 'TERMINAL_STAGE' && error.status === 409,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, fromStage: 'pagato', toStage: 'proposta' },
+      { actor: PERSON, decision: 'accept' },
+    ),
+    (error) => error.code === 'TERMINAL_STAGE' && error.status === 409,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, fromStage: 'prova', toStage: 'prova' },
+      { actor: PERSON, decision: 'accept' },
+    ),
+    /toStage must differ from fromStage/,
+  );
+});
+
+// P2 (giro 4): confirm-time close reason keeps the route bound — non-blank,
+// at most 2000 chars — for the fresh reason and the suggested fallback.
+test('confirm refuses blank or overlong close reasons', () => {
+  const body = 'Grazie ma non mi interessa più, cancellate pure tutto.';
+  const routed = route(body, 'proposta', { messageId: 'wa:msg:61' });
+
+  assert.throws(
+    () => confirmOfferMoveProposal(routed.proposal, {
+      actor: PERSON, decision: 'accept', reason: '   ',
+    }),
+    /reason must be a non-blank string/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(routed.proposal, {
+      actor: PERSON, decision: 'accept', reason: `x`.repeat(2001),
+    }),
+    /at most 2000 characters/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(
+      { ...routed.proposal, closeReason: '   ' },
+      { actor: PERSON, decision: 'accept' },
+    ),
+    /reason must be a non-blank string/,
+  );
+  assert.throws(
+    () => confirmOfferMoveProposal(routed.proposal, {
+      actor: PERSON, decision: 'reject', reason: '   ',
+    }),
+    /reason must be a non-blank string/,
+  );
+});
+
 // P1 (giro 3): requireSpaceId uses the same normalization as the permission
 // gate — trim plus control-character refusal — so the gated space and the
 // stored/carried one are the same.
