@@ -486,6 +486,9 @@ function shapeAppointments(schedule) {
     // backlog:5346ab531538: the history row of a cancellation.
     cancelReason: row.cancelReason ?? null,
     decidedAt: row.decidedAt ?? null,
+    // backlog:0d68c387: the instant the booking was fixed, so the cronologia
+    // orders the fissato row by event date, not by slot date.
+    bookedAt: row.bookedAt ?? null,
   })));
   return Object.freeze({
     available: true,

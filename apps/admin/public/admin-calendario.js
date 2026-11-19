@@ -1175,20 +1175,66 @@ export function aiBlockOf(error) {
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
+ * An exact identity wins; then the visible person name (case-insensitive,
+ * without the painted homonym ordinal).
+ * backlog:a16726b5ea76 (follow-up, live 18/11: «daniele pelleri»,
+ * «Daniele Pelleri» and «daniele pelleri (2)» all answered «… non è nel
+ * team» while «khaoss85» worked) — the person holds several identities
+ * the roster does not join into one row (same cause as the
+ * persona-identificativi family): the match is by visible name, without
+ * case and without the « (N)» suffix, and rows showing the same name are
+ * searched together. The search stays fail-closed (personFreeSlots offers
+ * only steps free under EVERY identity), so a stranger or a homonym never
+ * books as the wrong human: proposals spanning several distinct rows are
+ * never directly bookable — the operator picks the person in the
+ * «Nuovo appuntamento» form (review accordo-muse-review #1047 P1).
+ * Strangers stay out — the caller sends them down the «non capisco»
+ * path. Only the painted shape is stripped (« (2)»: one space, digits,
+ * end); «Marco(2)» or «Marco  (2)» stay part of the searched name.
+ * A literal roster name wins before any stripping, so a real
+ * «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * round 1, P2 regression) — but the generic «Membro del team» fallback
+ * names nobody (review #1017 round 1, P2).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ * @returns {Array<object>} the matched person rows, in painted order
  */
-export function resolveDraftMemberIds(draftMember, named, members) {
+export function matchDraftMemberRows(draftMember, named, members) {
   if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
-  if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
-  if (byName.length === 1) return [...byName[0].ids];
+  if (exact) return [exact];
+  const fold = (text) => String(text).trim().toLowerCase();
+  const stripOrdinal = (text) => fold(text).replace(/ \(\d+\)$/, '');
+  // A row without a person name only lends its painted label when the
+  // label is a real signal (slug words like «Marco Rossi»); the generic
+  // fallback (with or without a painted ordinal) matches nothing.
+  const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
+  const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
+  const wanted = fold(draftMember);
+  // The raw step reads person names only, never painted labels: a literal
+  // roster name («Marco Rossi (2)») still finds its own row before any
+  // stripping (review #1017 giro 1, P2 regression).
+  const raw = rows.filter((row) => matchable(row)
+    && typeof row.name === 'string' && fold(row.name) === wanted);
+  if (raw.length >= 1) return raw;
+  const stripped = stripOrdinal(draftMember);
+  if (stripped === '') return [];
+  const byName = rows.filter((row) => matchable(row)
+    && namesOf(row).some((name) => stripOrdinal(name) === stripped));
+  if (byName.length >= 1) return byName;
   return [];
+}
+
+/**
+ * backlog:a16726b5ea76 — the booking identities of the rows
+ * matchDraftMemberRows finds, without doubles: one human split over
+ * several identities searches them all together. The union is for the
+ * search only — booking as one of them stays with the operator whenever
+ * the rows are several (see the phrase flow and confirmSlot).
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  return [...new Set(matchDraftMemberRows(draftMember, named, members).flatMap((row) => row.ids))];
 }
 
 /**
@@ -1584,6 +1630,8 @@ export function createCalendarioView(deps) {
     pendingEventId: null,
     /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
     pendingEventMember: null,
+    /** Booked start the highlight falls back to when the confirm answer carries no id (production bridge). @type {string|null} */
+    pendingEventStart: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1812,6 +1860,28 @@ export function createCalendarioView(deps) {
         // The explicit request beats a retained «hide this person»
         // (review Muse #792): the asked event's member shows again.
         else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
+      }
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carried no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person. The local copy rides until the server week carries a row
+      // with the same time, which the highlight then adopts by id. A
+      // cancelled server row with the same time retires everything: the
+      // server stays authoritative, like the id handshake above.
+      else if (state.pendingEventStart !== null && state.pendingEventMember !== null) {
+        carryBookedRow();
+        const match = pendingTimeRow();
+        if (match !== null && typeof match.id === 'string' && match.id !== '') {
+          state.selectedId = match.id;
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(match.teamMemberId ?? ''));
+        } else if (match === null && cancelledTimeRow()) {
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.selectedId = null;
+        }
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
@@ -2072,6 +2142,39 @@ export function createCalendarioView(deps) {
       }
     }
     return null;
+  }
+
+  /**
+   * backlog:134f3ed7 (seguito 18/11) — the non-cancelled row with the
+   * just-booked time and person, for confirms whose answer carries no id
+   * (production bridge). Only the grid highlight and the reload handshake
+   * read it — never the detail selection, so no popover opens uninvited.
+   */
+  function pendingTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A cancelled server row with the just-booked time and person: the booking is gone, so the fallback retires. */
+  function cancelledTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return false;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (!isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -3283,13 +3386,21 @@ export function createCalendarioView(deps) {
       for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
-        const ghost = el(doc, 'button', {
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows paints as a marker, never as a
+        // booking button — the click would book the wrong human.
+        const choiceOnly = slot?.personChoiceRequired === true;
+        const ghost = el(doc, choiceOnly ? 'div' : 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
+          attrs: choiceOnly
+            ? { style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`, 'aria-disabled': 'true' }
+            : { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
-        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        if (!choiceOnly) {
+          holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+          ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        }
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3341,9 +3452,14 @@ export function createCalendarioView(deps) {
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
       const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+      // spanning several rows is never confirmed from the card — the
+      // operator picks the person in the form.
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
+        text: slot?.personChoiceRequired === true
+          ? `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dal modulo «Nuovo appuntamento» dopo aver scelto la persona.`
+          : `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
       }));
     }
     return panel;
@@ -3390,7 +3506,11 @@ export function createCalendarioView(deps) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
+    const timeFallback = state.selectedId === null && state.pendingEventStart !== null
+      && state.pendingEventMember !== null
+      && String(row?.teamMemberId ?? '') === state.pendingEventMember
+      && String(row?.startsAt ?? '') === state.pendingEventStart;
+    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
@@ -3413,46 +3533,42 @@ export function createCalendarioView(deps) {
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     const origin = originOf(row);
-    if (durationMin < 45) {
-      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
-      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
-      // The origin badge stays readable on the single line when the foot
-      // below stays hidden (15-min blocks), so nothing paints half-cut.
-      // At 30+ min the foot carries avatar and badges.
-      if (durationMin < 30) {
-        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
-      }
-    } else {
-      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    }
-    const foot = el(doc, 'span', { className: 'cal-day-foot' });
-    // Initials decorate (the tint already encodes the member); the WA badge
-    // stays readable because it names the booking origin.
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+    // backlog:667f1f1c: below 60 min no row paints under the title rows —
+    // the verifier saw the initials dot half-cut in a 43px block. Badges
+    // (origin, cancelled) ride the line that already paints; the foot with
+    // the initials dot paints only where it fits whole (60+ min).
+    const badgeNodes = [];
     // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    if (origin === 'whatsapp') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-    } else if (origin === 'google') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-    } else if (origin === 'link') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-    }
+    if (origin === 'whatsapp') badgeNodes.push(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    else if (origin === 'google') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    else if (origin === 'link') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
-    if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    if (cancelled) badgeNodes.push(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    const lineBadges = () => {
+      const wrap = el(doc, 'span', { className: 'cal-line-badges' });
+      for (const badge of badgeNodes) wrap.appendChild(badge);
+      return wrap;
+    };
+    if (durationMin < 45) {
+      // A short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      if (badgeNodes.length > 0) item.appendChild(lineBadges());
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      if (durationMin < 60 && badgeNodes.length > 0) item.appendChild(lineBadges());
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
     }
-    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
-    // block has room — 15-min blocks already carry origin and status on
-    // their single line, so the foot never paints half-cut.
-    if (durationMin >= 30) item.appendChild(foot);
+    if (durationMin >= 60) {
+      const foot = el(doc, 'span', { className: 'cal-day-foot' });
+      // Initials decorate (the tint already encodes the member).
+      foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+      if (badgeNodes.length > 0) foot.appendChild(lineBadges());
+      item.appendChild(foot);
+    }
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
@@ -4101,10 +4217,15 @@ export function createCalendarioView(deps) {
       for (const slot of state.proposals.slice(0, 24)) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
-        const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
-        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
-        item.appendChild(confirm);
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows offers no direct Conferma — booking
+        // as the first identity could hit the wrong human.
+        if (slot?.personChoiceRequired !== true) {
+          const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
+          holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+          confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+          item.appendChild(confirm);
+        }
         list.appendChild(item);
       }
       panel.appendChild(list);
@@ -4292,7 +4413,10 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
-        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
+        // known team does not hold was never «in the team» — the phrase did
+        // not name a person we know, so it says so instead of refusing them.
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it. The outsider name never fills
         // «Persona del team» (production after #735): the field stays empty,
@@ -4311,6 +4435,15 @@ export function createCalendarioView(deps) {
       // person: offer a step only when every identity reports it free, so a
       // booking under one identity never double-books their other one.
       const kept = personFreeSlots(groups, searchIds, member);
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // visible name can span several distinct rows — one human over split
+      // identities, or true homonyms the roster cannot tell apart. The
+      // proposals are real steps free under every identity, but no slot
+      // may book directly as the wrong human: the operator picks the
+      // person in the «Nuovo appuntamento» form.
+      const needsPersonChoice = matchDraftMemberRows(
+        member, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      if (needsPersonChoice) for (const slot of kept) slot.personChoiceRequired = true;
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
@@ -4353,7 +4486,13 @@ export function createCalendarioView(deps) {
       // a free 30-minute step stays 20, never the search size).
       const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
-      state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
+      // several rows the recognition stands (the draft and its free steps),
+      // but the booking waits for the operator's pick — never a direct
+      // Conferma as the first identity.
+      state.draftNote = needsPersonChoice
+        ? 'Bozza pronta: con questo nome ci sono più persone, scegli nel modulo «Nuovo appuntamento» e conferma da lì.'
+        : 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
       if (Number.isFinite(timedAt) && !exact) {
         const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
@@ -4409,12 +4548,21 @@ export function createCalendarioView(deps) {
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
-      const ids = resolveDraftMemberIds(
-        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
-        parseMemberFilter(state.memberFilter),
-        state.members,
-      );
-      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      const memberText = typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '';
+      const ids = resolveDraftMemberIds(memberText, parseMemberFilter(state.memberFilter), state.members);
+      const multiRow = matchDraftMemberRows(memberText, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // raw drafted name is nobody's identity — with several rows it must
+      // not land in the person field (it would book the name itself). The
+      // operator picks the person on the menu instead.
+      const fillFor = (base) => {
+        if (ids.length === 1) return { ...base, teamMemberId: ids[0] };
+        if (!multiRow) return base;
+        const rest = { ...base };
+        delete rest.teamMemberId;
+        return rest;
+      };
+      let fill = fillFor(state.draft);
       // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
       // every opening proposes a time, so the first free step of the drafted
       // day rides into the form — a real free slot, never an invented
@@ -4427,7 +4575,7 @@ export function createCalendarioView(deps) {
           : null;
         if (first) {
           state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
-          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+          fill = fillFor(state.draft);
         }
       }
       fillManual(fill);
@@ -4676,6 +4824,14 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+    // spanning several rows never books here — even a crafted call lands
+    // on this refusal, and the operator picks the person in the form.
+    if (slot?.personChoiceRequired === true) {
+      state.aiNote = 'Con questo nome ci sono più persone: scegli nel modulo «Nuovo appuntamento» e conferma da lì.';
+      renderAll();
+      return;
+    }
     // Team visibility (backlog:9aa5c073): the slot Conferma books the claim
     // the operator sees — the live select value, like the manual Conferma.
     const slotVisibility = manualValue('visibility');
@@ -4768,12 +4924,27 @@ export function createCalendarioView(deps) {
     const booked = state.confirmed;
     const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
     const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
-    if (id === null || member === null) return;
+    if (member === null) return;
     if (!state.week || !Array.isArray(state.week.members)) return;
     const day = romeDayKey(booked?.startsAt);
     if (!day || !state.weekKeys.includes(day)) return;
     const group = state.week.members.find((entry) => entry?.teamMemberId === member);
     if (!group || !Array.isArray(group.appointments)) return;
+    if (id === null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the booked time rides instead. A server row
+      // with the same time already there wins, booked or cancelled — never
+      // a duplicate, never a phantom over a cancellation.
+      const start = typeof booked?.startsAt === 'string' && booked.startsAt !== '' ? booked.startsAt : null;
+      if (start === null) return;
+      if (group.appointments.some((row) => String(row?.startsAt ?? '') === start)) return;
+      const appointments = [...group.appointments, booked];
+      state.week = {
+        ...state.week,
+        members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+      };
+      return;
+    }
     const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
     // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
     // reloaded server week is authoritative: when the id is already there
@@ -4816,6 +4987,7 @@ export function createCalendarioView(deps) {
     const member = typeof appointment?.teamMemberId === 'string' && appointment.teamMemberId !== '' ? appointment.teamMemberId : null;
     state.pendingEventId = id;
     state.pendingEventMember = member;
+    state.pendingEventStart = typeof appointment?.startsAt === 'string' && appointment.startsAt !== '' ? appointment.startsAt : null;
     const day = romeDayKey(appointment?.startsAt);
     if (day && !state.weekKeys.includes(day)) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
@@ -4826,6 +4998,12 @@ export function createCalendarioView(deps) {
     // grid shows it before the reload lands. The reload reconciles.
     if (id !== null) {
       state.selectedId = id;
+      carryBookedRow();
+    } else if (member !== null && state.pendingEventStart !== null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person until the reload adopts the server row with the same time.
+      state.selectedId = null;
       carryBookedRow();
     }
   }
@@ -5626,6 +5804,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = null;
       state.pendingEventMember = null;
+      state.pendingEventStart = null;
       resetPopSteps();
       state.moveNote = '';
       cancelCustomerSearch();
@@ -5645,6 +5824,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = askedEvent.id;
       state.pendingEventMember = askedEvent.member ?? null;
+      state.pendingEventStart = null;
     }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {

@@ -446,41 +446,74 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
 
 /**
  * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
- * rows that paint the same name with the same mailbox and access line are
- * indistinguishable on screen («Daniele Pelleri» vs «daniele pelleri», both
- * with the same avatar). One entry per colliding painted name, in team
- * order; rows told apart by mailbox or access kind stay silent, like the
- * homonyms the access line already separates. A name alone never proves one
- * person (backlog:9d06eb1e174b), so the hint names the cause and the cure —
- * it never merges or removes anything itself.
+ * rows that paint the same REAL name are indistinguishable on screen
+ * («Daniele Pelleri» vs «daniele pelleri», both with the same avatar),
+ * even when the mailbox or the access line tells them apart («Accesso
+ * Google» vs «Accesso di servizio»). One entry per colliding painted name,
+ * in team order; mailbox and access kind never silence the hint — the same
+ * person resolution covers different accesses, and two homonyms stay
+ * candidates the operator keeps. The generic placeholder («Membro del
+ * team», review #1043 P2) is not a name: rows without a real name fall back
+ * to the mailbox, then to their subjects, so two unenriched rows never
+ * collide. A name alone never proves one person (backlog:9d06eb1e174b), so
+ * the hint explains the two access lines and warns that removing suspends
+ * the person in the whole organisation — it never merges or removes
+ * anything itself.
  * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
  */
+const PLACEHOLDER_TEAM_NAME = 'membro del team';
+
+/** A painted name the hint may key on: never empty, never the generic placeholder. @param {string} name */
+function teamHintHasName(name) {
+  return name !== '' && name.toLowerCase() !== PLACEHOLDER_TEAM_NAME;
+}
+
+/** @param {unknown} row */
+function teamHintSubjects(row) {
+  if (!row || typeof row !== 'object') return [];
+  const fromList = Array.isArray(row.subjects) ? row.subjects : [];
+  const single = typeof row.subject === 'string' ? [row.subject] : [];
+  return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
+}
+
 export function duplicateTeamHints(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   const byPaint = new Map();
-  for (const row of list) {
-    if (!row || typeof row !== 'object') continue;
-    const name = typeof row.name === 'string' ? row.name : '';
-    const email = typeof row.email === 'string' ? row.email : '';
-    const access = typeof row.access === 'string' ? row.access : '';
-    if (name === '' && email === '') continue;
-    const key = [name.toLowerCase(), email.toLowerCase(), access.toLowerCase()].join(' ');
+  list.forEach((row, index) => {
+    if (!row || typeof row !== 'object') return;
+    const name = typeof row.name === 'string' ? row.name.trim().replace(/\s+/g, ' ') : '';
+    const email = typeof row.email === 'string' ? row.email.trim() : '';
+    const subjects = [...new Set(teamHintSubjects(row))].sort();
+    // Same person resolution, access included: a real painted name alone
+    // keys the hint (case-insensitive), so a Google row and a servizio row
+    // with the same name collide; the placeholder never keys it (review
+    // #1043 P2: it would invite removing a live member), falling back to
+    // the mailbox and then to the subjects.
+    const key = teamHintHasName(name)
+      ? `name:${name.toLowerCase()}`
+      : email !== ''
+        ? `mail:${email.toLowerCase()}`
+        : subjects.length > 0 ? `subject:${subjects.join('+')}` : `row:${index}`;
     byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
-  }
+  });
   const hints = [];
   for (const group of byPaint.values()) {
     if (group.length < 2) continue;
-    const variants = [...new Set(group.flatMap((row) => {
-      const fromList = Array.isArray(row.subjects) ? row.subjects : [];
-      const single = typeof row.subject === 'string' ? [row.subject] : [];
-      return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
-    }))];
+    const variants = [...new Set(group.flatMap((row) => teamHintSubjects(row)))];
     if (variants.length < 2) continue;
-    const painted = group[0].name !== '' ? group[0].name : group[0].email;
+    const first = group[0];
+    const firstName = typeof first.name === 'string' ? first.name.trim().replace(/\s+/g, ' ') : '';
+    const firstEmail = typeof first.email === 'string' ? first.email.trim() : '';
+    const painted = teamHintHasName(firstName) ? firstName : firstEmail;
+    const accesses = [...new Set(group.map((row) => (
+      typeof row.access === 'string' && row.access.trim() !== '' ? row.access.trim() : null
+    )).filter((access) => access !== null))];
+    const cause = accesses.length > 0 ? ` ma con accessi diversi (${accesses.join(', ')})` : '';
     hints.push({
       name: painted,
       count: group.length,
-      text: `«${painted}» compare ${group.length} volte con lo stesso nome: se è la stessa persona con due voci, rimuovi quella vecchia con Rimuovi; se sono due persone diverse, ignoralo.`,
+      accesses,
+      text: `«${painted}» compare ${group.length} volte con lo stesso nome${cause}: è quasi sempre la stessa persona che entra in due modi. Non rimuovere nessuna delle due righe per sistemare: la rimozione sospende la persona in tutta l'organizzazione.`,
     });
   }
   return hints;
@@ -662,11 +695,13 @@ export function createSpaziAccessiView(deps) {
   // unit tests) skip the outside closer; the toggles, the voices and Escape
   // still work there.
   // Toggling a menu repaints the whole view, so the node that had keyboard
-  // focus is gone after render(): closing with Escape returns focus to the
-  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
-  // click leaves focus where the user put it.
+  // focus is gone after render(): closing returns focus to the toggle that
+  // opened the menu (backlog:dd570f6d501e) — Escape and an outside click
+  // alike, so focus never falls back to the body.
   /** Currently rendered menu nodes, rebuilt on every render. */
   const liveMenuWraps = [];
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   function focusToggle(selector) {
     if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
     const target = mount.querySelector(selector);
@@ -679,14 +714,35 @@ export function createSpaziAccessiView(deps) {
     render();
     focusToggle(refocusSelector);
   }
+  // An outside click must not repaint the whole view: render() replaces
+  // every node, including the control the user just clicked, so its focus
+  // and form state would be lost (review P2 on #753). Dismissing only
+  // removes the open menu wraps, marks both toggles collapsed and returns
+  // focus to the opener; every other node survives untouched.
+  function dismissMenus(refocusSelector = null) {
+    if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
+    state.newSpaceMenuOpen = false;
+    state.inviteMenuOpen = false;
+    for (const wrap of liveMenuWraps.splice(0)) {
+      if (wrap && wrap.parentNode && typeof wrap.parentNode.removeChild === 'function') {
+        wrap.parentNode.removeChild(wrap);
+      }
+    }
+    if (mount && typeof mount.querySelector === 'function') {
+      for (const selector of [newSpaceToggleSelector, inviteToggleSelector]) {
+        const toggle = mount.querySelector(selector);
+        if (toggle && typeof toggle.setAttribute === 'function') toggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+    lastPaint = childrenOf();
+    focusToggle(refocusSelector);
+  }
   function trackMenuWrap(node, toggleSelector = null) {
     liveMenuWraps.push(node);
     node.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
     });
   }
-  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
-  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   if (doc && typeof doc.addEventListener === 'function') {
     doc.addEventListener('click', (event) => {
       let node = event?.target ?? null;
@@ -694,7 +750,7 @@ export function createSpaziAccessiView(deps) {
         if (liveMenuWraps.includes(node)) return;
         node = node.parentNode ?? null;
       }
-      closeMenus();
+      dismissMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : state.inviteMenuOpen ? inviteToggleSelector : null);
     });
     // Codex P2 on #763: render() removes the focused toggle, so in a real
     // browser focus falls back to the body and Escape never reaches the
@@ -1130,9 +1186,15 @@ export function createSpaziAccessiView(deps) {
       if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
-      // Closing from the toggle replaces the toggle itself: keep keyboard
-      // focus on it, so Tab continues from the button that closed the menu.
-      if (!willOpen) focusToggle(newSpaceToggleSelector);
+      // Opening paints the menu new: move keyboard focus to its first voice
+      // (review P2 on #753 — the claimed cure), so Esc and Tab continue from
+      // inside the menu. Closing from the toggle replaces the toggle itself:
+      // keep keyboard focus on it, so Tab continues from the button.
+      if (willOpen) {
+        const menuNode = mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+        const firstVoice = menuNode && typeof menuNode.querySelector === 'function' ? menuNode.querySelector('button') : null;
+        if (firstVoice && typeof firstVoice.focus === 'function') firstVoice.focus();
+      } else focusToggle(newSpaceToggleSelector);
     });
     adderToggle.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
@@ -1311,10 +1373,10 @@ export function createSpaziAccessiView(deps) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
     // backlog:6563edf41aab: possible duplicates read like the customer
-    // cards — one muted line per colliding name, never a merge: the operator
-    // decides with Rimuovi on the stale row.
+    // cards — one spaced line per colliding name, never a merge and never a
+    // removal advice: Rimuovi suspends the person in the whole organisation.
     for (const hint of duplicateTeamHints(rows)) {
-      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted' }));
+      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted bo-spazi-duplicate' }));
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });

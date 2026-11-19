@@ -2,7 +2,7 @@
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
-import { channelState, countedChannel } from './admin-channels-count.js';
+import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -476,7 +476,13 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
 function normalizeIdentityHandle(system, handle) {
   const value = String(handle ?? '');
   if (PHONE_LIKE_SYSTEMS.includes(system)) return value.replace(/[ .\-()/]/g, '');
-  if (system === 'email' || system === 'gmail' || system === 'outlook') return value.toLowerCase();
+  if (system === 'email' || system === 'gmail' || system === 'outlook') {
+    // Voce a5fb07706bff verifier-back su 59c2c14: la stessa casella arriva
+    // con il nome visualizzato («Fio Neri <fio@...>») o senza — l'unione
+    // legge l'indirizzo nudo, maiuscole a parte.
+    const bracket = value.match(/<([^<>@]+@[^<>@]+)>/);
+    return (bracket ? bracket[1] : value).trim().toLowerCase();
+  }
   return value;
 }
 
@@ -1230,6 +1236,11 @@ export function createCustomerCardView(deps) {
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
   const detailsInFlight = new Set();
+  // backlog:26afd13657c5 (ritorno 1, supervisore 17/11): dopo «Salva» in
+  // Modifica la conferma vive nei Dettagli, dove sta l'occhio — il solo
+  // toast in basso a destra restava lontano dalla card salvata.
+  /** @type {string | null} */
+  let detailsSavedKey = null;
   // «Chiama» on a number just saved from the number window (Dan 11/11):
   // the call opens on the re-read card of that same customer, once.
   /** @type {{key: string, number: string} | null} */
@@ -1322,12 +1333,15 @@ export function createCustomerCardView(deps) {
   /** Whether `node` holds the focus of the page. @param {any} node */
   const hasFocus = (node) => node !== null && node !== undefined && doc?.activeElement === node;
   const el = elFor(doc); // BO-F6-02: shared element builder.
-  // backlog:e381c48581fa: the space's channel state, read once per space
-  // (GET /api/connectors plus GET /api/profile, the same pair Connettori
-  // reads) and kept a minute, so «↔ sincronizzato» is claimed only for a
-  // channel `channelState` calls collegato. Never one of the scheda's own
+  // backlog:e381c48581fa + backlog:9790f4df7a93: the space's channel
+  // state, read once per space (GET /api/connectors plus GET /api/profile,
+  // the same pair Connettori reads, plus GET /api/connectors/activity, the
+  // same counters Stato sync reads) and kept a minute, so «↔ sincronizzato»
+  // is claimed only for a channel `channelState` calls collegato WITH a
+  // first event already received (the shared `channelSynced` rule: zero or
+  // unknown events never read sincronizzato). Never one of the scheda's own
   // reads: the identities paint at once and the claim lands when known.
-  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean } | null> } | null} */
+  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean, activity: unknown } | null> } | null} */
   let spaceChannelsRead = null;
   const readSpaceChannels = () => {
     const spaceId = activeSpaceId();
@@ -1352,7 +1366,12 @@ export function createCustomerCardView(deps) {
           warn('channels', error);
           return null;
         }),
-    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile, profileRead: profile !== null }));
+      client.request(`/api/connectors/activity?spaceId=${encodeURIComponent(spaceId)}`)
+        .then((activity) => activity ?? null, (error) => {
+          warn('activity', error);
+          return null;
+        }),
+    ]).then(([profile, rows, activity]) => (rows === null ? null : { rows, profile, profileRead: profile !== null, activity }));
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
@@ -1942,8 +1961,8 @@ export function createCustomerCardView(deps) {
     call.setAttribute('data-action', 'call-customer');
     call.setAttribute('title', phone !== null ? `Chiama ${phone}` : 'Chiama: scegli o scrivi il numero');
     call.addEventListener('click', () => {
-      if (phone !== null && numbers.length <= 1) openCallPanel(box, card, navCtx, phone);
-      else openNumberWindow(box, card, navCtx, numbers);
+      if (phone !== null && numbers.length <= 1) openCallPanel(card, navCtx, phone);
+      else openNumberWindow(card, navCtx, numbers);
     });
     row.appendChild(call);
     // A number just saved from the number window: the call starts on the
@@ -1954,7 +1973,7 @@ export function createCustomerCardView(deps) {
       // Another customer took the screen meanwhile: no call there.
       const same = wanted.key === `${navCtx.resource}/${navCtx.id}`;
       const held = phone === null ? null : phone.replace(/[\s\-().]/g, '');
-      if (same && held === wanted.number) openCallPanel(box, card, navCtx, phone);
+      if (same && held === wanted.number) openCallPanel(card, navCtx, phone);
       else if (same && phone !== null) {
         // The card still dials another number: never call one the
         // operator did not choose.
@@ -1996,7 +2015,7 @@ export function createCustomerCardView(deps) {
    * the card re-reads and the usual «Chiama» flow starts on the number the
    * server holds — the CRM call route dials only that one.
    */
-  function openNumberWindow(box, card, navCtx, numbers) {
+  function openNumberWindow(card, navCtx, numbers) {
     closeSchedaWindows();
     openCallNumberPanel({
       doc,
@@ -2005,7 +2024,7 @@ export function createCustomerCardView(deps) {
       numbers,
       choose: async (number, held) => {
         if (held) {
-          openCallPanel(box, card, navCtx, number);
+          openCallPanel(card, navCtx, number);
           return null;
         }
         try {
@@ -2034,7 +2053,7 @@ export function createCustomerCardView(deps) {
   }
   /** The windows over the scheda: one at a time (Scrivi keeps its draft). */
   function closeSchedaWindows(keep = null) {
-    for (const attr of ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']) {
+    for (const attr of ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone', 'data-call']) {
       if (attr === keep) continue;
       const open = mount.querySelector(`div[${attr}="open"]`);
       if (open && open.parentNode) open.parentNode.removeChild(open);
@@ -2063,14 +2082,19 @@ export function createCustomerCardView(deps) {
     dial.setAttribute('class', 'bo-call-fallback');
     into.appendChild(dial);
   };
-  function openCallPanel(box, card, navCtx, phone) {
+  function openCallPanel(card, navCtx, phone) {
     // Voce 14d999de: the shared scheda window frame — the same dark head
     // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
     // so the panel reads as /bo and Escape/Chiudi close it. A click outside
     // closes it too, through the document closer below.
+    // Seguito ANSWER 17/11 (stessa trappola della #605): the fixed panel
+    // hangs off the view, never the action card — inside the left column it
+    // painted under the Offerta column, covering Riduci/Chiudi. One window
+    // at a time, like Scrivi and the offer window.
+    closeSchedaWindows();
     installCallOutsideCloser(doc);
     const win = openSchedaWindow({
-      doc, host: box, attr: 'data-call', action: 'call',
+      doc, host: mount, attr: 'data-call', action: 'call',
       title: 'Chiama dal CRM',
       customer: typeof card?.name === 'string' ? card.name : null,
     });
@@ -2455,10 +2479,15 @@ export function createCustomerCardView(deps) {
     };
     // A press on the off row with nothing to copy goes to the message field;
     // with words in the request it is left alone, so they can be selected.
+    // backlog:88ab568cdcba (verifier 17/11): the move is announced in the
+    // aria-live reason line, so the cursor never jumps without saying so.
     field.addEventListener?.('mousedown', (event) => {
       if (row.getAttribute('data-off') !== 'true' || prompt.value !== '') return;
       event.preventDefault?.();
       if (typeof text.focus === 'function') text.focus({ preventScroll: true });
+      if (!line.textContent.includes('cursore')) {
+        line.appendChild(el('span', undefined, ' · Il cursore è nel messaggio al cliente.'));
+      }
     });
     // Keys in the off request field: selection and copy keep working (Tab,
     // arrows, Home/End, Shift, Cmd/Ctrl combinations); any key that would
@@ -3378,12 +3407,18 @@ export function createCustomerCardView(deps) {
             continue;
           }
           const linked = channelState(entry.counted, space).state === 'collegato';
-          if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
-          // «non collegato» only when known (review #819 P2): with the
-          // profile unread a Profilo link cannot be ruled out, so the line
-          // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
-          else entry.node.textContent = entry.traffic;
+          // backlog:9790f4df7a93: one synced rule for both views — zero or
+          // unknown events never read sincronizzato, even with two-way
+          // traffic and a fresh update. «non collegato» only when known
+          // (review #819 P2): with the profile unread a Profilo link cannot
+          // be ruled out, so the line keeps the traffic it saw.
+          entry.node.textContent = identitySyncText({
+            linked,
+            both: entry.both,
+            traffic: entry.traffic,
+            received: activityReceived(space.activity, entry.counted),
+            profileRead: space.profileRead,
+          });
         }
       });
     }
@@ -3487,6 +3522,14 @@ export function createCustomerCardView(deps) {
     // Voce 714433c2: Modifica opens the in-place form below. Company
     // records have no update path yet, so a company scheda shows no button.
     const contact = profile?.identity?.contact ?? null;
+    // backlog:26afd13657c5: la conferma del salvataggio sta nei Dettagli,
+    // sopra il bottone — vicina alla card salvata, non solo nel toast.
+    if (detailsSavedKey !== null && editCtx
+      && `${editCtx.resource}/${editCtx.id}` === detailsSavedKey) {
+      const saved = el('p', 'bo-scheda-saved', 'Dati salvati.');
+      saved.setAttribute('role', 'status');
+      box.appendChild(saved);
+    }
     if (editCtx && card?.subject?.resource === 'contact'
       && contact && typeof contact.id === 'string' && contact.id !== '') {
       const edit = el('button', undefined, 'Modifica');
@@ -3499,6 +3542,9 @@ export function createCustomerCardView(deps) {
         details(box, card, profile, editCtx, profileError);
       };
       edit.addEventListener('click', () => {
+        // backlog:26afd13657c5: il form aperto non mostra la conferma
+        // del salvataggio di prima — niente riga vecchia sotto i campi.
+        detailsSavedKey = null;
         renderDetailsForm(box, card, contact, editCtx, restore);
         // backlog:fe9be5f0af4a: the cursor in the first field, at the end.
         focusAtEnd(box.querySelector('input[name="firstName"]'));
@@ -3602,6 +3648,9 @@ export function createCustomerCardView(deps) {
           }),
         });
         detailsInFlight.delete(flightKey);
+        // backlog:26afd13657c5: la conferma vive nei Dettagli, dove sta
+        // l'occhio — restore() la dipinge lì, poi la rilettura la tiene.
+        detailsSavedKey = `${editCtx.resource}/${editCtx.id}`;
         if (typeof restore === 'function') restore();
         // backlog:2a214b66fe12: the new name and email show at once; then
         // only the card and the profile are read again.
@@ -3770,8 +3819,9 @@ export function createCustomerCardView(deps) {
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
     // a run that answers nothing refuses in time with the retry line, never
-    // a wait without end. With no messages the button says so at once under
-    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // a wait without end. With no messages the button sends nothing and one
+    // outcome lands with the re-read — never `Estraggo…`, never a busy label.
+    // When the run lands
     // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
@@ -3797,53 +3847,67 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => {
+      refresh.addEventListener('click', async () => {
         if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
-        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
-        // to extract — the button says so at once and sends nothing, never
-        // «Estraggo…», and never spins without end. The re-read below is the
-        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
-        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        // Backlog e5e3e886, seguito 18/11 (prova del Mac 18/11 21:1xZ): with
+        // no messages there is nothing to extract — one outcome per click
+        // and the button back at once: the warning alone used to be covered
+        // after 0,2 s by «Nessun dato nuovo» while the button stayed
+        // «Aggiorno…» for 3,4 s. No busy label here — the button stays
+        // «Aggiorna» while the re-read below flies under the same
+        // single-flight guard as the extract run. The single outcome lands
+        // with the re-read (arbitrato #853 P1, voce b9f6a2b58e00): changed
+        // facts read «Dati aggiornati», unchanged facts the no-message
+        // warning — never «Nessun dato nuovo», which now means a run
+        // happened and found nothing, and never «Estraggo…».
         if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
-          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-          return uiBusy(refresh, 'Aggiorno…', async () => {
-            busy = true;
-            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
-            // without messages flies under the same single-flight guard as
-            // the extract run — otherwise a repaint in flight lets two
-            // reload()s race and lands the first answer in a detached box.
-            const painted = lastShown;
-            const flight = {};
-            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+          busy = true;
+          // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+          // without messages flies under the same single-flight guard as
+          // the extract run — otherwise a repaint in flight lets two
+          // reload()s race and lands the first answer in a detached box.
+          // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: the reload is not
+          // an extract — it is tagged so the flying indicator never reads
+          // «Estraggo…» for it, and the flight is released before any
+          // landing paint, like the extract run below.
+          const painted = lastShown;
+          const flight = { kind: 'reload' };
+          if (runKey !== null) enrichmentRuns.set(runKey, flight);
+          try {
+            let fresh;
             try {
-              let fresh;
-              try {
-                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
-              } catch (error) {
-                if (isExtractionTimeout(error)) {
-                  toast('Non ha risposto in tempo: riprova.', true);
-                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
-                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
-                  }
-                } else {
-                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+              fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+            } catch (error) {
+              if (isExtractionTimeout(error)) {
+                toast('Non ha risposto in tempo: riprova.', true);
+                if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+                if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                  paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
                 }
-                return;
-              }
-              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
-                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
               } else {
-                while (box.firstChild) box.removeChild(box.firstChild);
-                enriched(box, fresh, reload, null, ctx, null);
+                toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
               }
-              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            } finally {
-              busy = false;
-              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              return;
             }
-          });
+            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+            if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+              paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+            } else {
+              while (box.firstChild) box.removeChild(box.firstChild);
+              enriched(box, fresh, reload, null, ctx, null);
+            }
+            if (before === after) {
+              toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+            } else {
+              toast('Dati aggiornati');
+            }
+          } finally {
+            busy = false;
+            if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+          }
+          return undefined;
         }
         return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
@@ -3851,8 +3915,9 @@ export function createCustomerCardView(deps) {
         // a repaint detached this box while the run flew.
         const painted = lastShown;
         // One POST per customer, however many paints happen while the run
-        // flies; only the run that set it deletes it.
-        const flight = {};
+        // flies; only the run that set it deletes it. Tagged as an extract
+        // so the flying indicator reads «Estraggo…» only for a real run.
+        const flight = { kind: 'extract' };
         if (runKey !== null) enrichmentRuns.set(runKey, flight);
         const release = () => {
           busy = false;
@@ -3947,7 +4012,11 @@ export function createCustomerCardView(deps) {
         });
       });
       box.appendChild(refresh);
-      if (runKey !== null && enrichmentRuns.has(runKey)) {
+      // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: only a real extract run
+      // reads «Estraggo…» — a no-message re-read in flight (kind 'reload')
+      // never promises an extraction it did not start.
+      const flyingFlight = runKey !== null ? enrichmentRuns.get(runKey) : undefined;
+      if (flyingFlight !== undefined && flyingFlight.kind !== 'reload') {
         // A run this button did not start is still flying (a repaint
         // detached its box): the section still reads «Estraggo…», and the
         // button above no-ops until it lands.
@@ -5686,23 +5755,27 @@ export function createCustomerCardView(deps) {
 
   /**
    * backlog:0d68c387 — a confirmed booking reads in the cronologia as its
-   * own row («Appuntamento fissato · servizio · data»), at the slot it
-   * fixes: the booking used to leave no row, only its cancellation. A
-   * decided cancellation (decidedAt) then sorts after it, newest first.
+   * own row («Appuntamento fissato · servizio · data»), at the instant it
+   * was fixed (bookedAt), not at the slot: the booking used to leave no
+   * row, only its cancellation. A cancelled booking keeps that row too
+   * (the Mac saw two cancellations with no fissato row before them): the
+   * cancellation row follows it at the decided instant, newest first. The
+   * title still names the slot; only the grouping instant is the event.
    * @param {any} timeline
    * @param {Map<string, string> | null} serviceNames
    */
   function bookedAppointmentEntries(timeline, serviceNames = null) {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     return items
-      .filter((item) => ['booked', 'confirmed'].includes(String(item?.status ?? '')))
+      .filter((item) => ['booked', 'confirmed', 'cancelled'].includes(String(item?.status ?? '')))
       .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
       .map((item) => {
         const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
+        const bookedMs = Date.parse(String(item?.bookedAt ?? ''));
         return {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
-          occurredAt: item?.startsAt,
+          occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
           title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: null,
         };
@@ -5729,16 +5802,50 @@ export function createCustomerCardView(deps) {
   }
 
   /**
+   * Two keys name the same service when they only differ in case or
+   * separators («PT-singola» vs «pt_singola»): the menu and the stored
+   * booking may spell them apart, the listino name still wins.
+   */
+  function normalizeServiceKey(serviceKey) {
+    return typeof serviceKey === 'string' ? serviceKey.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  }
+
+  /**
    * The booked service as the listino names it («Lezione di prova»), never
-   * the raw slug. A key the listino does not name reads as slug words
-   * («lezione-prova» → «Lezione prova»), like before.
+   * the raw slug. A key the listino does not name reads as slug words —
+   * with the sigle uppercase as in the listino («pt-singola» →
+   * «PT singola», while «lezione-di-prova» stays «Lezione di prova» and
+   * «my-lesson» stays «My lesson»): only a token the listino itself
+   * writes uppercase (plus the known «PT») reads uppercase, never every
+   * vowel-less word (review Codex P2 su c4f2faa: «my», «by», «gym»).
    */
   function serviceTitle(serviceKey, serviceNames = null) {
     const key = typeof serviceKey === 'string' ? serviceKey : '';
-    const named = serviceNames instanceof Map ? serviceNames.get(key) : null;
-    if (typeof named === 'string' && named !== '') return named;
+    if (serviceNames instanceof Map) {
+      const named = serviceNames.get(key);
+      if (typeof named === 'string' && named !== '') return named;
+      const wanted = normalizeServiceKey(key);
+      if (wanted !== '') {
+        for (const [listedKey, listedName] of serviceNames) {
+          if (typeof listedName === 'string' && listedName !== '' && normalizeServiceKey(listedKey) === wanted) return listedName;
+        }
+      }
+    }
     const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+    if (words === '') return 'Appuntamento';
+    const sigle = new Set(['pt']);
+    if (serviceNames instanceof Map) {
+      for (const listedName of serviceNames.values()) {
+        if (typeof listedName !== 'string') continue;
+        for (const token of listedName.split(/\s+/)) {
+          if (token.length >= 2 && /^[A-ZÀ-Þ]+$/.test(token)) sigle.add(token.toLowerCase());
+        }
+      }
+    }
+    const readable = words.split(' ').map((word) =>
+      word.length >= 2 && sigle.has(word.toLowerCase()) ? word.toUpperCase() : word,
+    ).join(' ');
+    return `${readable.charAt(0).toUpperCase()}${readable.slice(1)}`;
   }
 
   const SIGNAL_LABELS = Object.freeze({
@@ -6035,7 +6142,7 @@ export function createCustomerCardView(deps) {
     // offer panel) stay open through a re-read of the same customer, with
     // their text and focus; only the scheda itself is swapped.
     const isWindow = (child) => typeof child?.getAttribute === 'function'
-      && ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']
+      && ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone', 'data-call']
         .some((attr) => child.getAttribute(attr) === 'open');
     const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
     for (const child of Array.from(mount.childNodes ?? [])) {
@@ -6095,6 +6202,9 @@ export function createCustomerCardView(deps) {
       retainedDrafts = null;
       channelFilter = 'all';
       noteAuthorFilter = null;
+      // backlog:26afd13657c5: un altro cliente non eredita la conferma
+      // del salvataggio di prima.
+      detailsSavedKey = null;
       timelineShown = TIMELINE_PAGE;
       // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
       // leaves now — never silently undone by opening another customer —
@@ -6940,11 +7050,15 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    // backlog:9b28b3bc6003: the offer section hides itself when the customer
-    // has none, so the skeleton only covers the unknown — while the profile
-    // is still in flight. The pipelines only name the stage (the line falls
-    // back to the core stage without them), so a slow schema read never
-    // paints an «Offerta» skeleton over a customer with no offer.
+    // backlog:9b28b3bc6003 (main, #992 — supersedes the blank tried in this
+    // PR): the offer section hides itself when the customer has none, so
+    // the skeleton only covers the unknown — while the profile is still in
+    // flight. The pipelines only name the stage (the line falls back to the
+    // core stage without them), so a slow schema read never paints an
+    // «Offerta» skeleton over a customer with no offer. The placeholder also
+    // answers review P2 on c4e8586e: with-offer customers keep a placeholder
+    // instead of a blank-to-card jump. Measured by
+    // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js.
     if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the

@@ -798,7 +798,7 @@ export function createPipelineBoard(deps) {
       }
       moveLocks.delete(id);
       seatedStages.delete(id);
-      const message = moveFailureText(error);
+      let message = moveFailureText(error);
       const lost = lostToAnotherWrite(error);
       if (lost) {
         // Review Muse #852 (P2): the column changed under this drop. On the
@@ -808,8 +808,16 @@ export function createPipelineBoard(deps) {
         // 1541408e8144): someone else moved the card meanwhile, so the card
         // the person sees is stale the same way — the re-read tells the truth.
         // backlog:4eceae80a5ca: the same for a lost CONFLICT.
+        // backlog:5af848afdb63: the fresh board also names the arrival
+        // column, so the lost race says where the card landed — but only
+        // when it landed elsewhere: where it started, the line stays as is.
         restore = null;
+        const before = cached;
         await renderBoard(pipeline.name, { quiet: true });
+        if (cached !== before) {
+          const arrival = arrivalStageLabel(id, fromStage, pipeline);
+          if (arrival !== null) message = lostArrivalText(error, arrival);
+        }
       } else if (restore) {
         restore();
         restore = null;
@@ -1946,6 +1954,25 @@ export function createPipelineBoard(deps) {
   function isMovePending(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     return record.code === 'BO_CRM_PENDING';
+  }
+
+  /**
+   * Where the fresh board holds the card, unless it is still where the
+   * failed move started (backlog:5af848afdb63): a lost race that left the
+   * card at home keeps its generic line, one the winner moved names where.
+   */
+  function arrivalStageLabel(recordId, fromStage, board) {
+    const fresh = cached.records.find((candidate) => String(candidate?.id) === String(recordId));
+    const key = fresh?.pipelineStage;
+    if (typeof key !== 'string' || key === '' || key === fromStage) return null;
+    return stageLabel(board, key);
+  }
+
+  /** A lost race that moved the card elsewhere names the arrival column (backlog:5af848afdb63). */
+  function lostArrivalText(error, arrival) {
+    const record = error !== null && typeof error === 'object' ? error : {};
+    if (record.code === 'STALE_POSITION') return `La colonna è cambiata nel frattempo: ora la card è in «${arrival}».`;
+    return `Questa offerta è stata spostata in «${arrival}» nel frattempo: la pipeline si aggiorna.`;
   }
 
   function moveFailureText(error) {

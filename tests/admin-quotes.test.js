@@ -231,7 +231,8 @@ test('pending approval shows human decision controls; approved and rejected show
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
   // The commercial view never invents a signature surface on its own: without
   // the ADR-017 schema block it degrades to a statement, not a control.
-  assert.ok(approved.textContent.includes('La firma non è attiva in questo progetto.'));
+  // backlog:bfc070243427: plain words, never «progetto» — and what to do.
+  assert.ok(approved.textContent.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'));
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 
@@ -247,7 +248,8 @@ test('version history lists immutable versions with their policy decision', asyn
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('Richiede approvazione'));
-  assert.ok(rows[1].textContent.includes('standard-sales-discount@1'), 'the row names the policy that decided it');
+  assert.ok(rows[1].textContent.includes('Standard sales discount (v1)'), 'the row names the policy that decided it, in words');
+  assert.ok(!rows[1].textContent.includes('standard-sales-discount@1'), 'no raw rule id in the row');
   assert.ok(rows[1].textContent.includes('una tantum 5.000' + NBSP + '€'), 'versions show grouped periods');
   assert.ok(rows[1].textContent.includes('3.200' + NBSP + '€ ogni 1 mese'), 'recurring period shown per version');
 });
@@ -275,8 +277,9 @@ test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total
   const text = mount.textContent;
   assert.ok(text.includes('3.200' + NBSP + '€'), 'the valued recurring group leads the hero');
   assert.ok(!text.includes('una tantum 0'), 'the hero never shows a zero one-time total');
-  assert.ok(text.includes('standard-sales-discount@1'), 'the history row names the deciding policy');
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
+  assert.ok(text.includes('Standard sales discount (v1)'), 'the history row names the deciding policy in readable words');
+  assert.ok(!text.includes('standard-sales-discount@1'), 'no raw name@version id on screen');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
 });
 
 test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
@@ -316,7 +319,7 @@ test('8dc6d4a456e1: a version with no valued group paints a dash like the header
   const mount = createMount();
   await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
   const text = mount.textContent;
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · —'), 'no value reads as a dash, like the header');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · —'), 'no value reads as a dash, like the header');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {
@@ -422,7 +425,9 @@ test('quote routes parse canonically; hostile routes are invalid', () => {
   // A trailing slash normalizes to the list view, exactly as module routes do.
   assert.deepEqual(parseModuleRoute('#/quotes/'), { view: 'quotes' });
   assert.deepEqual(parseModuleRoute('#/quotes/q1'), { view: 'quote-detail', quoteId: 'q1' });
-  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/%zz']) {
+  // backlog:bfc070243427: the list origin rides the route.
+  assert.deepEqual(parseModuleRoute('#/quotes/q1/lista'), { view: 'quote-detail', quoteId: 'q1', from: 'quotes' });
+  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/a/lista/x', '#/quotes/%zz']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
   assert.equal(parseModuleRoute('#/modules/quote').view, 'list', 'module routes unchanged');
@@ -647,7 +652,8 @@ test('47b89e19: each row shows stato, importo and the linked offer like the offe
   assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
   const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.ok(open, 'the open link uses the offer-page component');
-  assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  // backlog:bfc070243427: the row names the list as the detail's origin.
+  assert.equal(open.getAttribute('href'), '#/quotes/q1/lista');
   const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.equal(opens.length, 1, 'one quote link per row');
   const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
@@ -676,7 +682,7 @@ test('47b89e19: opening a quote from the list stays in the router, without a rel
     link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
     assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
   }
-  assert.deepEqual(navigated, ['#/quotes/q1', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
+  assert.deepEqual(navigated, ['#/quotes/q1/lista', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
 });
 
 test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', async () => {
