@@ -18,6 +18,8 @@ import {
   flowSetAccount,
   matchAdapters,
   matchConnections,
+  clearConnectorListSnapshot,
+  readConnectorListSnapshot,
 } from '../apps/admin/public/admin-connectors.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS } from '../apps/admin/public/admin-shell.js';
@@ -269,6 +271,25 @@ test('the row opens the channel detail', async () => {
   assert.ok(card, 'channels render inside the Canali card');
   card.querySelector('div[data-channel="whatsapp"]')?.querySelector('.bo-conn-open')?.dispatch('click');
   assert.deepEqual(navigated, ['#/connettori/whatsapp'], 'the whatsapp row opens its detail');
+});
+
+test('the list leaves its rows behind for the detail (backlog:9a1c9a94)', async () => {
+  clearConnectorListSnapshot();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const rows = [
+    { channel: 'whatsapp', connectionKey: 'ck-wa', status: 'active', account: '+390200000001', importable: true, sync: null },
+  ];
+  const client = stubClient({ schema: SCHEMA, sync: { connectors: rows } });
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  const snap = readConnectorListSnapshot();
+  assert.ok(snap !== null, 'a successful list load stores the snapshot');
+  assert.equal(snap.spaceId, 'presti');
+  assert.equal(snap.channelsReady, true);
+  assert.ok(Array.isArray(snap.adapters) && snap.adapters.length > 0, 'adapters travel with the snapshot');
+  assert.deepEqual(snap.entries, rows, 'the rows travel with the snapshot');
+  clearConnectorListSnapshot();
+  assert.equal(readConnectorListSnapshot(), null);
 });
 
 test('a connected row shows Collegato with its account and no Collega', async () => {
