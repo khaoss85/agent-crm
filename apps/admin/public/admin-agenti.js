@@ -2050,8 +2050,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // words from the start — an agent with no engine is «Pronto, in
       // attesa del motore», never «attivo» — even when the follow-up read
       // cannot confirm it (the card already knows its engine).
+      // backlog:90aeebe5655d: dopo Ritira il messaggio usa la parola del
+      // badge (AGENT_STATUS_LABEL.paused), mai «ritirato» — stesso stato,
+      // stessa parola, come già fa il lato Riattiva qui sotto.
       state.notice = pause
-        ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
+        ? `${card.name} ${lowerFirst(AGENT_STATUS_LABEL.paused)}: resta nel team ma non riceve più incarichi.`
         : `${card.name} riattivato: ${lowerFirst(card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL)}.`;
       const fresh = await reload();
       // backlog:f06d06f242d6: reconciled against the fresh read, so a
