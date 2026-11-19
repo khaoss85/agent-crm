@@ -421,6 +421,9 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer-skeleton .bo-offer-value .ui-skeleton { height: 36px; }
 .bo-offer-skeleton .offer-fact .ui-skeleton { height: 14px; margin-top: 4px; }
 .bo-offer-skeleton .offer-quotes .ui-skeleton, .bo-offer-skeleton .offer-history .ui-skeleton { height: 14px; margin: 10px 0 0; }
+/* backlog:bfc070243427 (seguito): the skeleton reserves the actions row, so
+ * «Modifica» and «Cambia stato» land on a bar their own size. */
+.bo-offer-skeleton .bo-offer-actions .ui-skeleton { height: 34px; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -453,6 +456,13 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-back + .quote-offer-link { margin-left: 16px; }
 .quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-offer-link:hover { text-decoration: underline; }
+/* backlog:bfc070243427 (seguito): the list exit reads like the other two
+ * top links — never the browser-default purple underline — with the same
+ * gap after «Apri l’offerta» (or after the way back when the offer is
+ * unreadable and paints no link). */
+.quote-offer-link + .quote-list-link, .quote-back + .quote-list-link { margin-left: 16px; }
+.quote-list-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-list-link:hover { text-decoration: underline; }
 /* Voce 47b89e19: the version history link, same accent treatment as the offer link. */
 .quote-version-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-version-open:hover { text-decoration: underline; }
@@ -801,6 +811,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-fact { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-fact-label { font-weight: 400; color: var(--muted); }
 .bo-scheda-fact > span:last-child { text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+/* backlog:26afd13657c5: la conferma del salvataggio vive nei Dettagli, come
+ * .bo-agent-done vive sulla card dell'agente — stesso peso, stesso colore. */
+.bo-scheda-saved { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--accent); }
 .bo-scheda-identity { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 13px; }
 .bo-scheda-card-timeline { padding: 0; }
 .bo-scheda-card-timeline > h4 { padding: 18px 20px 0; font-size: 18px; }
@@ -1542,6 +1555,8 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .bo-clienti-fact[data-column="prossimo"] { color: var(--agent-ink); line-height: 1.35; }
 .bo-clienti-status:empty { display: none; }
+/* backlog:5af848afdb63: the failed-read Riprova sits in the status line, like the chips clear. */
+.bo-clienti-retry.ui-btn { margin-left: 8px; font-size: 12px; border: 0; background: transparent; color: var(--accent); }
 .bo-clienti-tiles { display: flex; gap: 4px; flex-wrap: wrap; }
 .bo-clienti-tile { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font-family: var(--mono); font-size: 8.5px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-tile-whatsapp { background: var(--accent-soft); color: var(--accent); }
@@ -1668,6 +1683,15 @@ select.bo-spazi-input { flex: none; }
  * block; short blocks read on one dotted line; no line ever paints half-cut. */
 .cal-grid .cal-event { align-content: start; }
 .cal-grid .cal-event .cal-compact { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:667f1f1c: below 60 min badges ride the painted line (one row),
+ * never a row of their own that the block cannot fit whole. */
+.cal-grid .cal-event.is-short, .cal-grid .cal-event.is-medium { white-space: nowrap; text-overflow: ellipsis; }
+.cal-grid .cal-event.is-short .cal-compact { display: inline; }
+.cal-grid .cal-event .cal-line-badges { display: inline; margin-left: 4px; white-space: nowrap; }
+.cal-grid .cal-event .cal-line-badges > span + span { margin-left: 4px; }
+/* The cancelled badge shrinks to the line height: the full badge would push
+ * the title out of a 45-min block. */
+.cal-grid .cal-event .cal-line-badges .badge { padding: 1px 4px; font-size: 9px; }
 .cal-grid .cal-event.is-medium strong { display: block; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; overflow-wrap: anywhere; }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }

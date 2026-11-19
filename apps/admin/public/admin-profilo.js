@@ -330,6 +330,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       nameRow.appendChild(edit);
     }
     words.appendChild(nameRow);
+    // The Nome input takes real focus only once it is connected: a focus()
+    // on a detached subtree leaves document.activeElement on BODY in a real
+    // browser (backlog:34f7fb85ad8b, verifier 17/11 NON PASSA).
+    let nameInput = null;
     if (editing) {
       const form = el(doc, 'div', 'ui-field-row bo-profilo-edit');
       const label = el(doc, 'label', 'ui-label bo-profilo-edit-label', 'Nome');
@@ -443,10 +447,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       form.appendChild(actions);
       if (editError !== '') form.appendChild(el(doc, 'p', 'field-error', editError));
       words.appendChild(form);
-      // Opening Modifica hands the Nome field over ready to type: focus it
-      // with the current name selected, so typing replaces it at once.
-      if (typeof input.focus === 'function') input.focus();
-      if (typeof input.select === 'function') input.select();
+      nameInput = input;
     }
     const meta = el(doc, 'div', 'bo-profilo-meta');
     const email = personText(person.email);
@@ -456,6 +457,12 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     if (meta.firstChild) words.appendChild(meta);
     head.appendChild(words);
     page.appendChild(head);
+    // Connected now (page lives in mount): hand the Nome field over ready
+    // to type, with the current name selected, so typing replaces it at once.
+    if (nameInput !== null) {
+      if (typeof nameInput.focus === 'function') nameInput.focus();
+      if (typeof nameInput.select === 'function') nameInput.select();
+    }
   }
 
   let lastSession = {};

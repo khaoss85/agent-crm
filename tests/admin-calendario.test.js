@@ -801,6 +801,89 @@ test('a bare 503 search keeps the generic failure, never the wait', async () => 
   }
 });
 
+// backlog:0ffb1dd0 (verifier 17/11: the phone week list is not provable at
+// desktop width). The ≤700px stack shows these same .cal-event nodes — CSS
+// only restacks them, no separate agenda list exists — so every painted
+// block must carry the same «Servizio · Cliente» title the detail card
+// shows, at every block height. Red when any block titles differently.
+test('the phone stack shows every week booking with the card title', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'phone-short', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:15:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'marco', priceCents: 4500, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:phone:short',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        },
+        {
+          id: 'phone-mid', status: 'booked',
+          startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z',
+          serviceKey: 'colore', teamMemberId: 'marco', priceCents: 6000, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:phone:mid',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        },
+        {
+          id: 'phone-long', status: 'booked',
+          startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T11:00:00.000Z',
+          serviceKey: 'piega', teamMemberId: 'marco', priceCents: 3000, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:phone:long',
+          subject: { resource: 'contact', id: 'c7', owner: 'host', ownerPackage: null, label: 'Cleo' },
+        },
+      ],
+    }],
+  };
+  const expected = {
+    'phone-short': 'Taglio · Ada',
+    'phone-mid': 'Colore · Bea',
+    'phone-long': 'Piega · Cleo',
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const blockTitleOf = (event) => {
+    const compact = (event.findAll?.('span') ?? [])
+      .find((node) => (node.getAttribute?.('class') ?? '').split(/\s+/).includes('cal-compact'));
+    if (compact) return String(compact.textContent ?? '').replace(/, \d{1,2}:\d{2}$/, '');
+    const strong = (event.findAll?.('strong') ?? [])[0];
+    return String(strong?.textContent ?? '');
+  };
+  const detailTitle = () => mount.findAll('div')
+    .find((node) => node.getAttribute('data-role') === 'event-detail')
+    ?.findAll('h2')
+    .find((node) => (node.getAttribute('class') ?? '').includes('cal-detail-title'))
+    ?.textContent;
+  // The whole week on the phone is these same buttons: one painted node per
+  // booking, each carrying its card title — the stack restyles, never rewords.
+  const events = mount.findAll('button')
+    .filter((node) => (node.getAttribute?.('class') ?? '').split(/\s+/).includes('cal-event'));
+  assert.deepEqual(
+    events.map((node) => node.getAttribute('data-event-id')).sort(),
+    ['phone-long', 'phone-mid', 'phone-short'],
+    'every booking paints exactly one block, the node the phone stack shows',
+  );
+  for (const event of events) {
+    const id = event.getAttribute('data-event-id');
+    const title = expected[id];
+    assert.ok(title, `the painted block ${id} is an expected booking`);
+    assert.equal(blockTitleOf(event), title, `the block titles ${id} «Servizio · Cliente»`);
+    event.dispatch('click');
+    assert.ok(detailTitle()?.includes(title), `the card titles ${id} the same way as the block`);
+    mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
+  }
+});
+
 test('a failed Conferma names the manual form, never a code', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -1458,9 +1541,10 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   const barba = blocks.find((node) => node.textContent.includes('11:00'));
   assert.ok(barba, 'the barba block paints with its Rome time');
   assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
-  // Colour and initials come from the opaque member id, never a name.
+  // Colour comes from the opaque member id, never a name; the initials dot
+  // paints only where it fits whole (backlog:667f1f1c: 60+ min).
   assert.match(taglio.getAttribute('class'), /cal-m[0-4]/, 'the block carries its member tint');
-  assert.ok(taglio.textContent.includes('MA'), 'the block carries member initials');
+  assert.equal(taglio.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-avatar')).length, 0, 'no half-cut initials dot on a 30-min block');
   assert.ok(!taglio.textContent.includes('marco'), 'the member id is not printed in full');
 });
 
@@ -3488,6 +3572,58 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
   assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+test('resolveDraftMemberIds strips the painted ordinal and reads the label (backlog:a16726b5ea76)', () => {
+  const solo = [{ subject: 'coach-rossi', displayName: 'Marco Rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], solo),
+    ['coach-rossi'],
+    'painted ordinal is not the name',
+  );
+  const labelOnly = [{ subject: 'marco-rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('MARCO ROSSI', [], labelOnly),
+    ['marco-rossi'],
+    'label base matches across cases',
+  );
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco (1)', [], homonyms), [], 'two real homonyms stay unresolved');
+  assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
+});
+
+test('resolveDraftMemberIds review #1017 giro 1: literal (N), strict strip, no fallback (backlog:a16726b5ea76)', () => {
+  const literal = [
+    { subject: 'a', displayName: 'Marco Rossi' },
+    { subject: 'b', displayName: 'Marco Rossi (2)' },
+  ];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi', [], literal),
+    ['a'],
+    'a real name wins before stripping',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], literal),
+    ['b'],
+    'a literal (N) name still finds its own row',
+  );
+  const solo = [{ subject: 'coach-marco', displayName: 'Marco' }];
+  assert.deepEqual(resolveDraftMemberIds('Marco(2)', [], solo), [], 'no space is not the painted ordinal');
+  assert.deepEqual(resolveDraftMemberIds('Marco  (2)', [], solo), [], 'two spaces are not the painted ordinal');
+  const technical = [{ subject: 'google|x1' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Membro del team', [], technical),
+    [],
+    'the generic fallback names nobody',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('membro del team (1)', [], [...technical, { subject: 'google|x2' }]),
+    [],
+    'a numbered fallback names nobody either',
+  );
 });
 
 // backlog:d1e4d90e — the server answers per booking identity, so one human
