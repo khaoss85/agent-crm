@@ -273,6 +273,49 @@ function endsAfterNow(row, now) {
 /** Display bound per read and cap on the advisor list: both disclosed on screen. */
 export const OGGI_READ_LIMIT = 100;
 export const ADVISOR_ACTION_LIMIT = 10;
+/**
+ * The pilot's in-flight ceiling for Oggi's first load: never more reads
+ * flying together than this, dependents included (backlog:57994a8c7287).
+ */
+export const OGGI_MAX_IN_FLIGHT = 6;
+
+/**
+ * One shared queue for every read of a load: the wrapped client runs at
+ * most `max` requests at once, the rest wait their turn. Fail-soft like
+ * before — a refused read still rejects to its own caller, and the queue
+ * keeps flowing.
+ * @param {{ request: (path: string, options?: any) => Promise<any> }} client
+ * @param {number} [max]
+ */
+function createReadGate(client, max = OGGI_MAX_IN_FLIGHT) {
+  let flying = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  const pump = () => {
+    while (flying < max && waiting.length > 0) {
+      const next = waiting.shift();
+      flying += 1;
+      next();
+    }
+  };
+  return {
+    ...client,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        waiting.push(() => {
+          Promise.resolve()
+            .then(() => client.request(path, options))
+            .then(resolve, reject)
+            .finally(() => {
+              flying -= 1;
+              pump();
+            });
+        });
+        pump();
+      });
+    },
+  };
+}
 
 /**
  * @param {unknown} value
@@ -2000,13 +2043,16 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   };
   // Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold,
   // every read once but one after the other): the independent reads start
-  // together, each fail-soft as before. The profile needs no schema, so it
-  // starts beside it.
-  // Voce 785aeb28bd18: the roster rides the first wave beside the profile —
-  // the member step no longer waits for every module read, so on a warm
-  // server it settles with the wave (under 1 s). Fail-soft as before: a
-  // refused or unreadable roster falls back to the notes cue. `stepMs`
-  // names where the load time goes, step by step, on `outcome.timings`.
+  // together, each fail-soft as before.
+  // Voce 57994a8c7287 (pin pilota #690 rosso: il picco di letture in volo
+  // di Oggi supera il limite): lo schema apre da solo e l'unica ondata
+  // larga è quella delle letture essenziali qui sotto. Il profilo, i
+  // membri e le due viste cliente partono dopo che le essenziali si sono
+  // posate — mai prima — così il picco resta dentro il limite del pilota
+  // senza togliere la cura ca53e443db44: il primo disegno non li ha mai
+  // aspettati e continua a non aspettarli. Fail-soft as before: a refused
+  // or unreadable roster falls back to the notes cue. `stepMs` names where
+  // the load time goes, step by step, on `outcome.timings`.
   const loadStartedAt = nowMs();
   const stepMs = {};
   const endStep = (scope, start) => { stepMs[scope] = Math.max(0, nowMs() - start); };
@@ -2017,17 +2063,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { endStep(scope, start); throw error; },
     );
   };
-  const profileRead = timed('profile', client.request('/api/profile')).then(
-    (answer) => (answer && typeof answer === 'object' ? answer : null),
-    (error) => { noteReadFailure('profile', error); return null; },
-  );
-  const membersRead = timed('members', client.request('/api/spine/memberships')).then(
-    (answer) => (Array.isArray(answer?.items) ? answer.items : []),
-    (error) => { noteReadFailure('memberships', error); return []; },
-  );
+  // Voce 57994a8c7287: one queue for every read of this load — essentials,
+  // second wave and dependents alike — so the in-flight peak stays within
+  // OGGI_MAX_IN_FLIGHT even with real data (next-call customer, names).
+  const reads = createReadGate(client);
   let domains = {};
   try {
-    const schema = await timed('schema', client.request('/api/schema'));
+    const schema = await timed('schema', reads.request('/api/schema'));
     domains = schema?.domains ?? {};
     // The strip's Collega reads the shared channel state, like Stato sync
     // and #/connettori: without the composed adapters a channel nothing
@@ -2039,12 +2081,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : null;
   } catch (error) {
     noteReadFailure('schema', error);
-    // The profile read started already: nothing waits on it.
+    // Voce 57994a8c7287: nothing else started — no profile, no roster, no
+    // view — so a refused schema leaves no read flying behind this return.
     outcome.timings = { ...stepMs, total: Math.max(0, nowMs() - loadStartedAt) };
     return outcome;
   }
   /** One fail-soft module read: the page ({ rows, capped }), or null after naming the failure. */
-  const page = (scope, module, filters) => readModulePage(client, module, filters).then(
+  const page = (scope, module, filters) => readModulePage(reads, module, filters).then(
     (paged) => paged,
     (error) => { noteReadFailure(scope, error); return null; },
   );
@@ -2054,38 +2097,29 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // the connections read to, so it is skipped and the section renders its
   // honest line — never another space's rows as this space's invite.
   const connectionsRead = domains.channels != null && space !== null
-    ? readSpaceConnections(client, space).then(
+    ? readSpaceConnections(reads, space).then(
       (paged) => paged,
       (error) => { noteReadFailure('channel-connection', error); return null; },
     )
     : skip;
   // backlog:bab63e32acdb (verification 12/11: the names in «Da rispondere»
-  // came 10-16 s late): the Clienti view is the slowest read — it starts
-  // with the rest but never holds the day back; its section waits in grey.
+  // came 10-16 s late): the Clienti view is the slowest read — it never
+  // holds the day back; its section waits in grey. Voce 57994a8c7287: it
+  // starts in the second wave (see below), never beside the essentials.
   const repliesComposed = domains['customer-data'] != null;
-  const repliesRead = repliesComposed
-    ? client.request(`/api/customer-data/customers?vista=${REPLIES_VIEW}&sort=recent&page=1&pageSize=10`).then(
-      (answer) => buildServerReplies(answer, now),
-      (error) => { noteReadFailure('da-rispondere', error); return null; },
-    )
-    : Promise.resolve(null);
   // backlog:a03226f6a8c3: the recap counts messages apart from customers,
   // so it reads the «Da leggere» view beside «Da rispondere» — one row
   // per unread customer with its own unreadCount. Fail-soft like the rest.
-  const unreadRead = repliesComposed
-    ? client.request(`/api/customer-data/customers?vista=${UNREAD_VIEW}&sort=recent&page=1&pageSize=50`).then(
-      (answer) => buildUnreadSummary(answer),
-      (error) => { noteReadFailure('da-leggere', error); return null; },
-    )
-    : Promise.resolve(null);
+  // Voce 57994a8c7287: second wave (see below), never beside the essentials.
   // backlog:d08331558c50: the website forms feed the signal list — one
   // fail-soft read like the rest, gated on the composed domain.
   const submissionsRead = domains['site-forms'] != null
     ? page('site-form-submission', 'site-form-submission')
     : skip;
   // backlog:ca53e443db44 (verifier 17/11: first round, /api/profile at 5,9 s):
-  // the profile still starts beside the first wave (see above) but no longer
-  // holds the essentials paint — it lands with the names below.
+  // the profile never holds the essentials paint. Voce 57994a8c7287: since
+  // the pin red it no longer even starts beside the essentials — it joins
+  // the second wave and lands with the names below.
   const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
@@ -2095,9 +2129,36 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // state, so a space without the conversation module still lists who is
     // waiting. A failed read keeps the section honest (unavailable).
     interactions ? page('inbox', 'interaction-message') : skip,
-    interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
+    interactions ? readModulePage(reads, 'conversation').catch(() => null) : skip,
     submissionsRead,
   ]);
+  // Voce 57994a8c7287: the second wave starts only now that the essentials
+  // are in — profile, roster and the two customer-data views, each
+  // fail-soft as before. Nothing here holds the paint below: the
+  // essentials already went out through onEssentials.
+  const profileRead = timed('profile', reads.request('/api/profile')).then(
+    (answer) => (answer && typeof answer === 'object' ? answer : null),
+    (error) => { noteReadFailure('profile', error); return null; },
+  );
+  // Voce 785aeb28bd18 now rides the second wave: the member step still
+  // never waits for the names or the brief — only for the essentials —
+  // and a refused roster still falls back to the notes cue.
+  const membersRead = timed('members', reads.request('/api/spine/memberships')).then(
+    (answer) => (Array.isArray(answer?.items) ? answer.items : []),
+    (error) => { noteReadFailure('memberships', error); return []; },
+  );
+  const repliesRead = repliesComposed
+    ? reads.request(`/api/customer-data/customers?vista=${REPLIES_VIEW}&sort=recent&page=1&pageSize=10`).then(
+      (answer) => buildServerReplies(answer, now),
+      (error) => { noteReadFailure('da-rispondere', error); return null; },
+    )
+    : Promise.resolve(null);
+  const unreadRead = repliesComposed
+    ? reads.request(`/api/customer-data/customers?vista=${UNREAD_VIEW}&sort=recent&page=1&pageSize=50`).then(
+      (answer) => buildUnreadSummary(answer),
+      (error) => { noteReadFailure('da-leggere', error); return null; },
+    )
+    : Promise.resolve(null);
   // backlog:c2bf6b206d96: «Da rispondere» from the Clienti view, one source
   // for Oggi and Clienti; fail-soft to the messages read below.
   outcome.replies = null;
@@ -2173,8 +2234,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
     try {
       const [briefMessagesPage, briefCallsPage] = await Promise.all([
-        readModulePage(client, 'interaction-message', subject),
-        readModulePage(client, 'interaction-call', subject),
+        readModulePage(reads, 'interaction-message', subject),
+        readModulePage(reads, 'interaction-call', subject),
       ]);
       outcome.briefMessages = briefMessagesPage.rows;
       outcome.briefCalls = briefCallsPage.rows;
@@ -2225,8 +2286,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.inboxNames = !outcome.inboxAvailable
       ? {}
       : replies === null
-        ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
-        : await readNotificationNames(client, outcome.inboxMessages, outcome.inboxConversations, now, {
+        ? await readInboxNames(reads, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
+        : await readNotificationNames(reads, outcome.inboxMessages, outcome.inboxConversations, now, {
           ownAddresses: ownMailboxes(outcome.profile, outcome.connections),
           correspondents: replies.correspondents ?? null,
         });
@@ -2242,11 +2303,11 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.unreadSummary = summary;
     if (namesPublished) named();
   });
-  // Voce 785aeb28bd18: the roster already rides the first wave beside the
-  // profile (see above) — joining it here only waits for what is still
-  // flying, never a new read. The names mark says where the second wave went.
+  // Voce 57994a8c7287: the roster starts in the second wave (see above) —
+  // joining it here only waits for what is still flying, never a new read.
+  // The names mark says where the second wave went.
   const [appointmentNames, members] = await timed('names', Promise.all([
-    readAppointmentNames(client, outcome.appointments, outcome.next, now),
+    readAppointmentNames(reads, outcome.appointments, outcome.next, now),
     membersRead,
   ]));
   outcome.appointmentNames = appointmentNames;

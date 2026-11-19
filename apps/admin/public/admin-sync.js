@@ -32,6 +32,7 @@ import {
   channelDirectionLine,
   channelMark,
   channelState,
+  channelSynced as sharedChannelSynced,
   countedChannel,
   NINE_CHANNELS,
   mergeProfileConnections,
@@ -585,6 +586,29 @@ export function grantExpiring(iso, nowMs = Date.now()) {
  * `Importazione`) need an active binding (review #692): a suspended,
  * pending or revoked binding reads `Da sistemare` whatever its health
  * says.
+/**
+ * The one synced rule both views share (backlog:9790f4df7a93): a channel
+ * counts as synchronized only with an active binding behind it AND a first
+ * event already received. Recency alone lies — a quiet poll, a failed send
+ * or a reset counter stamps a fresh update instant with zero events (Mac
+ * 18/11: «0 eventi ricevuti · Attivo» beside «aggiornato 1 min fa»), so
+ * only a counted event syncs: `lastAt` stays accepted in the input so
+ * callers keep passing what they have, but it is intentionally not
+ * consulted. A linked binding with zero events (the Stato sync «0 eventi»
+ * case) is «in attesa del primo evento», never «sincronizzato». The
+ * scheda's «Identità collegate» claims «↔ sincronizzato» only on observed
+ * two-way traffic through a linked channel with a first event received
+ * (`identitySyncText` in admin-channels-count.js), never on recency; the
+ * Stato sync pill and hero below read this rule through `channelPill`.
+ * @param {{ linked?: unknown, received?: unknown, lastAt?: unknown }} [input]
+ */
+export function channelSynced(input = {}) {
+  // The single source lives in admin-channels-count.js so the scheda reads
+  // the same rule; this export stays for the existing import path.
+  return sharedChannelSynced(input);
+}
+
+/**
  * @param {{ expiringAt: string | null, importing: boolean, worst: string, lastAt: string | null, received: number }} agg
  * @param {number} nowMs
  * @param {boolean} hasActive whether one binding of the row is active
@@ -594,7 +618,11 @@ function channelPill(agg, nowMs, hasActive) {
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
-  if (calm && agg.lastAt === null && agg.received === 0) return { text: 'in attesa del primo evento', tone: 'attesa' };
+  // backlog:9790f4df7a93: the shared synced rule — a calm linked row with
+  // no first event yet waits, never `Attivo`.
+  if (calm && !channelSynced({ linked: true, received: agg.received, lastAt: agg.lastAt })) {
+    return { text: 'in attesa del primo evento', tone: 'attesa' };
+  }
   if (calm) return { text: 'Attivo', tone: 'attivo' };
   return { text: 'Da sistemare', tone: 'altro' };
 }

@@ -575,7 +575,7 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
   assert.ok(first, 'the service reads as the listino names it');
   assert.ok(first.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00'), first.textContent);
   assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
-  const second = rows.find((node) => node.textContent.includes('Pt single'));
+  const second = rows.find((node) => node.textContent.includes('PT single'));
   assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
   const text = mount.textContent;
   assert.ok(!text.includes('coach-guido'), 'never the member id');
@@ -619,8 +619,10 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     },
   }));
   const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
-  assert.equal(booked.length, 1, 'one cronologia row per confirmed booking');
+  assert.equal(booked.length, 2, 'the confirmed booking and the cancelled one each keep a fissato row');
   assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov'), booked[0].textContent);
+  assert.ok(booked.some((node) => node.textContent.includes('Appuntamento fissato · Lezione di prova · 10 nov 10:00')),
+    'the cancelled booking keeps its fissato row at its slot');
   const text = mount.textContent;
   assert.ok(!text.includes('appointment-booked'), 'never the row key');
   assert.ok(!text.includes('Lezione prova ·'), 'never the slug words when the listino names the service');
@@ -634,6 +636,66 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     0,
     'a channel filter hides the booking row',
   );
+});
+
+// backlog:0d68c387 (repro del NON PASSA 17/11, verifica Mac: due annullamenti
+// senza la riga «Appuntamento fissato» prima, e «Pt singola» invece di
+// «PT singola»). Una prenotazione annullata tiene la sua riga di fissato
+// (allo slot) oltre a quella di annullamento, e la sigla del fallback legge
+// maiuscola come nel listino — mai «Pt singola».
+test('0d68c387: a cancelled «pt-singola» booking keeps its «Appuntamento fissato · PT singola» row', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2026-11-13T10:00:00.000Z', endsAt: '2026-11-13T10:45:00.000Z',
+            serviceKey: 'pt-singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-14T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the cancelled booking keeps its fissato row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('Pt singola'), 'never the lowercase sigla');
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(cancelled.length, 1, 'the cancellation row stays');
+  assert.ok(cancelled[0].textContent.includes('Appuntamento annullato · PT singola ·'), cancelled[0].textContent);
+});
+
+// backlog:0d68c387: the menu and the stored booking may spell the key apart
+// («PT-singola» vs «pt_singola»): the listino name still wins, never the
+// slug words.
+test('0d68c387: the listino name wins when the stored key spells it apart', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'PT-singola', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'pt_singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
 });
 
 // backlog:0d68c387: without the bookable list (an older server, a failed
@@ -724,7 +786,7 @@ test('26afd13657c5: without the listino the Appuntamenti vista still reads slug 
   vista.dispatch('click');
   const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
   assert.ok(recap, 'the recap body paints the vista');
-  assert.ok(recap.textContent.includes('Pt single'), `the vista falls back to slug words: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('PT single'), `the vista falls back to slug words: ${recap.textContent}`);
 });
 
 // backlog:26afd13657c5 (repro del NON PASSA 14/11, verifica Mac 06:5xZ: la
@@ -4461,6 +4523,24 @@ test('backlog:88ab568cdcba (was d30d17880f63 review #880): the AI-off state land
   assert.match(aiLine(panel).textContent, /L’AI non è attiva in questo spazio/, 'the reason line says where to write instead');
 });
 
+// backlog:88ab568cdcba (verifier 17/11, live 2026-11-17.md:87): the landing
+// keeps the focus, but a press on the off row («Scrittura con l'AI non
+// disponibile») still moves the cursor to the message field without saying
+// so. The move stays, the silence goes: the press announces where the
+// cursor went.
+test('backlog:88ab568cdcba: with the AI off a press on the empty request row says the cursor moved to the message field', async () => {
+  const client = aiStateClient({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  const { panel } = await openComposerMount({ client, role: 'owner' });
+  const { area } = aiParts(panel);
+  area.__focused = false;
+  const line = aiLine(panel);
+  assert.ok(!line.textContent.includes('cursore'), 'the move is not announced before the press');
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  field.dispatch('mousedown', { preventDefault: () => {} });
+  assert.equal(area.__focused, true, 'the message field still takes the typing');
+  assert.match(line.textContent, /cursore .* nel messaggio/i, 'the press says where the cursor went');
+});
+
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
   for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
     const client = aiStateClient(shape);
@@ -5242,6 +5322,12 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
     ...base,
     async request(path, options = {}) {
       requests.push(path);
+      if (path.startsWith('/api/connectors/activity')) {
+        return { connections: [
+          { connectionKey: 'profile:whatsapp', channel: 'whatsapp', status: 'active', health: 'ok',
+            inbox: { received: 3, lastReceivedAt: '2026-11-17T10:00:00.000Z' }, outbox: { openDeadLetters: 0, lastFailedAt: null } },
+        ] };
+      }
       if (path.startsWith('/api/connectors')) return { connectors: [] };
       if (path === '/api/profile') {
         return { member: {}, connections: { available: true, reason: null, meta: { configured: true },
@@ -5439,12 +5525,51 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
+test('backlog:1e07362849db: the scheda labels whose figure it shows when quote total and offer value differ', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo 10 ingressi',
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the quote total paints');
+  assert.equal(amount.textContent, '15 €');
+  const note = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(note, 'the figure carries its label');
+  assert.equal(note.textContent, 'preventivo in bozza');
+  const offer = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(offerNote, 'the offer value paints labelled too');
+  assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
+  assert.equal(title.textContent, 'PT single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
@@ -5455,7 +5580,7 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
+  assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
@@ -5470,7 +5595,7 @@ test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» th
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · per Guido Presti', 'the booking reads as held for the client, never by the client');
+  assert.equal(title.textContent, 'PT single · per Guido Presti', 'the booking reads as held for the client, never by the client');
 });
 
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
@@ -6104,6 +6229,11 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
+  // skeleton covers only the unknown — while the profile is still in
+  // flight. The phantom was a skeleton held by the slow schema read after
+  // the profile was already known empty; that case paints nothing (see
+  // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
@@ -6724,4 +6854,109 @@ test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, 
   }));
   assert.ok(suggested.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
   assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
+// backlog:0d68c387 verifier-back (ritorno 2, 18/11): fissato oggi per domani e
+// annullato oggi devono stare insieme sotto il giorno dell'evento, non
+// divisi tra giorno dell'appuntamento e giorno dell'annullamento. Repro:
+// rosso sul codice prima della cura (fissato a startsAt), verde dopo
+// (fissato a bookedAt).
+test('0d68c387 verifier-back: fissato oggi per domani e annullato oggi restano insieme sotto oggi', async () => {
+  const base = new Date();
+  base.setUTCHours(12, 0, 0, 0);
+  const bookedAt = new Date(base.getTime() - 2 * 3600e3).toISOString();
+  const decidedAt = new Date(base.getTime() - 3600e3).toISOString();
+  const startsAt = new Date(base.getTime() + 24 * 3600e3).toISOString();
+  const endsAt = new Date(base.getTime() + 25 * 3600e3).toISOString();
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt, endsAt,
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt, bookedAt,
+          },
+        ],
+      },
+    },
+  }));
+  const timelineEl = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-timeline'));
+  assert.ok(timelineEl, 'the cronologia paints');
+  const kids = timelineEl.childNodes;
+  let day = null;
+  let bookedDay = null;
+  let cancelledDay = null;
+  let bookedIdx = -1;
+  let cancelledIdx = -1;
+  kids.forEach((node, idx) => {
+    if (node.tagName === 'H5') day = node.textContent;
+    const cls = String(node.getAttribute?.('class') ?? '');
+    const entry = node.getAttribute?.('data-entry') ?? '';
+    if (entry === 'appointment-booked:b0') { bookedDay = day; bookedIdx = idx; }
+    if (entry === 'appointment-cancelled:b0') { cancelledDay = day; cancelledIdx = idx; }
+    void cls;
+  });
+  assert.ok(bookedIdx !== -1 && cancelledIdx !== -1, 'both rows paint');
+  assert.equal(bookedDay, cancelledDay, 'fissato and annullato share the event day');
+  assert.equal(Math.abs(bookedIdx - cancelledIdx), 1, 'the pair stays adjacent');
+});
+
+// backlog:0d68c387 review Codex P2 su c4f2faa: il fallback maiuscolo vale solo
+// per le sigle vere («PT»), mai per le parole senza vocali («my», «by»).
+test('0d68c387: ordinary vowel-less words stay sentence-case in the fallback', async () => {
+  const mount = await renderCard(stubClient({
+    services: [],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'my-lesson', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · My lesson ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('MY lesson'), 'never the uppercased word');
+});
+
+// backlog:a5fb07706bff verifier-back su 59c2c14 (EVIDENCE_LINE_NOT_PASS 2026-11-17):
+// la riga Email di Fio Neri leggeva «→ in uscita» con Gmail collegato anche
+// quando la stessa casella aveva messaggi in entrata. Repro: rosso sul codice
+// prima della cura (nome visualizzato «Fio Neri <fio@...>» non unisce con
+// «fio@...»), verde dopo.
+test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce entrata e uscita', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'Fio Neri <Fio@PrestiGroup.it>', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'e-out', conversationId: 't5', channel: 'email', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'fio@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
+  assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
 });

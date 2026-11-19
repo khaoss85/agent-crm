@@ -93,6 +93,9 @@ const flushAll = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
 };
 
+const TOKEN2 = 'b'.repeat(64);
+const URL2 = `${ORIGIN}/q/${TOKEN2}`;
+
 /** Stub where the first share-link mint returns a token and later ones reuse. */
 function shareClient({ quotes }) {
   const calls = [];
@@ -109,6 +112,9 @@ function shareClient({ quotes }) {
         mints += 1;
         if (mints === 1) return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
         return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+      }
+      if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+        return { result: { alreadyExisted: false, regenerated: true, token: TOKEN2, share: { expiresAt: EXPIRES } } };
       }
       if (path.startsWith('/api/modules/quote/records')) return { items: quotes };
       if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
@@ -136,6 +142,12 @@ async function openOfferPage({ quotes }) {
 
 const shareButton = (mount) => mount.findAll('button')
   .find((node) => node.getAttribute('data-action') === 'offer-share-link');
+
+const regenButton = (mount) => mount.findAll('button')
+  .find((node) => String(node.getAttribute('data-action') ?? '').startsWith('offer-share-regenerate')
+    && node.getAttribute('data-action') !== 'offer-share-regenerate-cancel');
+const regenCancel = (mount) => mount.findAll('button')
+  .find((node) => node.getAttribute('data-action') === 'offer-share-regenerate-cancel');
 
 const historyPanel = (mount) => mount.findAll('div')
   .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-history'));
@@ -185,4 +197,199 @@ test('7fa422415232: «Invia offerta» mints the public link and reuses it on sec
 test('7fa422415232: a draft quote has no share button — only an approved version shares', async () => {
   const { mount } = await openOfferPage({ quotes: [approvedQuote({ status: 'draft' })] });
   assert.equal(shareButton(mount), undefined, 'no dead button on a draft');
+});
+
+test('bf1bc20a: a reuse without a visible token points at «Crea un nuovo link»', async () => {
+  const { mount } = await openOfferPage({ quotes: [approvedQuote()] });
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes('Crea un nuovo link'),
+    'the lost-token message names the way out, never a bare «cercalo nella cronologia»');
+});
+
+test('bf1bc20a: «Crea un nuovo link» arms, cancels, then revokes and mints one fresh link', async () => {
+  const { mount, client, toasts } = await openOfferPage({ quotes: [approvedQuote()] });
+  const button = regenButton(mount);
+  assert.ok(button, 'the approved quote offers «Crea un nuovo link»');
+  assert.equal(button.textContent, 'Crea un nuovo link');
+
+  button.dispatch('click');
+  await flushAll();
+  assert.equal(regenButton(mount).textContent, 'Sì, crea un nuovo link', 'the first press arms, never mints');
+  assert.ok(mount.textContent.includes('smetterà di funzionare'), 'the arm names what happens to the old link');
+  assert.ok(regenCancel(mount), 'arming shows «Annulla»');
+  assert.equal(
+    client.calls.filter((call) => call.path.endsWith('/actions/regenerate-link')).length,
+    0,
+    'arming sends nothing',
+  );
+
+  regenCancel(mount).dispatch('click');
+  await flushAll();
+  assert.equal(regenButton(mount).textContent, 'Crea un nuovo link', '«Annulla» disarms');
+  assert.equal(regenCancel(mount), undefined, 'the cancel goes away with the arm');
+  assert.equal(
+    client.calls.filter((call) => call.path.endsWith('/actions/regenerate-link')).length,
+    0,
+    'a cancelled arm sends nothing',
+  );
+
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  const regens = client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/modules/quote/records/q1/actions/regenerate-link');
+  assert.equal(regens.length, 1, 'one confirmed press mints one link through regenerate-link');
+  assert.ok(regens[0].key, 'the regenerate rides the submission controller key');
+  assert.deepStrictEqual(regens[0].body, {},
+    'the regenerate posts the exact empty body the /bo bridge accepts (bo-crm-writes.js regenerate-quote-link allows only spaceId/expiresInDays/expectedRevision, else 400)');
+  assert.ok(mount.textContent.includes(URL2), 'the fresh link shows on screen');
+  assert.ok(shareBox(mount)?.textContent.includes('il vecchio non funziona più'),
+    'the operator is told the old link is dead');
+  assert.ok(toasts.some((toast) => /vecchio non funziona più/.test(toast.text)), 'toast says the same');
+});
+
+async function openOfferPageWith(request) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const calls = [];
+  const client = {
+    calls,
+    request: (path, options = {}) => {
+      calls.push({ path, method: String(options.method ?? 'GET').toUpperCase() });
+      return request(path, options);
+    },
+  };
+  const toasts = [];
+  const view = createOfferDetail({
+    doc, mount, client, origin: ORIGIN,
+    toast: (text, error = false) => toasts.push({ text, error }),
+    navigate: () => {},
+  });
+  await view.renderOfferDetail('off1');
+  await flushAll();
+  return { mount, client, toasts };
+}
+
+function baseStaticRequest(request) {
+  return async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
+    const method = String(options.method ?? 'GET').toUpperCase();
+    if (path === '/api/schema') return SCHEMA;
+    if (/^\/api\/opportunities\/[^/?]+$/.test(path) && method === 'GET') return { ...RECORD };
+    const answer = await request(path, { ...options, method });
+    return answer;
+  };
+}
+
+test('bf1bc20a: a regeneration waits while a send runs — one shared in-flight guard (review #995 P2)', async () => {
+  let releaseShare;
+  const shareWait = new Promise((resolve) => { releaseShare = resolve; });
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      await shareWait;
+      return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      return { result: { alreadyExisted: false, regenerated: true, token: TOKEN2, share: { expiresAt: EXPIRES } } };
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount, client } = await openOfferPageWith(request);
+  const regenCalls = () => client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/modules/quote/records/q1/actions/regenerate-link');
+  shareButton(mount).dispatch('click');
+  await flushAll(2);
+  assert.equal(shareButton(mount).getAttribute('disabled'), 'disabled', 'the send disables itself in flight');
+  assert.equal(regenButton(mount).getAttribute('disabled'), 'disabled', 'the send disables the regeneration too');
+  regenButton(mount).dispatch('click');
+  await flushAll(2);
+  assert.equal(regenButton(mount).textContent, 'Crea un nuovo link', 'a regeneration press in flight arms nothing');
+  assert.equal(regenCalls().length, 0, 'a regeneration press in flight sends nothing');
+  releaseShare();
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL), 'the send paints its link first');
+  assert.equal(regenButton(mount).getAttribute('disabled'), null, 'the regeneration is back after the send');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  assert.equal(regenCalls().length, 1, 'one confirmed press after the send mints one fresh link');
+  assert.ok(mount.textContent.includes(URL2), 'the regenerated link paints');
+  assert.ok(!mount.textContent.includes(URL), 'the revoked mint never comes back on screen');
+});
+
+test('bf1bc20a: an uncertain regeneration forgets the cached link — the next press asks for a new one (Codex #995 P2)', async () => {
+  let regens = 0;
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      if (regens === 0) return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+      return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      regens += 1;
+      throw new Error('socket hang up');
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(!mount.textContent.includes(URL), 'no revoked link is ever offered as ready');
+  assert.ok(mount.textContent.includes('Crea un nuovo link'),
+    'after an uncertain regeneration the operator is sent back to a fresh link');
+});
+
+test('bf1bc20a: a lost regeneration contest forgets the cached link — the next press asks for a new one (review #995 P2 giro 2)', async () => {
+  let regens = 0;
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      if (regens === 0) return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+      return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      regens += 1;
+      // Another operator won the race and revoked our bearer: our cached
+      // URL is dead, even though the answer carries a 4xx status.
+      throw Object.assign(new Error('quote link was regenerated concurrently'), {
+        status: 409, code: 'QUOTE_LINK_CONTEST',
+      });
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(!mount.textContent.includes(URL), 'the contested link is never offered as ready');
+  assert.ok(mount.textContent.includes('Crea un nuovo link'),
+    'after a lost contest the operator is sent back to a fresh link');
 });

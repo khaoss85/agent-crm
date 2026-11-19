@@ -1284,7 +1284,7 @@ const client = {
 const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, log: () => {}, download: () => {} });
 await view.renderReporting();
 document.getElementById('probe').textContent = JSON.stringify({
-  kpis: (document.getElementById('view-module').textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
+  kpis: ((document.querySelector('#view-module .metrics')?.textContent ?? '').match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
 });
 document.title = 'reporting-ready';`;
     }

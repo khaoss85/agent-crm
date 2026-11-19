@@ -281,7 +281,8 @@ test('review #852: STALE_POSITION never puts the card back by guess — the fres
   await tick(10);
   assert.deepEqual(order(mount, 'demo'), ['a', 'b'], 'the card shows where the server has it (Prova)');
   assert.deepEqual(order(mount, 'discovery'), []);
-  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.');
+  // 5af848afdb63: the winner put the card elsewhere, so the line names where.
+  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: ora la card è in «Prova».');
 });
 
 // ---- 67a3116f4f65 with pilot #562: a stage saved without its place ----------
@@ -340,6 +341,25 @@ for (const code of ['STALE_STAGE', 'CONFLICT']) {
     assert.ok(toasts.length > 0);
   });
 }
+
+test('5af848afdb63: a STALE_STAGE the winner already moved names the arrival column', async () => {
+  // The live lost race said «spostata altrove» without saying where the
+  // card landed: after the fresh board re-read the toast names the column.
+  const refused = Object.assign(new Error('another write won'), { status: 409, code: 'STALE_STAGE' });
+  let api = null;
+  const { mount, client, toasts } = await board([record('a', 'discovery'), record('b', 'demo')], {
+    // Another operator moved «a» to Vinta first: the server holds that move.
+    onPost: () => { api.setStage('a', 'won'); throw refused; },
+  });
+  api = client;
+  const { drop } = drag(mount, 'a', 'demo', 150);
+  drop();
+  await tick(10);
+  assert.deepEqual(order(mount, 'won'), ['a'], 'the card is where the winner put it');
+  assert.equal(toasts[toasts.length - 1].message,
+    'Questa offerta è stata spostata in «Vinta» nel frattempo: la pipeline si aggiorna.',
+    `the toast names the arrival column: ${toasts[toasts.length - 1]?.message}`);
+});
 
 test('4eceae80a5ca: which refusals mean another write won', () => {
   const { lostToAnotherWrite } = pipelineModule;

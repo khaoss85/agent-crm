@@ -757,6 +757,37 @@ test('cf365ada15b9: the detail says import and connection states in Italian', ()
   }
 });
 
+// backlog:8c4a2ca5b1f5 — the detail never prints a raw channel id:
+// a connected channel reads its catalog name, a missing connection reads
+// «nessun canale collegato».
+test('8c4a2ca5: «Canale» reads the catalog name, never the raw id', () => {
+  for (const channel of CONNECTOR_DETAIL_CHANNELS) {
+    const entry = CONNECTOR_CATALOG.find((row) => row.channel === channel);
+    if (!entry) continue;
+    const connected = detailSections({
+      entry,
+      connection: { ...CONNECTION, channel, connectionKey: `k:${channel}` },
+    });
+    assert.ok(
+      connected.dettagliTecnici.lines.some((line) => line === `Canale: ${entry.label}.`),
+      `${channel}: connected reads «Canale: ${entry.label}.»`,
+    );
+    assert.ok(
+      !connected.dettagliTecnici.lines.some((line) => line === `Canale: ${channel}.`),
+      `${channel}: no raw «Canale: ${channel}.»`,
+    );
+    const missing = detailSections({ entry, connection: null });
+    assert.ok(
+      missing.dettagliTecnici.lines.some((line) => line === 'Canale: nessun canale collegato.'),
+      `${channel}: missing connection reads «nessun canale collegato»`,
+    );
+    assert.ok(
+      !missing.dettagliTecnici.lines.some((line) => line === `Canale: ${channel}.`),
+      `${channel}: no raw «Canale: ${channel}.»`,
+    );
+  }
+});
+
 test('24a57904a428: the detail read carries the live space, whatever storage says', async () => {
   for (const stored of ['', 'altro-spazio']) {
     const doc = createFakeDocument();

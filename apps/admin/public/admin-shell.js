@@ -52,6 +52,9 @@ export const SHELL_ITEMS = Object.freeze([
   // (Dan 11/11) gives Sequenze its voice back when the sequences module is
   // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
+  // backlog:0d2d8f2e puts «Squadre» in the sidebar: the teams of agents
+  // with their backlog A, backlog B, routines and advisor metric.
+  { id: 'squadre', label: 'Squadre', group: 'native', route: null, story: 'backlog:0d2d8f2e', icon: 'squadre' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
   // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
@@ -573,7 +576,7 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
   if (view === 'dashboard') return mounted === true;
-  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
 /**
@@ -589,9 +592,10 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean }} input
+ * Squadre only when the same package serves squads (squadsAvailable).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -613,6 +617,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+    }
+    if (item.id === 'squadre') {
+      if (squadsAvailable) {
+        return { ...item, route: '#/squadre', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
@@ -849,6 +859,9 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
+      // backlog:09644bb7e7e9: il nome va a capo per intero (CSS) e resta
+      // comunque tutto a un hover di distanza.
+      pick.setAttribute('title', entry.name);
       const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
@@ -880,6 +893,15 @@ export function createShellView({
     // One voice row: icon, label, then the voice's live badge, if any.
     // Clienti carries the live client count (grey pill, BO-F6-01);
     // Impostazioni carries the real "things to fix" count (yellow pill).
+    // backlog:09644bb7e7e9: every row ends with exactly one 20px trailing
+    // element — the badged voices keep their pinned `is-empty` placeholder
+    // (backlog:b76770f82fe9), the others get a neutral hidden slot — so all
+    // rows measure the same and no «0» ever shows before the real number.
+    function appendPillSlot(link) {
+      const slot = el(doc, 'span', 'bo-pill-slot');
+      slot.setAttribute('aria-hidden', 'true');
+      link.appendChild(slot);
+    }
     function appendVoice(container, item) {
       const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
         + (item.id === state.activeScreenId ? ' active' : '')
@@ -924,6 +946,7 @@ export function createShellView({
           link.appendChild(empty);
         }
       }
+      if (item.id !== 'clienti' && item.id !== 'impostazioni') appendPillSlot(link);
       container.appendChild(link);
     }
 
@@ -1285,6 +1308,21 @@ export function renderUnknownRoute({ doc, mount }) {
 export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
 
 /**
+ * Backlog 2302655b1fcf: the settings header both the Impostazioni index and
+ * Personalizzazione paint — one component (h2.panel-title plus its
+ * subtitle), so the two pages keep the same title, subtitle and hero size.
+ * The 46px hero size comes from the `.panel.personalizzazione` ancestor both
+ * pages paint around it (styles.css), never from a copied rule.
+ * @param {any} doc
+ * @param {any} box the panel the header opens
+ * @param {{ title?: string, subtitle?: string }} [options]
+ */
+export function paintSettingsHead(doc, box, { title = '', subtitle = '' } = {}) {
+  box.appendChild(el(doc, 'h2', { text: title, cls: 'panel-title' }));
+  box.appendChild(el(doc, 'p', { text: subtitle, cls: 'muted' }));
+}
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -1294,13 +1332,17 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  // backlog:2302655b1fcf: the same header as Personalizzazione (panel-title
-  // plus subtitle), never the «Backoffice» kicker the other screens dropped.
-  mount.appendChild(el(doc, 'h2', { text: 'Impostazioni', cls: 'panel-title' }));
-  mount.appendChild(el(doc, 'p', {
-    text: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
-    cls: 'muted',
-  }));
+  // backlog:2302655b1fcf: the index paints the same chrome as every other
+  // settings screen — the IMPOSTAZIONI tab row (no tab underlined: the index
+  // is none of the areas) above the shared header component, never the
+  // «Backoffice» kicker the other screens dropped.
+  mount.appendChild(settingsTabs(doc, { activeId: null, fixCount, navigate }));
+  const panel = el(doc, 'div', { cls: 'panel personalizzazione' });
+  mount.appendChild(panel);
+  paintSettingsHead(doc, panel, {
+    title: 'Impostazioni',
+    subtitle: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+  });
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(
@@ -1315,7 +1357,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
-  mount.appendChild(summary);
+  panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {
     summary.setAttribute('role', 'status');
     const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
@@ -1340,12 +1382,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
           count = null;
         }
         // The operator may have left meanwhile: repaint only the panel
-        // still on screen, never over the screen just opened.
-        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        // still on screen, never over the screen just opened. Both links
+        // of the chain must hold: the summary in its panel and the panel
+        // in the mount (clearing the mount detaches the panel but leaves
+        // the summary inside it).
+        if (summary.parentNode !== panel || panel.parentNode !== mount) return;
         renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
       });
     });
-    mount.appendChild(retry);
+    panel.appendChild(retry);
   }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
@@ -1375,7 +1420,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     }
     list.appendChild(row);
   }
-  mount.appendChild(list);
+  panel.appendChild(list);
 }
 
 /**
@@ -1466,6 +1511,7 @@ export function shellScreenFor(target) {
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'squadre': return { id: 'squadre', label: 'Squadre' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':
