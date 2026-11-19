@@ -571,20 +571,21 @@ button[aria-busy="true"] { opacity: .6; }
  * The badge color lives in this stylesheet, never in an inline style, so a
  * pilot CSP that refuses inline styles cannot strip it. Same hsl values as
  * spaceBadgeColor/spaceBadgeClass in admin-shell.js: class pN always carries
- * palette entry N. White badge text on every entry passes WCAG AA (>= 4.5):
- * p0 6.75 | p1 4.89 | p2 4.68 | p3 4.70 | p4 4.54 | p5 4.56 | p6 4.57
- * p7 4.69 | p8 4.53 | p9 4.69 | p10 7.79 | p11 9.88 | p12 8.21
- * p13 6.27 | p14 6.09 | p15 6.51 */
+ * palette entry N. Paper (--paper #f7f3e9) badge text on every entry passes
+ * WCAG AA (>= 4.5), measured live 2026-11-19:
+ * p0 6.09 | p1 4.76 | p2 4.92 | p3 5.02 | p4 4.86 | p5 4.86 | p6 4.87
+ * p7 4.75 | p8 4.85 | p9 4.79 | p10 7.03 | p11 8.92 | p12 7.41
+ * p13 5.66 | p14 5.49 | p15 5.88 */
 .bo-space-badge--p0 { background-color: hsl(0 60% 42%); }
-.bo-space-badge--p1 { background-color: hsl(23 60% 42%); }
-.bo-space-badge--p2 { background-color: hsl(45 60% 34%); }
-.bo-space-badge--p3 { background-color: hsl(68 60% 30%); }
-.bo-space-badge--p4 { background-color: hsl(90 60% 32%); }
-.bo-space-badge--p5 { background-color: hsl(113 60% 33%); }
-.bo-space-badge--p6 { background-color: hsl(135 60% 33%); }
-.bo-space-badge--p7 { background-color: hsl(158 60% 32%); }
-.bo-space-badge--p8 { background-color: hsl(180 60% 32%); }
-.bo-space-badge--p9 { background-color: hsl(203 60% 42%); }
+.bo-space-badge--p1 { background-color: hsl(23 60% 40%); }
+.bo-space-badge--p2 { background-color: hsl(45 60% 31%); }
+.bo-space-badge--p3 { background-color: hsl(68 60% 27%); }
+.bo-space-badge--p4 { background-color: hsl(90 60% 29%); }
+.bo-space-badge--p5 { background-color: hsl(113 60% 30%); }
+.bo-space-badge--p6 { background-color: hsl(135 60% 30%); }
+.bo-space-badge--p7 { background-color: hsl(158 60% 30%); }
+.bo-space-badge--p8 { background-color: hsl(180 60% 29%); }
+.bo-space-badge--p9 { background-color: hsl(203 60% 39%); }
 .bo-space-badge--p10 { background-color: hsl(225 60% 42%); }
 .bo-space-badge--p11 { background-color: hsl(248 60% 42%); }
 .bo-space-badge--p12 { background-color: hsl(270 60% 42%); }
