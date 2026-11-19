@@ -1372,6 +1372,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-team-panel > .bo-muted { padding-top: 10px; }
 .bo-spazi-team { gap: 0; }
 .bo-spazi-member { border: none !important; border-radius: 0 !important; border-top: 1px solid var(--line-faint) !important; padding: 12px 20px !important; background: transparent !important; }
+/* backlog:6563edf41aab (ANSWER 18/11 punto e): the duplicate hint is its own
+ * line with the rows' side padding, never glued to the card edge. */
+.bo-spazi-team > .bo-spazi-duplicate { margin: 0; padding: 10px 20px 12px; }
 .bo-spazi-subject { font-size: 14px; }
 .bo-spazi-quiet.ui-btn { height: 30px; padding: 0 10px; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; box-shadow: none; width: auto; }
 .bo-spazi-quiet.ui-btn:hover { background: var(--surface-soft); color: var(--ink); transform: none; }
