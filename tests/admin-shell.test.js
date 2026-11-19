@@ -3,6 +3,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  CUSTOMER_DATA_UNAVAILABLE_REASON,
+  SCHEMA_PENDING_REASON,
   SHELL_ITEMS,
   SHELL_GROUPS,
   SETTINGS_AREAS,
@@ -585,13 +587,39 @@ test('Clienti is available only when the customer-data package is composed', () 
   assert.equal(on.available, true);
   assert.equal(on.route, '#/customer-data');
 
-  for (const nav of [buildShellNav(), buildShellNav({ customerDataAvailable: false })]) {
+  {
+    const nav = buildShellNav({ customerDataAvailable: false });
     const off = nav.find((item) => item.id === 'clienti');
     assert.equal(off.available, false);
     assert.equal(off.route, null);
     assert.match(off.disabledReason, /non composto/);
     assert.equal(off.story, 'BO-F1');
   }
+});
+
+test('before the schema arrives the menu stays pending, never "not composed" (backlog:312dd81f83ba)', () => {
+  // The first paint runs before /api/schema answers: the composition is
+  // unknown, so no voice may claim "not composed in this space", and
+  // Sequenze stays listed like after a reload instead of missing.
+  const nav = buildShellNav();
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  for (const id of ['clienti', 'pipeline', 'agenti', 'squadre', 'sequenze']) {
+    assert.equal(byId[id].available, false, `${id} waits for the schema`);
+    assert.equal(byId[id].route, null, `${id} links nowhere while pending`);
+    assert.ok(!byId[id].disabledReason.includes('non composto'), `${id} never claims not-composed`);
+    assert.equal(byId[id].disabledReason, SCHEMA_PENDING_REASON, `${id} names the loading space`);
+  }
+  assert.equal(byId.sequenze.nav, true, 'Sequenze is listed while pending, like after a reload');
+  assert.equal(byId.clienti.story, 'BO-F1');
+  // Voices that need no composition keep linking while the schema is away.
+  for (const [id, route] of [['oggi', '#/'], ['calendario', '#/calendario'], ['reporting', '#/reporting'], ['impostazioni', '#/personalizzazione']]) {
+    assert.equal(byId[id].available, true, `${id} links while pending`);
+    assert.equal(byId[id].route, route, `${id} keeps its route while pending`);
+  }
+  // Once the schema arrived, an explicit input still reads as not composed.
+  const known = buildShellNav({ customerDataAvailable: false });
+  assert.equal(known.find((item) => item.id === 'clienti').disabledReason, CUSTOMER_DATA_UNAVAILABLE_REASON);
+  assert.equal(known.find((item) => item.id === 'sequenze').nav, false, 'known-absent Sequenze stays hidden');
 });
 
 test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
