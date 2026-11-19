@@ -118,7 +118,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   'stato-sync': 'Chiedi: «c\u2019è qualcosa che non si è sincronizzato?»',
 });
 
-export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
+// backlog:dd6a01de569b: no ⌘K here — the fallback also paints on unknown
+// pages at 390px, where no keyboard exists. Desktop keeps the kbd hint.
+export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa…';
 
 /**
  * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
@@ -423,21 +425,21 @@ export function spaceInitialsFor(name) {
 
 /**
  * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
- * each readable with white text (WCAG AA, ratios in styles.css next to
- * the `.bo-space-badge--pN` rules). The palette fits in one screen of
- * CSS instead of one rule per hue.
+ * each readable with the paper text (WCAG AA >= 4.5:1, ratios in
+ * styles.css next to the `.bo-space-badge--pN` rules). The palette fits
+ * in one screen of CSS instead of one rule per hue.
  */
 const SPACE_BADGE_PALETTE = [
   { h: 0, s: 60, l: 42 },
-  { h: 23, s: 60, l: 42 },
-  { h: 45, s: 60, l: 34 },
-  { h: 68, s: 60, l: 30 },
-  { h: 90, s: 60, l: 32 },
-  { h: 113, s: 60, l: 33 },
-  { h: 135, s: 60, l: 33 },
-  { h: 158, s: 60, l: 32 },
-  { h: 180, s: 60, l: 32 },
-  { h: 203, s: 60, l: 42 },
+  { h: 23, s: 60, l: 40 },
+  { h: 45, s: 60, l: 31 },
+  { h: 68, s: 60, l: 27 },
+  { h: 90, s: 60, l: 29 },
+  { h: 113, s: 60, l: 30 },
+  { h: 135, s: 60, l: 30 },
+  { h: 158, s: 60, l: 30 },
+  { h: 180, s: 60, l: 29 },
+  { h: 203, s: 60, l: 39 },
   { h: 225, s: 60, l: 42 },
   { h: 248, s: 60, l: 42 },
   { h: 270, s: 60, l: 42 },

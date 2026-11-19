@@ -1142,6 +1142,30 @@ function customerHintCompany(item, sibs) {
 }
 
 /**
+ * backlog:f6b9d189 — the visible reason a customer suggestion is listed
+ * when the name itself does not explain it: the partial email when the
+ * email matched, else the phone tail when the held phone matched. Both
+ * reuse the homonym shapes (never the whole address or number), so the
+ * reason reads apart without publishing PII. Null when neither matched
+ * field can be shown — the row then leaves the suggestions, never
+ * unexplained. `match` is the item's `searchMatch` from the server.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} match the explained fields, if the server sent them
+ */
+export function customerMatchReason(item, match) {
+  if (!Array.isArray(match)) return null;
+  if (match.includes('email')) {
+    const mail = customerHintEmail(item, []);
+    if (mail !== null) return mail;
+  }
+  if (match.includes('phone')) {
+    const phone = customerHintPhone(item, []);
+    if (phone !== null) return phone;
+  }
+  return null;
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
  * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
@@ -1171,27 +1195,34 @@ export function aiBlockOf(error) {
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
- * backlog:a16726b5ea76 — the painted homonym ordinal («Rossi (2)») is not
- * the name: it is stripped before matching, so a phrase echoing the Team
- * label still finds a unique person, while two real homonyms stay
- * unresolved. The match also reads the painted label base, so a team known
- * only by a differently-cased id («MARCO») is still recognised — but never
- * the generic «Membro del team» fallback, which names nobody (review #1017
- * giro 1, P2). Only the painted ordinal shape is stripped: one space,
- * digits, end (« (2)»); «Marco(2)» or «Marco  (2)» stay part of the
- * searched name. A literal roster name wins before any stripping, so a
- * real «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
- * giro 1, P2 regression).
+ * An exact identity wins; then the visible person name (case-insensitive,
+ * without the painted homonym ordinal).
+ * backlog:a16726b5ea76 (follow-up, live 18/11: «daniele pelleri»,
+ * «Daniele Pelleri» and «daniele pelleri (2)» all answered «… non è nel
+ * team» while «khaoss85» worked) — the person holds several identities
+ * the roster does not join into one row (same cause as the
+ * persona-identificativi family): the match is by visible name, without
+ * case and without the « (N)» suffix, and rows showing the same name are
+ * searched together. The search stays fail-closed (personFreeSlots offers
+ * only steps free under EVERY identity), so a stranger or a homonym never
+ * books as the wrong human: proposals spanning several distinct rows are
+ * never directly bookable — the operator picks the person in the
+ * «Nuovo appuntamento» form (review accordo-muse-review #1047 P1).
+ * Strangers stay out — the caller sends them down the «non capisco»
+ * path. Only the painted shape is stripped (« (2)»: one space, digits,
+ * end); «Marco(2)» or «Marco  (2)» stay part of the searched name.
+ * A literal roster name wins before any stripping, so a real
+ * «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * round 1, P2 regression) — but the generic «Membro del team» fallback
+ * names nobody (review #1017 round 1, P2).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ * @returns {Array<object>} the matched person rows, in painted order
  */
-export function resolveDraftMemberIds(draftMember, named, members) {
+export function matchDraftMemberRows(draftMember, named, members) {
   if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
-  if (exact) return [...exact.ids];
+  if (exact) return [exact];
   const fold = (text) => String(text).trim().toLowerCase();
   const stripOrdinal = (text) => fold(text).replace(/ \(\d+\)$/, '');
   // A row without a person name only lends its painted label when the
@@ -1200,19 +1231,30 @@ export function resolveDraftMemberIds(draftMember, named, members) {
   const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
   const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
   const wanted = fold(draftMember);
-  // The raw step reads person names only, never painted labels: a draft
-  // echoing a homonym ordinal («Marco (1)») stays unresolved with the two
-  // real homonyms instead of picking one through its label.
+  // The raw step reads person names only, never painted labels: a literal
+  // roster name («Marco Rossi (2)») still finds its own row before any
+  // stripping (review #1017 giro 1, P2 regression).
   const raw = rows.filter((row) => matchable(row)
     && typeof row.name === 'string' && fold(row.name) === wanted);
-  if (raw.length === 1) return [...raw[0].ids];
-  if (raw.length > 1) return [];
+  if (raw.length >= 1) return raw;
   const stripped = stripOrdinal(draftMember);
   if (stripped === '') return [];
   const byName = rows.filter((row) => matchable(row)
     && namesOf(row).some((name) => stripOrdinal(name) === stripped));
-  if (byName.length === 1) return [...byName[0].ids];
+  if (byName.length >= 1) return byName;
   return [];
+}
+
+/**
+ * backlog:a16726b5ea76 — the booking identities of the rows
+ * matchDraftMemberRows finds, without doubles: one human split over
+ * several identities searches them all together. The union is for the
+ * search only — booking as one of them stays with the operator whenever
+ * the rows are several (see the phrase flow and confirmSlot).
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  return [...new Set(matchDraftMemberRows(draftMember, named, members).flatMap((row) => row.ids))];
 }
 
 /**
@@ -3364,13 +3406,21 @@ export function createCalendarioView(deps) {
       for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
-        const ghost = el(doc, 'button', {
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows paints as a marker, never as a
+        // booking button — the click would book the wrong human.
+        const choiceOnly = slot?.personChoiceRequired === true;
+        const ghost = el(doc, choiceOnly ? 'div' : 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
+          attrs: choiceOnly
+            ? { style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`, 'aria-disabled': 'true' }
+            : { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
-        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        if (!choiceOnly) {
+          holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+          ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        }
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3422,9 +3472,14 @@ export function createCalendarioView(deps) {
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
       const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+      // spanning several rows is never confirmed from the card — the
+      // operator picks the person in the form.
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
+        text: slot?.personChoiceRequired === true
+          ? `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dal modulo «Nuovo appuntamento» dopo aver scelto la persona.`
+          : `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
       }));
     }
     return panel;
@@ -4165,10 +4220,15 @@ export function createCalendarioView(deps) {
       for (const slot of state.proposals.slice(0, 24)) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
-        const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
-        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
-        item.appendChild(confirm);
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows offers no direct Conferma — booking
+        // as the first identity could hit the wrong human.
+        if (slot?.personChoiceRequired !== true) {
+          const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
+          holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+          confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+          item.appendChild(confirm);
+        }
         list.appendChild(item);
       }
       panel.appendChild(list);
@@ -4356,7 +4416,10 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
-        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
+        // known team does not hold was never «in the team» — the phrase did
+        // not name a person we know, so it says so instead of refusing them.
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it. The outsider name never fills
         // «Persona del team» (production after #735): the field stays empty,
@@ -4375,6 +4438,15 @@ export function createCalendarioView(deps) {
       // person: offer a step only when every identity reports it free, so a
       // booking under one identity never double-books their other one.
       const kept = personFreeSlots(groups, searchIds, member);
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // visible name can span several distinct rows — one human over split
+      // identities, or true homonyms the roster cannot tell apart. The
+      // proposals are real steps free under every identity, but no slot
+      // may book directly as the wrong human: the operator picks the
+      // person in the «Nuovo appuntamento» form.
+      const needsPersonChoice = matchDraftMemberRows(
+        member, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      if (needsPersonChoice) for (const slot of kept) slot.personChoiceRequired = true;
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
@@ -4417,7 +4489,13 @@ export function createCalendarioView(deps) {
       // a free 30-minute step stays 20, never the search size).
       const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
-      state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
+      // several rows the recognition stands (the draft and its free steps),
+      // but the booking waits for the operator's pick — never a direct
+      // Conferma as the first identity.
+      state.draftNote = needsPersonChoice
+        ? 'Bozza pronta: con questo nome ci sono più persone, scegli nel modulo «Nuovo appuntamento» e conferma da lì.'
+        : 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
       if (Number.isFinite(timedAt) && !exact) {
         const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
@@ -4473,12 +4551,21 @@ export function createCalendarioView(deps) {
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
-      const ids = resolveDraftMemberIds(
-        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
-        parseMemberFilter(state.memberFilter),
-        state.members,
-      );
-      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      const memberText = typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '';
+      const ids = resolveDraftMemberIds(memberText, parseMemberFilter(state.memberFilter), state.members);
+      const multiRow = matchDraftMemberRows(memberText, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // raw drafted name is nobody's identity — with several rows it must
+      // not land in the person field (it would book the name itself). The
+      // operator picks the person on the menu instead.
+      const fillFor = (base) => {
+        if (ids.length === 1) return { ...base, teamMemberId: ids[0] };
+        if (!multiRow) return base;
+        const rest = { ...base };
+        delete rest.teamMemberId;
+        return rest;
+      };
+      let fill = fillFor(state.draft);
       // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
       // every opening proposes a time, so the first free step of the drafted
       // day rides into the form — a real free slot, never an invented
@@ -4491,7 +4578,7 @@ export function createCalendarioView(deps) {
           : null;
         if (first) {
           state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
-          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+          fill = fillFor(state.draft);
         }
       }
       fillManual(fill);
@@ -4655,6 +4742,12 @@ export function createCalendarioView(deps) {
    * carrying the name and nothing else — ids and resources never reach the
    * screen. A click picks the customer and rebuilds the form around the
    * pick, so the claim below books exactly the shown name.
+   * backlog:f6b9d189: only results the form can explain stay listed —
+   * matches on the name, the email or the held phone, with the matching
+   * field printed beside the name. A match the form never shows (its
+   * company, a channel word) leaves the box: «anna» no longer lists a
+   * Massimiliano Magrini matched through his company. Without the
+   * server's reason (an older server) every row stays, as before.
    * @param {any} box
    */
   function paintCustomerResults(box) {
@@ -4665,7 +4758,18 @@ export function createCalendarioView(deps) {
       return;
     }
     if (String(state.customerQuery ?? '').trim().length < 2) return;
-    if (state.customerItems.length === 0) {
+    const explained = state.customerItems.filter((item) => {
+      const match = Array.isArray(item?.searchMatch) ? item.searchMatch : null;
+      if (match === null) return true;
+      // A channel-only query matches on the channel, never on text: the
+      // server sends an empty reason, and the row already passed the
+      // channel filter, so it stays listed (review #985 P2).
+      if (match.length === 0) return true;
+      if (!match.some((field) => field === 'name' || field === 'email' || field === 'phone')) return false;
+      if (match.includes('name')) return true;
+      return customerMatchReason(item, match) !== null;
+    });
+    if (explained.length === 0) {
       box.appendChild(el(doc, 'p', {
         className: 'empty',
         text: state.customerPartial
@@ -4688,11 +4792,15 @@ export function createCalendarioView(deps) {
     // a partial email or phone beside each homonym, never a guess.
     const nameOf = (item) => (typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome');
     const seen = new Map();
-    for (const item of state.customerItems) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
-    for (const item of state.customerItems) {
+    for (const item of explained) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
+    for (const item of explained) {
       const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
-      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item, state.customerItems) : null;
+      const match = Array.isArray(item?.searchMatch) ? item.searchMatch : null;
+      const nameHit = match === null || match.includes('name');
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1
+        ? customerHint(item, explained)
+        : (nameHit ? null : customerMatchReason(item, match));
       if (hint !== null) {
         pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
       }
@@ -4737,6 +4845,14 @@ export function createCalendarioView(deps) {
     const endsAt = typeof slot?.endsAt === 'string' ? slot.endsAt : '';
     if (member === '' || startsAt === '' || endsAt === '') {
       state.aiNote = 'Questo slot non è più valido: cerca di nuovo gli slot.';
+      renderAll();
+      return;
+    }
+    // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+    // spanning several rows never books here — even a crafted call lands
+    // on this refusal, and the operator picks the person in the form.
+    if (slot?.personChoiceRequired === true) {
+      state.aiNote = 'Con questo nome ci sono più persone: scegli nel modulo «Nuovo appuntamento» e conferma da lì.';
       renderAll();
       return;
     }

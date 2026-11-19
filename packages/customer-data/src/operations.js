@@ -13,7 +13,7 @@ import {
   CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery, awaitingReplyFor, channelWordsIn, filterCustomerRows,
-  matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchNeedle, shapeCustomerRow,
+  matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchMatchFields, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -1566,7 +1566,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // dei messaggi è esatta e completa; la vista rifiuta (409) altrimenti,
     // quindi questa base non descrive mai una lettura parziale.
     teamCorrespondents: serializeCorrespondents(repliesReadable ? correspondents : null),
-    items: page.items,
+    // backlog:f6b9d189: every item names the fields that explain the text
+    // match (`searchMatchFields`), so a picker can drop what it cannot show
+    // and print the reason beside the rest. Clienti ignores the key. The
+    // frozen items/rows contract holds: a new frozen array of frozen rows
+    // (review #985 P2).
+    items: Object.freeze(page.items.map((item) => Object.freeze({ ...item, searchMatch: searchMatchFields(item, query.q ?? '') }))),
     total: page.total,
     page: page.page,
     pageSize: page.pageSize,
