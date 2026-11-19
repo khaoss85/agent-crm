@@ -1449,6 +1449,11 @@ export function createCustomerCardView(deps) {
   // The note writer picked under «Note» (Dan 06/11). Kept with the channel
   // filter through a re-read of the same scheda, reset on a new one.
   let noteAuthorFilter = null;
+  // backlog:d77f434ba40c: the recap's «Vedi in cronologia» link resets the
+  // timeline filter before scrolling — an active channel chip would hide
+  // the past bookings the vista advertises. Re-assigned on every
+  // timeline paint, so it always redraws the list on screen.
+  let resetTimelineFilter = null;
   // How far the conversation is opened (Mostra precedenti). Kept with the
   // channel filter when the same scheda re-reads itself, reset on a new one.
   let timelineShown = TIMELINE_PAGE;
@@ -4735,6 +4740,13 @@ export function createCustomerCardView(deps) {
         list.appendChild(older);
       }
     };
+    resetTimelineFilter = () => {
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+      drawChips();
+      drawList();
+    };
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -6025,6 +6037,10 @@ export function createCustomerCardView(deps) {
       more.setAttribute('type', 'button');
       more.setAttribute('data-action', 'vista-past-appointments');
       more.addEventListener('click', () => {
+        // Review Codex #1057 (P2): an active channel chip would hide the
+        // past bookings at the destination — back to Tutti first, so the
+        // cronologia the vista advertises is on screen after the scroll.
+        resetTimelineFilter?.();
         let root = box;
         while (root.parentNode) root = root.parentNode;
         root.querySelector?.('.bo-scheda-timeline')?.scrollIntoView?.({ block: 'start' });

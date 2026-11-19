@@ -912,6 +912,40 @@ test('d77f434ba40c: with past bookings only the vista names the program, with a 
   await Promise.resolve();
 });
 
+// backlog:d77f434ba40c, review Codex #1057 (P2): with a channel filter
+// active the «Vedi in cronologia» link resets to Tutti first — otherwise
+// the destination still hides the past bookings the vista advertises.
+test('d77f434ba40c: the past link resets an active channel filter', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'confirmed',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const whatsapp = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp');
+  assert.ok(whatsapp, 'a WhatsApp chip filters the cronologia');
+  whatsapp.dispatch('click');
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'),
+    'the active filter hides the past booking rows');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  assert.ok(mount.textContent.includes('Appuntamento fissato'),
+    'back to Tutti the past booking rows read again');
+});
+
 // backlog:d77f434ba40c: with no booking at all the honest empty state stays.
 test('d77f434ba40c: with no booking the vista still reads «Nessun appuntamento prenotato»', async () => {
   const empty = {
