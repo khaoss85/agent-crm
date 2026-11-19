@@ -85,5 +85,6 @@ test('the workflow routes the fast job by the cure label', () => {
   assert.match(workflow, /accordo-cure/, 'the reserved runner label');
   assert.match(workflow, /accordo-ci/, 'a normal PR stays on today’s runners');
   assert.match(workflow, /fast-main-red-cure/, 'the cure heavy name');
+  assert.match(workflow, /labels\.\*\.name \|\| ''/, 'a missing label list stays valid');
   assert.match(workflow, /Cure routing/, 'the routing is visible in the job log');
 });
