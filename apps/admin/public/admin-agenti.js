@@ -1226,7 +1226,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
   }
 
-  async function sendInstruction(agent, once = false) {
+  async function sendInstruction(agent, once = false, fallback = false) {
     // Review #661: the shell space may have changed under this screen.
     // Never write to the space left behind: repaint on the active one.
     if (readSpace() !== state.space) {
@@ -1263,8 +1263,6 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // Backlog 7d169a3b1dd2: Affida says what the incarico does next — a
       // hand-written agent with no engine waits for it, a paused one stays
       // off until Riattiva.
-      const fallback = draft.onceFallback === true;
-      draft.onceFallback = false;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`
         + (fallback ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
         + (agent.engine === false ? ` ${AGENT_WAIT_ENGINE_DONE}` : '')
@@ -1279,8 +1277,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         // Restyle 19/11 (Dan: pochi clic): an incarico with no «ogni quanto»
         // runs once, now — the reading of a task given without a schedule —
         // and the outcome says how to make it repeat. No extra press.
-        draft.onceFallback = true;
-        await sendInstruction(agent, true);
+        // The fallback travels as an argument of this one call, never in
+        // the draft: a failed retry cannot leave it set for the next
+        // incarico (review #1072 P1).
+        await sendInstruction(agent, true, true);
         return;
       } else if (isPhraseUnclear(error)) {
         draft.unclear = true;

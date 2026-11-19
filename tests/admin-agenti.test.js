@@ -998,3 +998,39 @@ test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-other', sourceKey: 'r-2', outcome: 'proposed' }]), 'Fatto', 'la proposta di un altro non conta');
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-done', sourceKey: 'r-3', outcome: 'applied' }]), 'Fatto', 'un giro applicato non è da approvare');
 });
+
+test('review #1072 P1: a failed «una volta» retry leaves no fallback note on the next incarico', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const drive = driveClient();
+  let assignCalls = 0;
+  const client = {
+    calls: drive.calls,
+    request: async (path, options = {}) => {
+      if (path === '/api/agents/assign') {
+        assignCalls += 1;
+        // 1st: no schedule in the phrase; 2nd (the «una volta» retry): fails.
+        if (assignCalls === 1) throw Object.assign(new Error('unclear'), { code: 'AGENT_PHRASE_UNCLEAR', status: 422 });
+        if (assignCalls === 2) throw Object.assign(new Error('down'), { status: 503 });
+      }
+      return drive.request(path, options);
+    },
+  };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const talk = () => mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk().value = 'occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(assignCalls, 2, 'the unclear phrase was retried once and failed');
+  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE));
+  talk().value = 'ogni lunedì occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(assignCalls, 3);
+  assert.ok(textOf(mount).includes('Incarico dato a Riaggancio'), 'the scheduled incarico lands');
+  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE), 'no stale «parte una volta» note on a scheduled incarico');
+});
