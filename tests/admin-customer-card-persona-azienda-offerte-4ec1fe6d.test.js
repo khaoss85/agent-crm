@@ -11,7 +11,10 @@
  * la stessa riga) dipingeva nessun riquadro Offerta: l'offerta dell'azienda
  * non si vedeva e nessun link la collegava. Rosso sul codice di prima
  * (0 riquadri Offerta), verde dopo (1 riquadro con il link alla scheda
- * dell'azienda, dove le offerte si aprono con il loro link).
+ * dell'azienda, dove le offerte si aprono con il loro link). Restringe del
+ * merge 19/11 contro 4cfa30c164ca: il link si dipinge solo se l'azienda HA
+ * offerte (lettura del profilo azienda); su azienda senza offerte il
+ * riquadro resta nascosto, come Ada Rossi senza fantasmi.
  */
 
 import test from 'node:test';
@@ -106,14 +109,34 @@ const flush = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
 };
 
+const COMPANY_PROFILE_WITH_OFFER = {
+  customerProfileContract: 1,
+  subject: { resource: 'company', id: 'co-presti' },
+  identity: {
+    company: { id: 'co-presti', name: 'Presti Group', domain: null, placeholder: false },
+    contact: null,
+  },
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+  },
+  quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+};
+
+const COMPANY_PROFILE_EMPTY = {
+  ...COMPANY_PROFILE_WITH_OFFER,
+  opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+};
+
 /** Tutte le letture rispondono subito: la strada del NON PASSA. */
-function directClient({ card, timeline, profile }) {
+function directClient({ card, timeline, profile, companyProfile = profile }) {
   return {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if ((options?.method ?? 'GET') !== 'GET') return {};
       if (path.startsWith('/api/customer-hub/card/')) return card;
       if (path.startsWith('/api/customer-hub/timeline/')) return timeline;
+      if (path.startsWith('/api/customer-data/profile/company/')) return companyProfile;
       if (path.startsWith('/api/customer-data/profile/')) return profile;
       if (path === '/api/schema') return { pipelines: [] };
       if (path.startsWith('/api/customer-data/enriched/')) {
@@ -136,11 +159,15 @@ const offerBoxes = (mount) => mount.findAll('section').filter((node) => (
   (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-card-offer')
 ));
 
-test('4ec1fe6d: contatto senza offerte proprie ma con azienda collegata, la scheda collega le offerte azienda', async () => {
+test('4ec1fe6d: contatto senza offerte proprie ma con azienda CHE HA offerte, la scheda collega le offerte azienda', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createCustomerCardView({
-    doc, mount, client: directClient({ card: CARD, timeline: TIMELINE, profile: PROFILE_NO_OWN_OFFERS }),
+    doc,
+    mount,
+    client: directClient({
+      card: CARD, timeline: TIMELINE, profile: PROFILE_NO_OWN_OFFERS, companyProfile: COMPANY_PROFILE_WITH_OFFER,
+    }),
   });
   await view.renderCard('contact', 'c-ada');
   await flush();
@@ -155,6 +182,21 @@ test('4ec1fe6d: contatto senza offerte proprie ma con azienda collegata, la sche
     'il link apre la scheda dell’azienda, dove le offerte si aprono con il loro link',
   );
   assert.ok(links[0].textContent.includes('Presti Group'), 'il link dice di quale azienda sono le offerte');
+});
+
+test('4ec1fe6d: contatto con azienda SENZA offerte, nessun riquadro Offerta (compatibile 4cfa30c164ca)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({
+    doc,
+    mount,
+    client: directClient({
+      card: CARD, timeline: TIMELINE, profile: PROFILE_NO_OWN_OFFERS, companyProfile: COMPANY_PROFILE_EMPTY,
+    }),
+  });
+  await view.renderCard('contact', 'c-ada');
+  await flush();
+  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta se l’azienda non ha offerte (niente fantasmi)');
 });
 
 test('4ec1fe6d: contatto senza azienda collegata, nessun riquadro Offerta (come prima)', async () => {

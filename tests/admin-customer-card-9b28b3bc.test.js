@@ -55,7 +55,7 @@ const ENRICHED = {
   items: [],
 };
 
-function fakeClient({ card, onSchema = null } = {}) {
+function fakeClient({ card, onSchema = null, companyProfile = null } = {}) {
   const profile = noOfferProfile();
   return {
     async request(path, options = {}) {
@@ -63,6 +63,10 @@ function fakeClient({ card, onSchema = null } = {}) {
       if ((options?.method ?? 'GET') !== 'GET') return { ok: true };
       if (path.startsWith('/api/customer-hub/card/')) return card;
       if (path.startsWith('/api/customer-hub/timeline/')) return TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/company/')) {
+        if (companyProfile) return companyProfile;
+        throw Object.assign(new Error('Not Found'), { status: 404 });
+      }
       if (path.startsWith('/api/customer-data/profile/')) return profile;
       if (path === '/api/schema') {
         if (onSchema) return onSchema();
@@ -137,7 +141,22 @@ test('9b28b3bc6003: senza offerte, niente scheletro Offerta mentre si aspetta so
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createCustomerCardView({
-    doc, mount, client: fakeClient({ card: baseCard(), onSchema: () => schemaGate }), spaceId: 'presti',
+    doc,
+    mount,
+    client: fakeClient({
+      card: baseCard(),
+      onSchema: () => schemaGate,
+      companyProfile: {
+        customerProfileContract: 1,
+        subject: { resource: 'company', id: 'co1' },
+        opportunities: {
+          available: true, count: 1, countIsComplete: true, truncated: false,
+          items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+        },
+        quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      },
+    }),
+    spaceId: 'presti',
   });
   const opening = view.renderCard('contact', 'c1');
   await flush(20);
