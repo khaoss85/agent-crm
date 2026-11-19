@@ -2259,7 +2259,20 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify(callBody),
         });
         toast('Chiamata registrata');
+        // Voce 600964e2d14e: dopo una chiamata dall'azione rapida «Chiama»
+        // la scheda propone «Detta nota vocale» per quella chiamata — il
+        // pannello Chiama si chiude e la rilettura riapre il dettato, vuoto,
+        // con il cursore dentro. Solo la finestra della chiamata si chiude
+        // (uno «Scrivi» aperto resta dov'è); retainedDrafts è il canale
+        // disegnato per portare le bozze nella pittura dopo la rilettura —
+        // paint lo consuma una volta sola e la digitazione vera vince sopra.
+        // Senza chiamata registrata dal CRM (tel: di ripiego) non c'è nessun
+        // gancio: il dettato resta l'opzione già visibile nella scheda.
+        const open = mount.querySelector('div[data-call="open"]');
+        if (open && open.parentNode) open.parentNode.removeChild(open);
+        retainedDrafts = { ...(retainedDrafts ?? {}), voice: { open: true, text: '' } };
         await renderCard(navCtx.resource, navCtx.id);
+        focusAtEnd(mount.querySelector('[name="voiceNoteText"]'));
       } catch (error) {
         err.textContent = humanReadError(error, { failed: 'Chiamata non registrata. Riprova più tardi.' });
       } finally {
