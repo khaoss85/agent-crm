@@ -764,6 +764,25 @@ export function passageFullText(item) {
 }
 
 /**
+ * The whole passage behind «Mostra tutto», like Gmail: the subject stays on
+ * top and the full body follows (voce 0c24dc5b88b2 — an expanded mail used
+ * to lose its subject and read body-only). Same subject rule as the preview
+ * line: a body that opens with its own subject does not repeat it. '' when
+ * there is nothing to show.
+ * @param {{ body?: unknown, subject?: unknown }} item
+ */
+export function passageExpandedText(item) {
+  const subject = cleanPreviewText(item?.subject);
+  const full = passageFullText(item);
+  if (subject === '') return full;
+  if (full === '') return subject;
+  const repeats = full.toLowerCase().startsWith(subject.toLowerCase())
+    && (full.length === subject.length || /[\s|•·:,;.!?–—-]/.test(full[subject.length]));
+  const rest = repeats ? full.slice(subject.length).replace(/^[\s|•·:,;.!?–—-]+/, '') : full;
+  return rest === '' ? subject : `${subject} — ${rest}`;
+}
+
+/**
  * One passage per real message (Dan 10/11): the same mail synced several
  * times — same channel, direction, sender, subject, text and minute — reads
  * once in the cronologia. Notes, calls and attachments are never folded; the first copy
@@ -4711,13 +4730,13 @@ export function createCustomerCardView(deps) {
           // always clean. Never an empty line: «(nessun testo)» unless an
           // attachment is what the passage carries.
           const line = passagePreview(item);
-          const full = passageFullText(item);
+          const expanded = passageExpandedText(item);
           const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
           if (line !== '' || !hasAttachment) {
             const shown = line !== '' ? line : PASSAGE_NO_TEXT;
             const bodyNode = el('p', 'bo-scheda-entry-body', shown);
             bubble.appendChild(bodyNode);
-            if (full !== '' && full !== shown) {
+            if (expanded !== '' && expanded !== shown) {
               bodyNode.setAttribute('data-folded', 'true');
               const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
               more.setAttribute('type', 'button');
@@ -4725,7 +4744,7 @@ export function createCustomerCardView(deps) {
               more.addEventListener('click', () => {
                 const folded = bodyNode.getAttribute('data-folded') === 'true';
                 bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
-                bodyNode.textContent = folded ? full : shown;
+                bodyNode.textContent = folded ? expanded : shown;
                 more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
               });
               bubble.appendChild(more);
