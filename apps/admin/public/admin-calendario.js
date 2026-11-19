@@ -5843,6 +5843,10 @@ export function createCalendarioView(deps) {
     void ensureServices();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
+    // backlog:f9cf5e4616c2: the event Oggi asked for scopes the entry load
+    // when no member is named (roster refused or empty) — like
+    // reloadAfterBooking below — so its week reads instead of staying empty.
+    else if (state.pendingEventMember !== null) await loadWeek([state.pendingEventMember]);
   }
 
   return { render, invalidate };
