@@ -1565,6 +1565,11 @@ export function createCustomerCardView(deps) {
       const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
         ? keptDraftWrap.getAttribute('data-structured-for') : null;
       if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      // Review #1065 (P2): the draft opened by «Scrivi tu» or by the AI-off
+      // answer stays open through a repaint, empty fields included.
+      if (typeof keptDraftWrap?.getAttribute === 'function' && keptDraftWrap.getAttribute('hidden') === null) {
+        keptVoice.draftShown = true;
+      }
       drafts.voice = keptVoice;
     }
     return Object.keys(drafts).length > 0 ? drafts : null;
@@ -2291,7 +2296,7 @@ export function createCustomerCardView(deps) {
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
     }
-    const panel = old ?? el('div', 'bo-scheda-composer');
+    const panel = old ?? el('div', 'bo-scheda-note-top');
     panel.setAttribute('data-composer', 'open');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Scrivi al cliente');
@@ -3773,15 +3778,18 @@ export function createCustomerCardView(deps) {
       const row = el('p', 'bo-scheda-fact');
       row.appendChild(el('span', 'bo-scheda-fact-label', def?.label ?? def?.key ?? 'campo'));
       const shown = formatCustomValue(def, byKey.get(def?.key)?.value ?? null);
-      row.appendChild(el('span', undefined, shown ?? '—'));
-      const edit = el('button', undefined, 'Modifica');
+      // Restyle 19/11 (7de82665ac2a): the value itself opens the edit — no
+      // «Modifica» button per field; an empty field reads «Aggiungi».
+      const label = def?.label ?? def?.key ?? 'campo';
+      const edit = el('button', shown == null ? 'bo-campo-value is-empty' : 'bo-campo-value', shown ?? 'Aggiungi');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', `edit-field:${def?.key ?? ''}`);
+      edit.setAttribute('aria-label', shown == null ? `Aggiungi ${label}` : `Modifica ${label}: ${shown}`);
       edit.addEventListener('click', () => renderFieldForm(box, ctx, def));
       row.appendChild(edit);
       box.appendChild(row);
     }
-    const add = el('button', undefined, '+ Aggiungi campo');
+    const add = el('button', 'bo-campo-add-btn', '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
     const openAdd = (draft = null) => {
@@ -4108,6 +4116,11 @@ export function createCustomerCardView(deps) {
       : runKey !== null ? enrichmentProposals.get(runKey) ?? [] : [];
     if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
+      // Restyle 19/11 (7de82665ac2a): the empty state says what the AI does.
+      if (typeof extract === 'function') {
+        box.appendChild(el('p', 'bo-muted bo-scheda-enrich-hint',
+          'Con «Aggiorna» l’AI legge i messaggi di questo cliente e propone nome, ruolo, azienda e telefono, ognuno con la sua fonte.'));
+      }
       return;
     }
     for (const item of items) {
@@ -4264,6 +4277,12 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+    // Restyle 19/11 (7de82665ac2a): the note and the dictation sit on top of
+    // the cronologia, where the new note lands — no scrolling past every
+    // row to write one.
+    const composerSlot = noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string'
+      ? el('div', 'bo-scheda-note-top') : null;
+    if (composerSlot !== null) box.appendChild(composerSlot);
     // backlog:5346ab531538: a cancelled appointment reads in the cronologia
     // as its own row, under «Tutti» only (it has no channel), at the moment
     // it was cancelled — the slot left the calendar grid, not the history.
@@ -4918,7 +4937,7 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(noteError);
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
-      box.appendChild(noteForm);
+      composerSlot.appendChild(noteForm);
       // Voce 5036bc435465: «Detta nota vocale» — after a call from any
       // phone (CRM-logged or tel: fallback) the operator dictates how it
       // went. The browser transcribes on the device (the `dictate` seam,
@@ -4964,6 +4983,8 @@ export function createCustomerCardView(deps) {
       let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
       let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
       let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      // Review #1065 (P2): whether the draft fields were open, carried like the words.
+      let draftShownCarried = keptVoice?.draftShown === true;
       const stopDictation = () => {
         try {
           voiceDictation?.stop?.();
@@ -5077,6 +5098,7 @@ export function createCustomerCardView(deps) {
         manualButton.setAttribute('type', 'button');
         manualButton.setAttribute('data-action', 'voice-draft-manual');
         const showDraft = (on) => {
+          draftShownCarried = on;
           if (on) {
             draftWrap.removeAttribute('hidden');
             manualButton.setAttribute('hidden', '');
@@ -5106,7 +5128,7 @@ export function createCustomerCardView(deps) {
         if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
         if (carriedPassi !== '') passiField.value = carriedPassi;
         if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
-        showDraft(structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
+        showDraft(draftShownCarried || structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
         manualButton.addEventListener('click', () => {
           showDraft(true);
           riassuntoField.focus?.();
@@ -5236,7 +5258,7 @@ export function createCustomerCardView(deps) {
         buildVoicePanel();
       }
       voiceWrap.appendChild(voicePanel);
-      box.appendChild(voiceWrap);
+      composerSlot.appendChild(voiceWrap);
     }
   }
 

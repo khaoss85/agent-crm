@@ -363,3 +363,29 @@ test('restyle 19/11: with the AI off the draft opens for hand editing', async ()
   assert.ok(mount.textContent.includes('L’AI non è attiva in questo spazio'));
   assert.equal(draftWrapOf(mount).getAttribute('hidden'), null, 'the sentence says the draft is below: it is');
 });
+
+test('review #1065 P2: the draft opened by «Scrivi tu» stays open through a repaint, empty fields included', async () => {
+  const { mount, view } = await open();
+  await openPanel(mount);
+  byAction(mount, 'voice-draft-manual').listeners.click[0]();
+  await flush();
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null);
+  // A section landing repaints the scheda while the fields are still empty.
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null, 'the open draft does not vanish');
+  assert.equal(byAction(mount, 'voice-draft-manual').getAttribute('hidden'), '', '«Scrivi tu» stays aside');
+});
+
+test('review #1065 P2: with the AI off the opened draft stays open through a repaint', async () => {
+  const { mount, view } = await open({
+    voiceRefusal: Object.assign(new Error('no model'), { status: 409, code: 'VOICE_NOTE_UNAVAILABLE' }),
+  });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'appunti della chiamata';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null);
+});
