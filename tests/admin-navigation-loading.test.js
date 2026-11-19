@@ -254,6 +254,19 @@ test('94eabbd4762f: the badges wait for the screen opened at boot, either way it
   await afterScreen(null, { wait: neverCap });
 });
 
+// backlog:c048bf6f2dd3 (ritorno 1, EVIDENCE_LINE_NOT_PASS 2026-11-17): every
+// navigation build stamps the schema identity on the shell root — boot and
+// a background version change share populateNav, so the stamp moves exactly
+// when the nav is rebuilt. Red before the cure: populateNav stamps nothing.
+test('c048bf6f2dd3: every navigation build stamps the schema identity on the shell', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /import \{[^}]*schemaStampOf[^}]*\} from '\.\/admin-schema-cache\.js'/, 'the stamp helper is wired');
+  const nav = /async function populateNav\([^)]*\) \{([\s\S]*?)\n\}\n/.exec(app);
+  assert.ok(nav, 'populateNav is there');
+  assert.ok(nav[1].includes('stampSchemaIdentity(schema)'), 'the navigation stamps the copy it was built from');
+  assert.match(app, /refreshNav: \(\) => populateNav\(\{ repaintScreen: false \}\)/, 'a background change rebuilds through the same path');
+});
+
 test('94eabbd4762f: at boot the shell reads its badges only after the routed screen', () => {
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
   // backlog:c048bf6f2dd3: populateNav takes an option (repaintScreen).

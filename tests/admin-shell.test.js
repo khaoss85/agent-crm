@@ -47,6 +47,7 @@ test('sidebar voices are the prototype voices, in Italian', () => {
     'Pipeline',
     'Calendario',
     'Agenti',
+    'Squadre',
     'Sequenze',
     'Reporting',
     'Nuovo modulo',
@@ -54,7 +55,7 @@ test('sidebar voices are the prototype voices, in Italian', () => {
   ]);
   const groups = Object.fromEntries(SHELL_ITEMS.map((item) => [item.id, item.group]));
   assert.equal(groups.oggi, 'home');
-  for (const id of ['clienti', 'pipeline', 'calendario', 'agenti', 'sequenze']) assert.equal(groups[id], 'native');
+  for (const id of ['clienti', 'pipeline', 'calendario', 'agenti', 'squadre', 'sequenze']) assert.equal(groups[id], 'native');
   // backlog:33782ba68747 + backlog:b368bbf992ce: Sequenze stay hidden by
   // default and get their voice only when the module is composed.
   assert.equal(SHELL_ITEMS.find((item) => item.id === 'sequenze').nav, false);
@@ -454,6 +455,34 @@ test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color w
       `stylesheet maps ${spaceBadgeClass(id)} to the helper color`,
     );
   }
+});
+
+test('backlog:c4127dcbb7f1 every badge palette slot passes WCAG AA with the paper text', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const paper = css.match(/--paper:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? '#f7f3e9';
+  const rules = [...css.matchAll(/\.bo-space-badge--p(\d+)\s*\{\s*background-color:\s*hsl\(\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\s*\)/g)];
+  assert.equal(rules.length, 16, 'palette holds 16 slots (<= 24), no --h359 legacy rules');
+  assert.ok(!css.includes('.bo-space-badge--h'), 'no legacy per-hue badge rules remain');
+  const toRgb = (h, s, l) => {
+    s /= 100;
+    l /= 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return [f(0), f(8), f(4)].map((v) => Math.round(v * 255));
+  };
+  const hex = (s) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+  const chan = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const luminance = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const paperLuminance = luminance(hex(paper));
+  const slots = new Set();
+  for (const [, slot, h, s, l] of rules) {
+    slots.add(slot);
+    const ratio = contrast(paperLuminance, luminance(toRgb(Number(h), Number(s), Number(l))));
+    assert.ok(ratio >= 4.5, `slot p${slot} readable on paper: ${ratio.toFixed(2)}:1`);
+  }
+  assert.equal(slots.size, 16, 'all 16 palette slots are present');
 });
 
 // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —

@@ -52,6 +52,9 @@ export const SHELL_ITEMS = Object.freeze([
   // (Dan 11/11) gives Sequenze its voice back when the sequences module is
   // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
+  // backlog:0d2d8f2e puts «Squadre» in the sidebar: the teams of agents
+  // with their backlog A, backlog B, routines and advisor metric.
+  { id: 'squadre', label: 'Squadre', group: 'native', route: null, story: 'backlog:0d2d8f2e', icon: 'squadre' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
   // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
@@ -420,21 +423,21 @@ export function spaceInitialsFor(name) {
 
 /**
  * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
- * each readable with white text (WCAG AA, ratios in styles.css next to
- * the `.bo-space-badge--pN` rules). The palette fits in one screen of
- * CSS instead of one rule per hue.
+ * each readable with the paper text (WCAG AA >= 4.5:1, ratios in
+ * styles.css next to the `.bo-space-badge--pN` rules). The palette fits
+ * in one screen of CSS instead of one rule per hue.
  */
 const SPACE_BADGE_PALETTE = [
   { h: 0, s: 60, l: 42 },
-  { h: 23, s: 60, l: 42 },
-  { h: 45, s: 60, l: 34 },
-  { h: 68, s: 60, l: 30 },
-  { h: 90, s: 60, l: 32 },
-  { h: 113, s: 60, l: 33 },
-  { h: 135, s: 60, l: 33 },
-  { h: 158, s: 60, l: 32 },
-  { h: 180, s: 60, l: 32 },
-  { h: 203, s: 60, l: 42 },
+  { h: 23, s: 60, l: 40 },
+  { h: 45, s: 60, l: 31 },
+  { h: 68, s: 60, l: 27 },
+  { h: 90, s: 60, l: 29 },
+  { h: 113, s: 60, l: 30 },
+  { h: 135, s: 60, l: 30 },
+  { h: 158, s: 60, l: 30 },
+  { h: 180, s: 60, l: 29 },
+  { h: 203, s: 60, l: 39 },
   { h: 225, s: 60, l: 42 },
   { h: 248, s: 60, l: 42 },
   { h: 270, s: 60, l: 42 },
@@ -573,7 +576,7 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
   if (view === 'dashboard') return mounted === true;
-  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
 /**
@@ -589,9 +592,10 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean }} input
+ * Squadre only when the same package serves squads (squadsAvailable).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -613,6 +617,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+    }
+    if (item.id === 'squadre') {
+      if (squadsAvailable) {
+        return { ...item, route: '#/squadre', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
@@ -1501,6 +1511,7 @@ export function shellScreenFor(target) {
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'squadre': return { id: 'squadre', label: 'Squadre' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':
