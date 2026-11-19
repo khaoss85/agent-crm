@@ -878,6 +878,56 @@ test('26afd13657c5: the appointment row waits for the listino, never slug words 
   assert.ok(titles.some((node) => node.textContent.includes('Lezione di prova')), 'the next appointment names the listino too');
 });
 
+// backlog:d77f434ba40c: with past bookings only the Appuntamenti vista must
+// not claim «Nessun appuntamento prenotato» — the section shows the upcoming
+// ones only, so it says «Nessun appuntamento in programma» and the past stays
+// one link away, in the cronologia.
+test('d77f434ba40c: with past bookings only the vista names the program, with a link down', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 3,
+      truncated: false,
+      items: [10, 11, 12].map((day) => ({
+        id: `past-${day}`, status: 'booked',
+        startsAt: `2020-11-${day}T10:00:00.000Z`, endsAt: `2020-11-${day}T10:45:00.000Z`,
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      })),
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('Nessun appuntamento prenotato'),
+    `never the false empty state with past bookings: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('Nessun appuntamento in programma'),
+    `the vista says it shows upcoming ones only: ${recap.textContent}`);
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  await Promise.resolve();
+});
+
+// backlog:d77f434ba40c: with no booking at all the honest empty state stays.
+test('d77f434ba40c: with no booking the vista still reads «Nessun appuntamento prenotato»', async () => {
+  const empty = {
+    ...TIMELINE,
+    appointments: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ timeline: empty }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(recap.textContent.includes('Nessun appuntamento prenotato'),
+    `the empty state stays without bookings: ${recap.textContent}`);
+});
+
 test('the channel filter narrows the timeline to one channel', async () => {
   const client = stubClient();
   const doc = createFakeDocument();

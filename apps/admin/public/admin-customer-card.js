@@ -5674,6 +5674,19 @@ export function createCustomerCardView(deps) {
       return Number.isFinite(startsMs) && startsMs >= nowMs;
     });
   };
+  // backlog:d77f434ba40c: the bookings that already happened — a
+  // booked/confirmed row starting before now — so «Nessun appuntamento»
+  // never hides the past the cronologia still lists. Cancelled-only past
+  // keeps the plain empty state (its row reads «Appuntamento annullato»).
+  const pastBookedOf = (timeline) => {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    const nowMs = Date.now();
+    return items.filter((item) => {
+      if (!['booked', 'confirmed'].includes(String(item?.status ?? ''))) return false;
+      const startsMs = Date.parse(String(item?.startsAt ?? ''));
+      return Number.isFinite(startsMs) && startsMs < nowMs;
+    });
+  };
   /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
   function appointmentBody(box, next, serviceNames = null, customerName = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
@@ -5997,7 +6010,26 @@ export function createCustomerCardView(deps) {
     }
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+      // backlog:d77f434ba40c: with past bookings only the section shows
+      // upcoming ones, so it says so («Nessun appuntamento in programma»)
+      // and the past stays one link away, in the cronologia below.
+      const past = pastBookedOf(timeline);
+      if (past.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+        return;
+      }
+      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento in programma'));
+      box.appendChild(el('p', 'bo-muted',
+        `${past.length === 1 ? '1 passato' : `${past.length} passati`} in cronologia`));
+      const more = el('button', 'bo-scheda-vista', 'Vedi in cronologia');
+      more.setAttribute('type', 'button');
+      more.setAttribute('data-action', 'vista-past-appointments');
+      more.addEventListener('click', () => {
+        let root = box;
+        while (root.parentNode) root = root.parentNode;
+        root.querySelector?.('.bo-scheda-timeline')?.scrollIntoView?.({ block: 'start' });
+      });
+      box.appendChild(more);
       return;
     }
     // backlog:26afd13657c5: the listino names the service here too — like
