@@ -752,6 +752,10 @@ test('the declared list holds the acceptance guards', () => {
     REPO_WIDE_GUARDS.includes('tests/tour-claim.test.js'),
     'a composition-only PR must run tests/tour-claim.test.js (nightly main run 43665590178)',
   );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-client-only PR must run tests/admin-client-noslash-regex.test.js',
+  );
 });
 
 test('a payments-only change runs the guards on top of its selection', () => {
@@ -792,6 +796,30 @@ test('a CSS-only admin change runs the authority-token guard on top of its selec
   assert.ok(
     guarded.includes('tests/admin-authority-tokens.test.js'),
     'a styles.css-only change must run tests/admin-authority-tokens.test.js',
+  );
+});
+
+test('an admin-client-only change runs the noslash regex guard on top of its selection', () => {
+  // admin-calendario.js is a browser script, not relatively imported by the
+  // guard: tests/admin-client-noslash-regex.test.js reads every
+  // apps/admin/public/*.js file with readFileSync instead — so without the
+  // guard list a client-only PR would run that screen's own tests while a
+  // reintroduced `//` regex breaks the served /bo shell
+  // (b545aca18b8f, agent-crm#890).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/admin-calendario.js'],
+    contents({
+      'tests/admin-client-noslash-regex.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/admin-calendario.js']);
+  assert.ok(
+    guarded.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-calendario.js-only change must run tests/admin-client-noslash-regex.test.js',
   );
 });
 
