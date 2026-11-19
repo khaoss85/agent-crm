@@ -4933,8 +4933,13 @@ export function createCustomerCardView(deps) {
       // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
       // still be saved as-is.
       const voiceWrap = el('div', 'bo-scheda-voice-note');
-      const voiceToggle = el('button', undefined, 'Detta nota vocale');
+      // Restyle 19/11 (Dan, foto Presti): the panel is one card — a
+      // composer with the microphone and the AI action in its bar, the
+      // three draft fields only once there is a draft, one dark «Salva».
+      // Texts and data-action anchors are unchanged.
+      const voiceToggle = el('button', 'ui-btn ui-btn-secondary bo-voice-toggle', 'Detta nota vocale');
       voiceToggle.setAttribute('type', 'button');
+      voiceToggle.setAttribute('aria-expanded', 'false');
       voiceToggle.setAttribute('data-action', 'dictate-note');
       voiceWrap.appendChild(voiceToggle);
       const voicePanel = el('div', 'bo-scheda-voice-panel');
@@ -4979,14 +4984,22 @@ export function createCustomerCardView(deps) {
         if (curPassi) carriedPassi = String(curPassi.value ?? '');
       };
       const buildVoicePanel = () => {
-        voicePanel.appendChild(el('p', 'bo-muted',
+        const voiceHead = el('div', 'bo-voice-head');
+        voiceHead.appendChild(el('p', 'bo-voice-kicker', 'Nota della chiamata'));
+        voiceHead.appendChild(el('p', 'bo-muted bo-voice-privacy',
           'Dopo la chiamata detta com’è andata: la trascrizione resta su questo dispositivo finché non la salvi. L’audio non lascia mai il dispositivo.'));
-        const dictateRow = el('div', 'bo-scheda-form-actions');
-        const dictateButton = el('button', undefined, 'Detta');
+        voicePanel.appendChild(voiceHead);
+        const composer = el('div', 'bo-voice-composer');
+        const voiceBar = el('div', 'bo-voice-bar');
+        const dictateButton = el('button', 'ui-btn ui-btn-secondary bo-voice-mic', 'Detta');
         dictateButton.setAttribute('type', 'button');
         dictateButton.setAttribute('data-action', 'dictate-start');
-        const dictateState = el('p', 'bo-muted', '');
-        const voiceInput = el('textarea', 'bo-scheda-note-input');
+        const dictateState = el('p', 'bo-muted bo-voice-state', '');
+        const setRecording = (on) => {
+          if (on) composer.setAttribute('data-state', 'recording');
+          else composer.removeAttribute('data-state');
+        };
+        const voiceInput = el('textarea', 'bo-scheda-note-input bo-voice-input');
         voiceInput.setAttribute('name', 'voiceNoteText');
         voiceInput.setAttribute('rows', '3');
         voiceInput.setAttribute('aria-label', 'Dettato della chiamata');
@@ -5012,12 +5025,14 @@ export function createCustomerCardView(deps) {
         dictateButton.addEventListener('click', () => {
           if (voiceDictation !== null) {
             stopDictation();
+            setRecording(false);
             dictateButton.textContent = 'Detta';
             dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
             return;
           }
           dictateState.textContent = 'Detto… premi Stop quando hai finito.';
           dictateButton.textContent = 'Stop';
+          setRecording(true);
           try {
             voiceDictation = startDictate(doc, {
               onText: (chunk) => {
@@ -5028,6 +5043,7 @@ export function createCustomerCardView(deps) {
               },
               onEnd: () => {
                 voiceDictation = null;
+                setRecording(false);
                 dictateButton.textContent = 'Detta';
                 if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
                   dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
@@ -5039,22 +5055,39 @@ export function createCustomerCardView(deps) {
           }
           if (voiceDictation === null || typeof voiceDictation?.stop !== 'function') {
             voiceDictation = null;
+            setRecording(false);
             dictateButton.textContent = 'Detta';
             dictateState.textContent = 'Il dettato non è partito: scrivi qui sotto.';
           }
         });
-        dictateRow.appendChild(dictateButton);
-        voicePanel.appendChild(dictateRow);
-        voicePanel.appendChild(dictateState);
-        voicePanel.appendChild(voiceInput);
+        composer.appendChild(voiceInput);
+        voiceBar.appendChild(dictateButton);
+        voiceBar.appendChild(dictateState);
+        composer.appendChild(voiceBar);
+        voicePanel.appendChild(composer);
         const voiceError = el('small', 'field-error', '');
-        const structureButton = el('button', undefined, 'Ordina con l’AI');
+        const structureButton = el('button', 'ui-btn ui-btn-secondary bo-voice-ai', 'Ordina con l’AI');
         structureButton.setAttribute('type', 'button');
         structureButton.setAttribute('data-action', 'structure-voice-note');
         const draftWrap = el('div', 'bo-scheda-voice-draft');
+        // The three fields stay in the DOM (repaint carry, tests by name):
+        // hidden until a draft exists, the AI is off, or the operator asks
+        // to write them by hand.
+        const manualButton = el('button', 'ui-btn ui-btn-secondary bo-voice-manual', 'Scrivi tu riassunto, decisioni e prossimi passi');
+        manualButton.setAttribute('type', 'button');
+        manualButton.setAttribute('data-action', 'voice-draft-manual');
+        const showDraft = (on) => {
+          if (on) {
+            draftWrap.removeAttribute('hidden');
+            manualButton.setAttribute('hidden', '');
+          } else {
+            draftWrap.setAttribute('hidden', '');
+            manualButton.removeAttribute('hidden');
+          }
+        };
         const draftField = (name, label, rows) => {
-          const wrap = el('div');
-          const title = el('label', 'bo-scheda-field-label', label);
+          const wrap = el('div', 'bo-voice-draft-field');
+          const title = el('label', 'bo-scheda-field-label bo-voice-draft-label', label);
           title.setAttribute('for', name);
           const field = el('textarea', 'bo-scheda-note-input');
           field.setAttribute('name', name);
@@ -5073,7 +5106,12 @@ export function createCustomerCardView(deps) {
         if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
         if (carriedPassi !== '') passiField.value = carriedPassi;
         if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
-        const saveButton = el('button', undefined, 'Salva in cronologia');
+        showDraft(structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
+        manualButton.addEventListener('click', () => {
+          showDraft(true);
+          riassuntoField.focus?.();
+        });
+        const saveButton = el('button', 'ui-btn ui-btn-primary bo-voice-save', 'Salva in cronologia');
         saveButton.setAttribute('type', 'button');
         saveButton.setAttribute('data-action', 'save-voice-note');
         structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
@@ -5096,6 +5134,7 @@ export function createCustomerCardView(deps) {
             riassuntoField.value = String(draft?.riassunto ?? '');
             decisioniField.value = String(draft?.decisioni ?? '');
             passiField.value = String(draft?.prossimiPassi ?? '');
+            showDraft(true);
             structuredFor = text;
             draftWrap.setAttribute('data-structured-for', text);
             voiceError.textContent = '';
@@ -5103,6 +5142,7 @@ export function createCustomerCardView(deps) {
             const code = typeof error?.code === 'string' ? error.code : '';
             if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
               voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
+              showDraft(true);
             } else {
               voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
             }
@@ -5152,6 +5192,7 @@ export function createCustomerCardView(deps) {
             carriedDecisioni = '';
             carriedPassi = '';
             draftWrap.removeAttribute('data-structured-for');
+            showDraft(false);
             const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
               (loaded) => withNote(loaded, saved, body));
             toast('Nota aggiunta in cima alla cronologia');
@@ -5164,27 +5205,34 @@ export function createCustomerCardView(deps) {
             noteSaving = false;
           }
         }));
-        voicePanel.appendChild(structureButton);
+        voiceBar.appendChild(structureButton);
         voicePanel.appendChild(voiceError);
         voicePanel.appendChild(draftWrap);
-        voicePanel.appendChild(saveButton);
+        voicePanel.appendChild(manualButton);
+        const voiceFoot = el('div', 'bo-voice-foot');
+        voiceFoot.appendChild(el('p', 'bo-muted bo-voice-foot-hint', 'Va nella cronologia del cliente. Non viene inviata a nessuno.'));
+        voiceFoot.appendChild(saveButton);
+        voicePanel.appendChild(voiceFoot);
       };
       voiceToggle.addEventListener('click', () => {
         if (voiceOpen) {
           stashPanelWords();
           voiceOpen = false;
           voiceToggle.textContent = 'Detta nota vocale';
+          voiceToggle.setAttribute('aria-expanded', 'false');
           while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
           stopDictation();
           return;
         }
         voiceOpen = true;
         voiceToggle.textContent = 'Chiudi dettato';
+        voiceToggle.setAttribute('aria-expanded', 'true');
         while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
         buildVoicePanel();
       });
       if (voiceOpen) {
         voiceToggle.textContent = 'Chiudi dettato';
+        voiceToggle.setAttribute('aria-expanded', 'true');
         buildVoicePanel();
       }
       voiceWrap.appendChild(voicePanel);
