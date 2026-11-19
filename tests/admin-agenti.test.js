@@ -12,6 +12,7 @@ import {
   DA_FARE_UNAVAILABLE_NOTE,
   assignmentStatusLabel,
   PHRASE_UNCLEAR_NOTE,
+  PHRASE_ONCE_FALLBACK_NOTE,
   buildAgentCards,
   buildCatalogItems,
   buildDaFare,
@@ -286,7 +287,7 @@ test('Aggiungi adds a catalogue agent through one keyed POST and the team shows 
   assert.equal(mount.querySelector('button[data-slug="pulizia-contatti"]'), null, 'the tile now says Nel tuo team');
 });
 
-test('talking to an agent: a scheduled phrase becomes an assignment, an unclear one asks before «una volta, adesso»', async () => {
+test('talking to an agent: a phrase with no schedule runs once at once, with no extra press (restyle 19/11)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = driveClient({ unclearFirst: true });
@@ -298,19 +299,17 @@ test('talking to an agent: a scheduled phrase becomes an assignment, an unclear 
   input.dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
-  let posts = client.calls.filter((call) => call.path === '/api/agents/assign');
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.plan, undefined, 'the screen never picks a plan on its own');
-  assert.ok(textOf(mount).includes(PHRASE_UNCLEAR_NOTE));
-  findButton(mount, 'once').dispatch('click', {});
-  await flush();
-  posts = client.calls.filter((call) => call.path === '/api/agents/assign');
-  assert.equal(posts.length, 2);
+  const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 2, 'the unclear answer is followed by the «una volta» write, no press');
+  assert.equal(posts[0].body.plan, undefined, 'the first write lets the server read the phrase');
   assert.deepEqual(posts[1].body.plan, { cadence: 'once', runAt: NOW });
   assert.equal(posts[1].body.phrase, 'occupati dei lead WhatsApp non contattati');
   assert.notEqual(posts[0].key, posts[1].key, 'a different body takes a new key');
   const text = textOf(mount);
+  assert.ok(!text.includes(PHRASE_UNCLEAR_NOTE), 'no question left on screen');
+  assert.equal(findButton(mount, 'once'), null);
   assert.ok(text.includes('Incarico dato a Riaggancio: una volta.'));
+  assert.ok(text.includes(PHRASE_ONCE_FALLBACK_NOTE), 'the outcome says how to make it repeat');
   assert.ok(text.includes('«occupati dei lead WhatsApp non contattati»'));
 });
 

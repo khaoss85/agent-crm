@@ -72,8 +72,8 @@ export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In 
  * that signal; until then the catalogue is the whole truth.
  */
 export const AGENT_NO_ENGINE_LABEL = 'Pronto, in attesa del motore';
-export const AGENT_NO_ENGINE_NOTE = 'Non viene dal catalogo: in questo spazio lavorano solo gli agenti del catalogo. '
-  + 'Resta nel tuo team e aspetta il motore, oppure scegli un agente dal catalogo qui sotto.';
+export const AGENT_NO_ENGINE_NOTE = 'Gli agenti che crei tu restano nel team e aspettano il motore: in questo spazio lavorano solo '
+  + 'quelli del catalogo qui sotto.';
 
 /** A hand-written agent waits for the engine after Affida: the outcome says so. */
 export const AGENT_WAIT_ENGINE_DONE = 'Per ora aspetta il motore: parte da solo appena arriva.';
@@ -692,6 +692,9 @@ export function isPhraseUnclear(error) {
 export const PHRASE_UNCLEAR_NOTE = 'Non ho capito ogni quanto farlo. Puoi scrivere per esempio «ogni lunedì» o «ogni giorno», '
   + 'oppure farlo fare una volta sola, adesso.';
 
+/** Restyle 19/11: after an incarico with no schedule ran once on its own. */
+export const PHRASE_ONCE_FALLBACK_NOTE = 'Non c’era ogni quanto farlo, quindi parte una volta, adesso. Per ripeterlo scrivi per esempio «ogni lunedì».';
+
 /** Italian message for a refused instruction. @param {unknown} error */
 export function assignErrorText(error) {
   if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_COST_ESTIMATE_REQUIRED') return AGENT_COST_NEEDED_NOTE;
@@ -952,6 +955,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
      * @type {{ key: string, text: string } | null}
      */
     editSaved: null,
+    // Restyle 19/11 (ac104d4ff904): the card a notice belongs to — the
+    // line lands on that card, where the eye is, not under the page title.
+    noticeKey: null,
     /**
      * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
      * `pending` is the body of a create whose answer was lost: the panel
@@ -1063,6 +1069,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.adding = slug;
     state.addError = '';
     state.notice = '';
+    state.noticeKey = null;
     paint();
     try {
       // One key per (space, slug) until it succeeds (review #661 P3).
@@ -1143,6 +1150,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     decision.error = '';
     decision.unavailable = false;
     state.notice = '';
+    state.noticeKey = null;
     state.daFareError = '';
     const keyId = kind === 'revise' ? `revise:${String(extra.index)}:${JSON.stringify(extra.payload)}` : kind;
     if (!decision.keys.has(keyId)) decision.keys.set(keyId, issueAdminKey());
@@ -1255,7 +1263,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // Backlog 7d169a3b1dd2: Affida says what the incarico does next — a
       // hand-written agent with no engine waits for it, a paused one stays
       // off until Riattiva.
+      const fallback = draft.onceFallback === true;
+      draft.onceFallback = false;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`
+        + (fallback ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
         + (agent.engine === false ? ` ${AGENT_WAIT_ENGINE_DONE}` : '')
         + (agent.status === 'paused' ? ` ${agent.name} ${AGENT_PAUSED_DONE}` : '');
       if (await reload()) paint();
@@ -1264,7 +1275,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       scheduleFollowups();
     } catch (error) {
       draft.busy = false;
-      if (isPhraseUnclear(error)) {
+      if (isPhraseUnclear(error) && !once) {
+        // Restyle 19/11 (Dan: pochi clic): an incarico with no «ogni quanto»
+        // runs once, now — the reading of a task given without a schedule —
+        // and the outcome says how to make it repeat. No extra press.
+        draft.onceFallback = true;
+        await sendInstruction(agent, true);
+        return;
+      } else if (isPhraseUnclear(error)) {
         draft.unclear = true;
       } else {
         draft.error = assignErrorText(error);
@@ -1303,6 +1321,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       saved.setAttribute('role', 'status');
       box.appendChild(saved);
     }
+    if (state.notice !== '' && state.noticeKey === card.sourceKey) {
+      const said = el(documentNode, 'p', 'bo-agent-done', state.notice);
+      said.setAttribute('role', 'status');
+      box.appendChild(said);
+    }
 
     const facts = el(documentNode, 'dl', 'bo-agent-facts');
     const factRows = [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]];
@@ -1314,7 +1337,6 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       facts.appendChild(row);
     }
     box.appendChild(facts);
-    if (!card.engine) box.appendChild(el(documentNode, 'p', 'bo-agent-noengine', AGENT_NO_ENGINE_NOTE));
 
     if (card.assignments.length > 0) {
       // Backlog «Agenti: layout delle card»: the newest two incarichi as
@@ -1340,9 +1362,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-noassign', 'Nessun incarico per ora.'));
     }
 
+    // Restyle 19/11: a paused agent takes no incarico — its card offers
+    // Riattiva (below) as the one way forward, not Affida.
+    if (card.status === 'paused') {
+      box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-paused-note', 'In pausa: riattivalo per dargli un incarico.'));
+      if (card.id !== null) box.appendChild(renderManage(card));
+      return box;
+    }
     // Talk to the agent like to a colleague: one line, one button.
     const draft = draftOf(card.sourceKey);
-    const form = el(documentNode, 'form', 'bo-agent-talk');
+    const form = el(documentNode, 'form', card.capCents !== null ? 'bo-agent-talk bo-agent-talk--cost' : 'bo-agent-talk');
     const input = el(documentNode, 'input', 'ui-field bo-agent-input');
     input.setAttribute('type', 'text');
     input.setAttribute('name', `talk-${card.sourceKey}`);
@@ -1360,10 +1389,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       cost.setAttribute('inputmode', 'decimal');
       cost.setAttribute('name', `cost-${card.sourceKey}`);
       cost.setAttribute('aria-label', `Quanto costa un giro di ${card.name}, in euro`);
-      cost.setAttribute('placeholder', '€ a giro');
+      cost.setAttribute('placeholder', 'es. 0,10');
       cost.value = draft.cost;
       cost.addEventListener('input', () => { draft.cost = String(cost.value ?? ''); });
-      form.appendChild(cost);
+      // Restyle 19/11: the field says what it is and why, beside it.
+      const costWrap = el(documentNode, 'label', 'bo-agent-cost-wrap');
+      costWrap.appendChild(el(documentNode, 'span', 'bo-agent-cost-label', `€ a giro · tetto ${card.capLabel ?? ''}`.replace(/ · tetto $/, '')));
+      costWrap.appendChild(cost);
+      form.appendChild(costWrap);
     }
     const send = uiButton(documentNode, { variant: 'primary', label: draft.busy ? 'Invio…' : 'Affida', attrs: { type: 'submit', 'data-action': 'talk' } });
     send.disabled = draft.busy;
@@ -1436,7 +1469,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
     const retireEntry = state.retiring.get(card.sourceKey) ?? null;
     const retire = uiButton(documentNode, {
-      variant: 'secondary', small: true,
+      variant: paused ? 'primary' : 'secondary', small: true,
       label: paused ? 'Riattiva' : 'Ritira',
       attrs: { type: 'button', 'data-action': 'retire-agent' },
     });
@@ -1738,7 +1771,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       panel.appendChild(error);
     }
     const fieldRow = (fieldKey, text, id, control, hint = null) => {
-      const row = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const row = el(documentNode, 'div', `ui-field-row bo-seq-field bo-agent-new-${fieldKey}`);
       const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', text);
       label.setAttribute('for', id);
       control.setAttribute('id', id);
@@ -1867,6 +1900,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : body.name;
       state.newAgent = null;
       state.notice = `${name} è entrato nel tuo team.`;
+      state.noticeKey = typeof answer?.agent?.agentSourceKey === 'string' ? answer.agent.agentSourceKey
+        : (typeof answer?.agent?.sourceKey === 'string' ? answer.agent.sourceKey : `custom-agent:${state.space}:${body.key}`);
       if (await reload()) paint();
       else paint();
       focusIn('button[data-action="new-agent"]');
@@ -2065,6 +2100,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // backlog:90aeebe5655d: dopo Ritira il messaggio usa la parola del
       // badge (AGENT_STATUS_LABEL.paused), mai «ritirato» — stesso stato,
       // stessa parola, come già fa il lato Riattiva qui sotto.
+      state.noticeKey = card.sourceKey;
       state.notice = pause
         ? `${card.name} ${lowerFirst(AGENT_STATUS_LABEL.paused)}: resta nel team ma non riceve più incarichi.`
         : `${card.name} riattivato: ${lowerFirst(card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL)}.`;
@@ -2115,6 +2151,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         text: 'Scegline uno dal catalogo qui sotto, oppure creane uno nuovo: entra nel team e puoi dargli il primo incarico.',
       }));
     } else {
+      // Restyle 19/11: the «solo il catalogo» note once for the section,
+      // not repeated on every card that waits for the engine.
+      if (cards.some((card) => !card.engine)) section.appendChild(el(documentNode, 'p', 'bo-agent-noengine', AGENT_NO_ENGINE_NOTE));
       const grid = el(documentNode, 'div', 'bo-agent-grid');
       for (const card of cards) grid.appendChild(renderAgentCard(card));
       section.appendChild(grid);
@@ -2377,7 +2416,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
     // backlog:92829060f8ff: the line is an avviso — the screen reader
     // announces it where it landed.
-    if (state.notice !== '') {
+    const nowIso = now();
+    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso, catalog: state.catalog });
+    const noticeOnCard = state.noticeKey !== null && cards.some((card) => card.sourceKey === state.noticeKey);
+    if (state.notice !== '' && !noticeOnCard) {
       const done = el(documentNode, 'p', 'bo-agent-done', state.notice);
       done.setAttribute('role', 'status');
       page.appendChild(done);
@@ -2389,8 +2431,6 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (state.capped) {
       page.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${AGENTI_READ_LIMIT} elementi per elenco.`));
     }
-    const nowIso = now();
-    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso, catalog: state.catalog });
     renderMine(page, cards);
     renderDaFare(page, buildDaFare({ runs: state.runs, agents: state.agents, assignments: state.assignments }));
     renderCatalog(page, buildCatalogItems({ catalog: state.catalog, agents: state.agents }));
@@ -2420,6 +2460,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.editing.clear();
       state.retiring.clear();
       state.notice = '';
+    state.noticeKey = null;
       state.editSaved = null;
       state.addError = '';
     }
