@@ -5,6 +5,7 @@ import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
 import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { buildTeamRows, duplicateTeamHints } from './admin-labels.js'; // backlog:6563edf41aab (d): the Impostazioni count reads the same team rows the Spazi view paints.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -100,6 +101,14 @@ export const SETTINGS_AREAS = Object.freeze([
  * Clienti and Stato sync stay disabled instead of opening a blank screen.
  */
 export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
+
+/**
+ * Reason shown while the space schema has not arrived yet: the composition
+ * is unknown, not absent. Gated voices stay disabled with this story instead
+ * of claiming "not composed in this space", so the first paint shows the
+ * same voices as a reload (backlog:312dd81f83ba).
+ */
+export const SCHEMA_PENDING_REASON = 'Spazio in caricamento…';
 
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
@@ -246,6 +255,41 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
 }
 
 /**
+ * Count the possible team duplicates the Spazi e accessi screen paints for
+ * the same roster (`GET /api/spine/memberships`): the same painted rows
+ * (`buildTeamRows`) through the same hints (`duplicateTeamHints`), so the
+ * Impostazioni count and the screen never disagree. A failed or shapeless
+ * read counts 0 instead of failing the badge — the screen shows its own
+ * honest note for that half.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @returns {Promise<number>}
+ */
+export async function loadTeamDuplicateCount(client) {
+  try {
+    const membersRead = await client.request('/api/spine/memberships');
+    if (!Array.isArray(membersRead?.items)) {
+      try {
+        console.warn('bo-shell team count unreadable: shapeless memberships');
+      } catch {
+        // Logging must never break the badge read.
+      }
+      return 0;
+    }
+    return duplicateTeamHints(buildTeamRows(membersRead.items)).length;
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name is logged — never record bodies,
+    // cookies or personal data here.
+    try {
+      console.warn('bo-shell team count unreadable:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return 0;
+  }
+}
+
+/**
  * Read the real fix count for the badge. Returns null (unknown) when the
  * customer-data package is not composed or a read fails: an unknown count
  * must never light the badge, and it must never render as "none" either.
@@ -254,6 +298,11 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
  * read from the same activity payload); a failed or uncomposed sync read
  * keeps the quality count instead of failing the badge — the screen shows
  * its own honest note for that half.
+ * The team is one per organization, not per space, so the count always
+ * adds the possible team duplicates the Spazi e accessi screen paints
+ * (backlog:6563edf41aab): the same roster, the same rows, the same hints.
+ * A failed or shapeless team read keeps the base count instead of failing
+ * the badge — the screen shows its own honest note for that half.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ spaceId?: unknown }} [options]
  * @returns {Promise<number | null>}
@@ -265,7 +314,8 @@ export async function loadFixCount(client, options = {}) {
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
-    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
+    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items })
+      + await loadTeamDuplicateCount(client);
     const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
     if (spaceId === '') return base;
     try {
@@ -591,13 +641,32 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * not-yet delivered voice stays disabled with its story named. Clienti is
  * available only when the customer-data package is composed in the space
  * (customerDataAvailable), Sequenze only when the sequences package is
- * composed (sequencesAvailable): otherwise each stays disabled with its
- * story, like Pipeline/Calendario, never as a dead link to a blank screen.
+ * composed (sequencesAvailable): once the schema arrived, each stays
+ * disabled with its story, like Pipeline/Calendario, never as a dead link
+ * to a blank screen. Before the schema arrives (no input) nothing claims
+ * "not composed" — see below.
  * Agenti only when the agents package is composed (agentsAvailable).
  * Squadre only when the same package serves squads (squadsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
+ * Call it with no input while the space schema has not arrived: gated voices
+ * then render pending (SCHEMA_PENDING_REASON, Sequenze listed) instead of
+ * claiming "not composed" — the first paint names the same voices a reload
+ * shows (backlog:312dd81f83ba). An explicit input object means the schema
+ * arrived: missing flags read as not composed, as before.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} [input]
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
+export function buildShellNav(input) {
+  const {
+    pipelines = [],
+    customModules = [],
+    customerDataAvailable = false,
+    sequencesAvailable = false,
+    agentsAvailable = false,
+    squadsAvailable = false,
+  } = input ?? {};
+  // No input yet: the schema is still in flight, so the composition is
+  // unknown — never "not composed".
+  const schemaPending = input == null;
+  const pendingOr = (reason) => (schemaPending ? SCHEMA_PENDING_REASON : reason);
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -606,29 +675,33 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
       if (customerDataAvailable) {
         return { ...item, available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: CUSTOMER_DATA_UNAVAILABLE_REASON };
+      return { ...item, route: null, available: false, disabledReason: pendingOr(CUSTOMER_DATA_UNAVAILABLE_REASON) };
     }
     if (item.id === 'pipeline') {
       if (firstPipeline) {
         return { ...item, route: `#/pipelines/${firstPipeline.name}`, available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Nessuna pipeline composta' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Nessuna pipeline composta') };
     }
     if (item.id === 'agenti') {
       if (agentsAvailable) {
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Agenti non attivi in questo spazio') };
     }
     if (item.id === 'squadre') {
       if (squadsAvailable) {
         return { ...item, route: '#/squadre', available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Squadre non attive in questo spazio') };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
         return { ...item, route: '#/sequenze', available: true, disabledReason: '', nav: true };
+      }
+      // Pending: listed but disabled, like after a reload — never missing.
+      if (schemaPending) {
+        return { ...item, route: null, available: false, disabledReason: SCHEMA_PENDING_REASON, nav: true };
       }
       return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }

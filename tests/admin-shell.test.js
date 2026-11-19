@@ -3,6 +3,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  CUSTOMER_DATA_UNAVAILABLE_REASON,
+  SCHEMA_PENDING_REASON,
   SHELL_ITEMS,
   SHELL_GROUPS,
   SETTINGS_AREAS,
@@ -173,6 +175,7 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
       enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
       if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) return { items: [] };
       throw new Error('sync giù');
     },
   };
@@ -189,6 +192,54 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
   assert.ok(warnings[0].includes('Error'));
   assert.ok(warnings[0].includes('spaceId=prova'));
   assert.ok(!warnings[0].includes('sync giù'));
+});
+
+/**
+ * backlog:6563edf41aab (ritorno verifica 19/11, ANSWER supervisore 19/11
+ * 03:0xZ, punto (d)): Impostazioni diceva «Niente da sistemare.» mentre il
+ * doppione del team era segnalato in Spazi e accessi — il riquadro conta
+ * anche l'avviso doppione, letto dallo stesso roster della vista.
+ */
+test('backlog:6563edf41aab: Impostazioni conta anche il doppione del team', async () => {
+  const teamClient = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) {
+        return {
+          items: [
+            { subject: 'google|1049887766', displayName: 'Daniele Pelleri', role: 'owner', status: 'active' },
+            { subject: 'broker+adopted-7f3a', displayName: 'daniele pelleri', role: 'operator', status: 'active' },
+          ],
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  assert.equal(await loadFixCount(teamClient), 1);
+
+  // Una lettura membri fallita degrada alla base, come la metà sync: mai
+  // null quando la qualità si legge, mai un crash del badge.
+  const membersDown = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      throw new Error('membri giù');
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(membersDown), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('bo-shell team count unreadable'));
+  assert.ok(!warnings[0].includes('membri giù'));
 });
 
 test('the badge counts the session space first, the stored one only without a session', () => {
@@ -585,13 +636,39 @@ test('Clienti is available only when the customer-data package is composed', () 
   assert.equal(on.available, true);
   assert.equal(on.route, '#/customer-data');
 
-  for (const nav of [buildShellNav(), buildShellNav({ customerDataAvailable: false })]) {
+  {
+    const nav = buildShellNav({ customerDataAvailable: false });
     const off = nav.find((item) => item.id === 'clienti');
     assert.equal(off.available, false);
     assert.equal(off.route, null);
     assert.match(off.disabledReason, /non composto/);
     assert.equal(off.story, 'BO-F1');
   }
+});
+
+test('before the schema arrives the menu stays pending, never "not composed" (backlog:312dd81f83ba)', () => {
+  // The first paint runs before /api/schema answers: the composition is
+  // unknown, so no voice may claim "not composed in this space", and
+  // Sequenze stays listed like after a reload instead of missing.
+  const nav = buildShellNav();
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  for (const id of ['clienti', 'pipeline', 'agenti', 'squadre', 'sequenze']) {
+    assert.equal(byId[id].available, false, `${id} waits for the schema`);
+    assert.equal(byId[id].route, null, `${id} links nowhere while pending`);
+    assert.ok(!byId[id].disabledReason.includes('non composto'), `${id} never claims not-composed`);
+    assert.equal(byId[id].disabledReason, SCHEMA_PENDING_REASON, `${id} names the loading space`);
+  }
+  assert.equal(byId.sequenze.nav, true, 'Sequenze is listed while pending, like after a reload');
+  assert.equal(byId.clienti.story, 'BO-F1');
+  // Voices that need no composition keep linking while the schema is away.
+  for (const [id, route] of [['oggi', '#/'], ['calendario', '#/calendario'], ['reporting', '#/reporting'], ['impostazioni', '#/personalizzazione']]) {
+    assert.equal(byId[id].available, true, `${id} links while pending`);
+    assert.equal(byId[id].route, route, `${id} keeps its route while pending`);
+  }
+  // Once the schema arrived, an explicit input still reads as not composed.
+  const known = buildShellNav({ customerDataAvailable: false });
+  assert.equal(known.find((item) => item.id === 'clienti').disabledReason, CUSTOMER_DATA_UNAVAILABLE_REASON);
+  assert.equal(known.find((item) => item.id === 'sequenze').nav, false, 'known-absent Sequenze stays hidden');
 });
 
 test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
