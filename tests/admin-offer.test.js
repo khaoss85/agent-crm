@@ -159,7 +159,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Preventivo'), 'the linked quotes paint');
   assert.ok(text.includes('Bozza') && text.includes('una tantum 5.000 €'), 'the quote state and total paint in Italian');
   assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
-  assert.ok(text.includes('Standard (v3)'), 'the version names the policy that decided it, in words');
+  assert.ok(text.includes('Standard') && !text.includes('Standard (v3)'), 'the version names the policy in words, without the internal version');
   assert.ok(!text.includes('standard@3'), 'no raw rule id on screen');
   const line = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'quote-line');
   assert.equal(line?.childNodes[0].textContent, 'Pacchetto 10 PT', 'the line names the package, never the SKU');
@@ -251,10 +251,10 @@ test('the version row names the deciding policy and honors valued groups', async
   });
   await view.renderOfferDetail('off1');
   const text = mount.textContent;
-  assert.ok(text.includes('Standard (v3)'), 'the deciding policy paints as readable words, never the raw id');
+  assert.ok(text.includes('Standard') && !text.includes('Standard (v3)'), 'the deciding policy paints as words without the internal version, never the raw id');
   assert.ok(!text.includes('standard@3'), 'no raw name@version id on screen');
   assert.ok(text.includes('3.200 € ogni 1 mese'), 'a recurring version keeps its period');
-  assert.ok(text.includes('Versione 3 · Approvazione automatica · Standard (v3) · —'), 'a version with no value paints a dash like the header');
+  assert.ok(text.includes('Versione 3 · Approvazione automatica · Standard · —'), 'a version with no value paints a dash like the header');
   assert.ok(!text.includes('una tantum 0'), 'no zero one-time total beside a valued group');
 });
 

@@ -921,15 +921,14 @@ export function priceBookLabel(book) {
 }
 
 /**
- * backlog:bfc070243427 (coordina backlog:ef92f7289b30): a discount rule as the
- * operator reads it in a frozen version row. The record carries `name@version`
- * (`presti-sales-discount@2`): the id never paints — the name as words with
- * its version, «Presti sales discount (v2)».
+ * backlog:bfc070243427 (coordina backlog:ef92f7289b30; seguito 19/11): a
+ * discount rule as the operator reads it in a frozen version row. The record
+ * carries `name@version` (`presti-sales-discount@2`): the id never paints —
+ * the name as words, without the internal version, «Presti sales discount».
  * @param {unknown} name the rule id @param {unknown} version its version number
  * @returns {string}
  */
-export function discountRuleLabel(name, version) {
+export function discountRuleLabel(name) {
   const words = String(name ?? '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const head = words === '' ? 'Regola di sconto' : words.charAt(0).toUpperCase() + words.slice(1);
-  return Number.isSafeInteger(version) ? `${head} (v${version})` : head;
+  return words === '' ? 'Regola di sconto' : words.charAt(0).toUpperCase() + words.slice(1);
 }
