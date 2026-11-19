@@ -5731,6 +5731,19 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
+// backlog:c51dca86dc66 verifier-back (ritorno 1, 18/11): the report read the
+// team member's name where the contact's belongs — the title named the user
+// holding the slot instead of the customer. Repro: red on the code before
+// the cure (member-only title), green after (contact named like Oggi).
+test('repro:c51dca86dc66: the next appointment title names the contact, not the member', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: 'Lia Marroni' } }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.ok(title.textContent.includes('per Lia Marroni'), `the contact reads in the title, got: ${title.textContent}`);
+  assert.ok(!title.textContent.endsWith('con Coach Guido'), 'the member name never stands where the contact belongs');
+});
+
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
   const unreadableMember = {
     ...TIMELINE,
