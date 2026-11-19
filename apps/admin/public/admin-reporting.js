@@ -65,7 +65,14 @@ export function channelsLede(breakdown) {
     || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))
     || Number.isNaN(Date.parse(`${lastStart}T00:00:00.000Z`))) return count;
   const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · ogni cliente conta una volta, nel canale del primo contatto`;
+  // backlog:02e4b848 — in the running month the server caps the subtitle at
+  // today (`end`): the last shown week still holds today, so naming its
+  // Sunday would name days that have not happened yet. A missing or
+  // unreadable cap keeps the week's Sunday, as before.
+  const cap = typeof breakdown?.end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(breakdown.end)
+    && !Number.isNaN(Date.parse(`${breakdown.end}T00:00:00.000Z`)) ? breakdown.end : null;
+  const end = cap !== null && cap < lastEnd ? cap : lastEnd;
+  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(end)} · ogni cliente conta una volta, nel canale del primo contatto`;
 }
 
 /**
