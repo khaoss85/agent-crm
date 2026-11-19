@@ -446,41 +446,74 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
 
 /**
  * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
- * rows that paint the same name with the same mailbox and access line are
- * indistinguishable on screen («Daniele Pelleri» vs «daniele pelleri», both
- * with the same avatar). One entry per colliding painted name, in team
- * order; rows told apart by mailbox or access kind stay silent, like the
- * homonyms the access line already separates. A name alone never proves one
- * person (backlog:9d06eb1e174b), so the hint names the cause and the cure —
- * it never merges or removes anything itself.
+ * rows that paint the same REAL name are indistinguishable on screen
+ * («Daniele Pelleri» vs «daniele pelleri», both with the same avatar),
+ * even when the mailbox or the access line tells them apart («Accesso
+ * Google» vs «Accesso di servizio»). One entry per colliding painted name,
+ * in team order; mailbox and access kind never silence the hint — the same
+ * person resolution covers different accesses, and two homonyms stay
+ * candidates the operator keeps. The generic placeholder («Membro del
+ * team», review #1043 P2) is not a name: rows without a real name fall back
+ * to the mailbox, then to their subjects, so two unenriched rows never
+ * collide. A name alone never proves one person (backlog:9d06eb1e174b), so
+ * the hint explains the two access lines and warns that removing suspends
+ * the person in the whole organisation — it never merges or removes
+ * anything itself.
  * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
  */
+const PLACEHOLDER_TEAM_NAME = 'membro del team';
+
+/** A painted name the hint may key on: never empty, never the generic placeholder. @param {string} name */
+function teamHintHasName(name) {
+  return name !== '' && name.toLowerCase() !== PLACEHOLDER_TEAM_NAME;
+}
+
+/** @param {unknown} row */
+function teamHintSubjects(row) {
+  if (!row || typeof row !== 'object') return [];
+  const fromList = Array.isArray(row.subjects) ? row.subjects : [];
+  const single = typeof row.subject === 'string' ? [row.subject] : [];
+  return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
+}
+
 export function duplicateTeamHints(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   const byPaint = new Map();
-  for (const row of list) {
-    if (!row || typeof row !== 'object') continue;
-    const name = typeof row.name === 'string' ? row.name : '';
-    const email = typeof row.email === 'string' ? row.email : '';
-    const access = typeof row.access === 'string' ? row.access : '';
-    if (name === '' && email === '') continue;
-    const key = [name.toLowerCase(), email.toLowerCase(), access.toLowerCase()].join(' ');
+  list.forEach((row, index) => {
+    if (!row || typeof row !== 'object') return;
+    const name = typeof row.name === 'string' ? row.name.trim().replace(/\s+/g, ' ') : '';
+    const email = typeof row.email === 'string' ? row.email.trim() : '';
+    const subjects = [...new Set(teamHintSubjects(row))].sort();
+    // Same person resolution, access included: a real painted name alone
+    // keys the hint (case-insensitive), so a Google row and a servizio row
+    // with the same name collide; the placeholder never keys it (review
+    // #1043 P2: it would invite removing a live member), falling back to
+    // the mailbox and then to the subjects.
+    const key = teamHintHasName(name)
+      ? `name:${name.toLowerCase()}`
+      : email !== ''
+        ? `mail:${email.toLowerCase()}`
+        : subjects.length > 0 ? `subject:${subjects.join('+')}` : `row:${index}`;
     byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
-  }
+  });
   const hints = [];
   for (const group of byPaint.values()) {
     if (group.length < 2) continue;
-    const variants = [...new Set(group.flatMap((row) => {
-      const fromList = Array.isArray(row.subjects) ? row.subjects : [];
-      const single = typeof row.subject === 'string' ? [row.subject] : [];
-      return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
-    }))];
+    const variants = [...new Set(group.flatMap((row) => teamHintSubjects(row)))];
     if (variants.length < 2) continue;
-    const painted = group[0].name !== '' ? group[0].name : group[0].email;
+    const first = group[0];
+    const firstName = typeof first.name === 'string' ? first.name.trim().replace(/\s+/g, ' ') : '';
+    const firstEmail = typeof first.email === 'string' ? first.email.trim() : '';
+    const painted = teamHintHasName(firstName) ? firstName : firstEmail;
+    const accesses = [...new Set(group.map((row) => (
+      typeof row.access === 'string' && row.access.trim() !== '' ? row.access.trim() : null
+    )).filter((access) => access !== null))];
+    const cause = accesses.length > 0 ? ` ma con accessi diversi (${accesses.join(', ')})` : '';
     hints.push({
       name: painted,
       count: group.length,
-      text: `«${painted}» compare ${group.length} volte con lo stesso nome: se è la stessa persona con due voci, rimuovi quella vecchia con Rimuovi; se sono due persone diverse, ignoralo.`,
+      accesses,
+      text: `«${painted}» compare ${group.length} volte con lo stesso nome${cause}: è quasi sempre la stessa persona che entra in due modi. Non rimuovere nessuna delle due righe per sistemare: la rimozione sospende la persona in tutta l'organizzazione.`,
     });
   }
   return hints;
@@ -1340,10 +1373,10 @@ export function createSpaziAccessiView(deps) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
     // backlog:6563edf41aab: possible duplicates read like the customer
-    // cards — one muted line per colliding name, never a merge: the operator
-    // decides with Rimuovi on the stale row.
+    // cards — one spaced line per colliding name, never a merge and never a
+    // removal advice: Rimuovi suspends the person in the whole organisation.
     for (const hint of duplicateTeamHints(rows)) {
-      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted' }));
+      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted bo-spazi-duplicate' }));
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });
