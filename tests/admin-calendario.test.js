@@ -3265,7 +3265,8 @@ test('no known team keeps the plain person field', async () => {
 // Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
 // draft naming someone outside the read team roster never prefills
 // «Persona del team» — the choice stays among the team, empty, and the card
-// says the name is not in the team.
+// says the person is unknown (backlog:a16726b5ea76 follow-up: never
+// «non è nel team» for a name the team does not hold).
 test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -3291,7 +3292,7 @@ test('a draft outsider leaves the team choice empty', async () => {
   const choice = mount.querySelector('select[name="teamMemberId"]');
   assert.ok(choice, 'the person stays a choice among the team');
   assert.equal(choice.value, '', 'the outsider name never fills it');
-  assert.ok(mount.textContent.includes('Marco non è nel team'), 'the card says why');
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), 'the card says the person is unknown');
 });
 
 // Fetta 10 (P2 di #481) protected the drafted outsider from a select that
@@ -3569,9 +3570,69 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco', [], homonyms),
+    ['a1', 'a2'],
+    'rows sharing the visible name are searched together (backlog:a16726b5ea76 follow-up)',
+  );
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+test('resolveDraftMemberIds strips the painted ordinal and reads the label (backlog:a16726b5ea76)', () => {
+  const solo = [{ subject: 'coach-rossi', displayName: 'Marco Rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], solo),
+    ['coach-rossi'],
+    'painted ordinal is not the name',
+  );
+  const labelOnly = [{ subject: 'marco-rossi' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('MARCO ROSSI', [], labelOnly),
+    ['marco-rossi'],
+    'label base matches across cases',
+  );
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco (1)', [], homonyms),
+    ['a1', 'a2'],
+    'the painted ordinal is not the name: both rows sharing it are searched (backlog:a16726b5ea76 follow-up)',
+  );
+  assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
+});
+
+test('resolveDraftMemberIds review #1017 giro 1: literal (N), strict strip, no fallback (backlog:a16726b5ea76)', () => {
+  const literal = [
+    { subject: 'a', displayName: 'Marco Rossi' },
+    { subject: 'b', displayName: 'Marco Rossi (2)' },
+  ];
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi', [], literal),
+    ['a'],
+    'a real name wins before stripping',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco Rossi (2)', [], literal),
+    ['b'],
+    'a literal (N) name still finds its own row',
+  );
+  const solo = [{ subject: 'coach-marco', displayName: 'Marco' }];
+  assert.deepEqual(resolveDraftMemberIds('Marco(2)', [], solo), [], 'no space is not the painted ordinal');
+  assert.deepEqual(resolveDraftMemberIds('Marco  (2)', [], solo), [], 'two spaces are not the painted ordinal');
+  const technical = [{ subject: 'google|x1' }];
+  assert.deepEqual(
+    resolveDraftMemberIds('Membro del team', [], technical),
+    [],
+    'the generic fallback names nobody',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('membro del team (1)', [], [...technical, { subject: 'google|x2' }]),
+    [],
+    'a numbered fallback names nobody either',
+  );
 });
 
 // backlog:d1e4d90e — the server answers per booking identity, so one human

@@ -274,16 +274,27 @@ export function createQuoteView(deps) {
    */
   async function resolveCardBackLink(quote, from = null) {
     const fromList = from === 'quotes';
+    // backlog:bfc070243427 (seguito): from the offer the way back is the
+    // offer page, never the scheda. DECISION (to be confirmed): the label
+    // stays the generic «← Offerta», like «← Preventivi» — short beside the
+    // other two top links.
+    const fromOffer = typeof from === 'object' && from !== null && typeof from.offer === 'string' && from.offer !== '' ? from.offer : null;
     const listBack = () => linkTo('#/quotes', '← Preventivi', 'quote-back');
+    const offerBack = () => linkTo(`#/offerte/${encodeURIComponent(fromOffer)}`, '← Offerta', 'quote-back');
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    // From the list the way back never depends on a read: it is the list.
-    if (opportunityId === null) return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
+    // From the list (or the offer) the way back never depends on a read: it
+    // is the list (or the offer).
+    if (opportunityId === null) {
+      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
+      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
+    }
     let opportunity;
     try {
       // backlog:a2ea75f705fd: the core offer route — the generic records
       // surface never serves core modules and answered 404 here.
       opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
+      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
       return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
@@ -292,6 +303,17 @@ export function createQuoteView(deps) {
     // never a bare anchor (see linkTo).
     const offer = linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`, 'Apri l’offerta →', 'quote-offer-link');
     offer.setAttribute('data-action', 'quote-open-offer');
+    // backlog:bfc070243427 (seguito): the offer the quote was opened from
+    // stays the way back — an offer id that is not this quote's offer is
+    // ignored, so a hand-typed hash cannot point «←» at an unrelated deal.
+    // The title still names the customer when the offer knows them, like
+    // from the list; only the way back changes.
+    if (fromOffer !== null && fromOffer === opportunityId) {
+      const fromOfferContactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
+      const fromOfferRawName = fromOfferContactId !== null ? opportunity?.contactName : opportunity?.companyName;
+      const fromOfferCustomerName = typeof fromOfferRawName === 'string' && fromOfferRawName.trim() !== '' ? fromOfferRawName.trim() : null;
+      return { back: offerBack(), offer, opportunityName, customerName: fromOfferCustomerName };
+    }
     if (fromList) {
       // The title still names the customer when the offer knows them; only
       // the way back changes.
@@ -468,6 +490,10 @@ export function createQuoteView(deps) {
 
   async function renderQuoteDetail(quoteId, options = {}) {
     const token = ++renderToken;
+    // backlog:bfc070243427 (seguito): the entry origin rides every re-read —
+    // a mutation from the list (or the offer) must not drop it back to the
+    // scheda. Review muse giro 2 (P2): withBusy re-rendered keep-only.
+    const entryFrom = options !== null && typeof options === 'object' ? options.from ?? null : null;
     // backlog:d56122ee2844: dopo una scrittura la pagina resta visibile —
     // la vecchia pittura resta finché i nuovi dati non arrivano. L'ingresso
     // dal router mostra sempre lo scheletro: il router pre-dipinge la sua
@@ -509,9 +535,9 @@ export function createQuoteView(deps) {
         fetchLinked('quote-line', 'quoteId', quote.id),
         bookRead,
         fetchLinked('quote-version', 'quoteId', quote.id),
-        // backlog:bfc070243427: the list origin rides along, like the
+        // backlog:bfc070243427: the entry origin rides along, like the
         // offer page's scheda origin.
-        resolveCardBackLink(quote, options !== null && typeof options === 'object' ? options.from ?? null : null),
+        resolveCardBackLink(quote, entryFrom),
       ]);
       restRead.catch(() => {});
       const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
@@ -683,7 +709,7 @@ export function createQuoteView(deps) {
       errorLine.textContent = '';
       try {
         await fn();
-        await renderQuoteDetail(quoteId, { keep: true }); // re-render from server state
+        await renderQuoteDetail(quoteId, { keep: true, from: entryFrom }); // re-render from server state
       } catch (error) {
         // La rilettura keep:true fallita ha già scritto il messaggio onesto
         // in riga prima di rilanciare: non coprirlo con il testo grezzo.

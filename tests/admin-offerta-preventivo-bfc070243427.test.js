@@ -135,7 +135,7 @@ test('bfc070243427 repro: a single-quote offer paints one «Apri il preventivo»
   assert.equal(countOccurrences(mount.textContent, 'Apri il preventivo'), 1, 'one quote on the page, one open action');
   const open = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
   assert.ok(open, 'the head keeps the main open action');
-  assert.equal(open.getAttribute('href'), '#/quotes/q1', 'it opens the quote');
+  assert.equal(open.getAttribute('href'), '#/quotes/q1/offerta/off1', 'it opens the quote with the offer as its origin');
 });
 
 /**
@@ -319,4 +319,195 @@ test('bfc070243427 repro: an unknown owner paints no «Referente» row, never «
   await flushAll();
   assert.ok(!mount.textContent.includes('Referente'), 'no empty owner field');
   assert.ok(mount.textContent.includes('Stato'), 'the other facts stay');
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-18 (returns:2, P2 review
+ * rev-agent-crm-1018-af876cb07828): withBusy re-rendered the detail with
+ * `{ keep: true }` only, dropping the list origin — after any successful
+ * mutation «← Preventivi» flipped back to the customer scheda link.
+ * RED before the cure (the way back flips), GREEN after (it stays).
+ */
+test('bfc070243427 repro: a quote mutation from the list keeps «← Preventivi»', async () => {
+  const record = OCCASION_QUOTE({ draftRevision: 3 });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/q1/actions/')) return { ok: true, result: { quote: { ...record } } };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      if (path.startsWith('/api/modules/quote-line/records')) {
+        return { items: [{ id: 'l1', quoteId: 'q1', offerId: 'e1', offerName: 'Pacchetto', position: 1, removed: false, quantity: 1, discountBps: 0, breakdownJson: '[]', netAmountCents: 500000 }] };
+      }
+      if (path.startsWith('/api/modules/offer/records')) {
+        return { items: [{ id: 'e1', priceBookId: 'pb1', name: 'Pacchetto', active: true, quoteEligible: true }] };
+      }
+      if (path === '/api/opportunities/off1') return { id: 'off1', name: 'Cucina', contactId: 'c1', contactName: 'Giulia Verdi' };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: 'quotes' });
+  await flushAll();
+  const wayBack = () => mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  assert.equal(wayBack()?.getAttribute('href'), '#/quotes', 'from the list the way back is the list');
+  assert.equal(wayBack()?.textContent, '← Preventivi', 'from the list the label is the list');
+  const row = mount.findAll('div').find((node) => typeof node.__update === 'function');
+  assert.ok(row, 'a draft line exposes its update hook');
+  await row.__update();
+  await flushAll();
+  assert.equal(wayBack()?.getAttribute('href'), '#/quotes', 'a successful mutation keeps the list origin');
+  assert.equal(wayBack()?.textContent, '← Preventivi', 'the label stays the list, never the customer');
+});
+
+/**
+ * backlog:bfc070243427 (OWNER_ANSWER 18/11 punto b): a quote opened from
+ * its offer must return to the offer. The route names the offer as the
+ * origin (`#/quotes/<id>/offerta/<offer>`), like the list names its own
+ * (`#/quotes/<id>/lista`) and the offer names the scheda. RED before the
+ * cure (an invalid route), GREEN after.
+ */
+test('bfc070243427 repro: #/quotes/<id>/offerta/<offer> routes to the detail with the offer as origin', () => {
+  assert.deepEqual(
+    parseModuleRoute('#/quotes/q1/offerta/off1'),
+    { view: 'quote-detail', quoteId: 'q1', from: { offer: 'off1' } },
+    'the offer origin rides the route',
+  );
+  assert.deepEqual(
+    parseModuleRoute('#/quotes/q1/offerta/'),
+    { view: 'invalid' },
+    'an empty offer origin is invalid, not a lookup',
+  );
+  assert.deepEqual(
+    parseModuleRoute('#/quotes/q1/lista'),
+    { view: 'quote-detail', quoteId: 'q1', from: 'quotes' },
+    'the list origin still rides its own route',
+  );
+});
+
+/**
+ * backlog:bfc070243427 (OWNER_ANSWER 18/11 punto b): from the offer the
+ * top link goes back to the offer, never to the customer scheda. RED
+ * before the cure (the scheda link), GREEN after.
+ */
+test('bfc070243427 repro: from the offer the top link goes back to the offer, not the customer', async () => {
+  const record = OCCASION_QUOTE({ draftRevision: 3 });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+      if (path.startsWith('/api/modules/offer/records')) return { items: [] };
+      if (path === '/api/opportunities/off1') return { id: 'off1', name: 'Cucina', contactId: 'c1', contactName: 'Giulia Verdi' };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: { offer: 'off1' } });
+  await flushAll();
+  const back = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  assert.ok(back, 'a way back is painted');
+  assert.equal(back.getAttribute('href'), '#/offerte/off1', 'it goes back to the offer it came from');
+  assert.equal(back.textContent, '← Offerta', 'it says the offer, never the customer');
+});
+
+/**
+ * backlog:bfc070243427 (OWNER_ANSWER 18/11 punto a): «Tutti i preventivi»
+ * reads like the other two top links, with the same gap — never the
+ * browser-default purple underline touching «Apri l’offerta». RED before
+ * the cure (no rule for quote-list-link in styles.css), GREEN after.
+ */
+test('bfc070243427 repro: «Tutti i preventivi» reads like the other top links, with the same gap', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.quote-list-link'), 'the list exit has its own rule, never the browser default');
+  assert.ok(css.includes('.quote-offer-link + .quote-list-link'), 'the same gap keeps it off «Apri l’offerta»');
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-18 (returns:2, AC-4): the
+ * skeleton painted six fact cells while the final page paints four, so the
+ * Preventivo block jumped. The skeleton keeps the final's grid: a row the
+ * final skips is skipped here with the same predicates on the data known
+ * so far (an empty team and an empty trail resolve exactly like an unknown
+ * name). RED before the cure (5 skeleton cells vs 4 final), GREEN after.
+ */
+test('bfc070243427 repro: the offer skeleton keeps the final facts grid, no jump', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: null, createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const held = [];
+  let releaseHeld = () => {};
+  const gate = new Promise((resolve) => { releaseHeld = resolve; });
+  const base = stubClient(record);
+  const client = {
+    request(path, options = {}) {
+      if (path === '/api/schema' || path === '/api/spine/memberships' || path.startsWith('/api/modules/price-book/records')) {
+        held.push(path);
+        return gate.then(() => base.request(path, options));
+      }
+      return base.request(path, options);
+    },
+  };
+  const factLabels = () => mount.findAll('p')
+    .filter((node) => (node.getAttribute('class') ?? '') === 'offer-fact')
+    .map((cell) => cell.childNodes[0]?.textContent ?? '');
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll(12);
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the second skeleton (offer read, rest in flight) is on screen');
+  const skeletonLabels = factLabels();
+  assert.ok(!skeletonLabels.includes('Creata da'), 'the skeleton never holds a row the trail alone could fill');
+  releaseHeld();
+  await done;
+  await flushAll();
+  const finalLabels = factLabels();
+  assert.deepEqual(skeletonLabels, finalLabels, 'skeleton and final paint the same facts grid');
+  assert.ok(!finalLabels.includes('Chiusura prevista'), 'the dateless final still skips the close row');
+});
+
+/**
+ * backlog:bfc070243427 (OWNER_ANSWER 18/11 punto c): the skeleton sheet
+ * reserves the actions row too, so «Modifica» and «Cambia stato» do not
+ * push the Preventivo block down when they paint. RED before the cure (no
+ * actions placeholder in the skeleton), GREEN after.
+ */
+test('bfc070243427 repro: the offer skeleton reserves the actions row', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: null, createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const held = [];
+  let releaseHeld = () => {};
+  const gate = new Promise((resolve) => { releaseHeld = resolve; });
+  const base = stubClient(record);
+  const client = {
+    request(path, options = {}) {
+      if (path === '/api/schema' || path === '/api/spine/memberships' || path.startsWith('/api/modules/price-book/records')) {
+        held.push(path);
+        return gate.then(() => base.request(path, options));
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll(12);
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the second skeleton is on screen');
+  const actions = skeleton.childNodes
+    .flatMap((node) => (node.getAttribute?.('class') ?? '') === 'bo-offer-sheet' ? node.childNodes : [])
+    .filter((node) => (node.getAttribute?.('class') ?? '').split(/\s+/).includes('bo-offer-actions'));
+  assert.equal(actions.length, 1, 'the skeleton sheet reserves the actions row');
+  releaseHeld();
+  await done;
+  await flushAll();
 });
