@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView, customerHint } from '../apps/admin/public/admin-calendario.js';
+import { createCalendarioView, customerHint, customerMatchReason } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -191,11 +191,12 @@ test('form: Esc closes it and drops the typed values — the next opening propos
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30–10:00 here, now is 2026-10-21); the typed values never survive.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
-  assert.equal(byName(mount, 'end').value, '10:00', 'the next opening proposes 10:00');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00–09:30 here: now is 2026-10-21T06:00Z, 08:00 in
+  // Rome, before the grid opens); the typed values never survive.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
+  assert.equal(byName(mount, 'end').value, '09:30', 'the next opening proposes 09:30');
   for (const name of ['price', 'notes']) {
     assert.equal(byName(mount, name).value, '', `${name} starts empty`);
   }
@@ -213,10 +214,10 @@ test('form: × closes it and drops the typed day too, and focus goes back to «N
   const toggle = mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento'));
   assert.equal(toggle.__focused, true, 'focus back on the button that opened it');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30 here); the typed 2026-10-23 never survives.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00 here); the typed 2026-10-23 never survives.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
 });
 
 test('form: a slot picked on the grid seats the same form beside it; Esc drops the slot too', async () => {
@@ -234,10 +235,11 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   pop.dispatch('keydown', { key: 'Escape' });
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick'), undefined, 'the pick leaves the grid');
   openManual(mount);
-  // backlog:134f3ed7 — the old 11:00 slot never comes back; the manual
-  // opening proposes tomorrow 09:30 instead of an empty form.
-  assert.equal(byName(mount, 'start').value, '09:30', 'the old slot never comes back');
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — the old 11:00 slot never
+  // comes back; the manual opening proposes today 09:00 instead of an
+  // empty form.
+  assert.equal(byName(mount, 'start').value, '09:00', 'the old slot never comes back');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
 });
 
 // backlog:3582d91635cb: homonyms in the customer suggestions read apart.
@@ -270,6 +272,110 @@ test('form: two customers with the same name show a partial email or phone, a si
   assert.ok(mount.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick' && node.textContent === 'Ada Rossi'), 'the pick names the customer');
 });
 
+// backlog:f6b9d189 (production: «anna» listed Massimiliano Magrini with no
+// visible reason — the match sat on his company, a field the form never
+// shows): the suggestions keep only matches on the name, the email or the
+// held phone, and a non-name match prints its field beside the name.
+test('form: «anna» drops the company-only match and explains the rest', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-magrini', name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it',
+      phone: null, company: { name: 'Pizzeria Anna' }, searchMatch: ['company'],
+    },
+    {
+      resource: 'contact', id: 'c-anna', name: 'Anna Bianchi', email: 'anna@example.it',
+      phone: null, company: null, searchMatch: ['name', 'email'],
+    },
+    {
+      resource: 'contact', id: 'c-mario', name: 'Mario Rossi', email: 'mario.rossi@example.it',
+      phone: null, company: null, searchMatch: ['email'],
+    },
+    {
+      resource: 'contact', id: 'c-ada', name: 'Ada Rossi', email: null,
+      phone: { value: '+393331234567', system: 'whatsapp' }, company: null, searchMatch: ['phone'],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'anna';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  const labels = results.findAll('button').map((node) => node.textContent);
+  assert.ok(!labels.some((text) => text.includes('Magrini')), `no company-only match: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Anna Bianchi'), `the name match stays bare: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Mario Rossi · ma…@example.it'), `the email match shows its field: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Ada Rossi · tel. …4567'), `the phone match shows its field: ${labels.join(' | ')}`);
+  assert.ok(!labels.some((text) => text.includes('mario.rossi@') || text.includes('3331234567')), 'never the whole address or number');
+});
+
+test('form: only company matches read as no match, in plain words', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-magrini', name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it',
+      phone: null, company: { name: 'Pizzeria Anna' }, searchMatch: ['company'],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'anna';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  assert.equal(results.findAll('button').length, 0, 'nothing without a visible correspondence');
+  assert.ok(results.textContent.includes('Nessun cliente corrisponde'), 'the empty match says so in plain words');
+});
+
+// Review #985 P2: a channel-only query reaches the form with an empty
+// reason (the match sits on the channel, never on text) — the row already
+// passed the channel filter, so it stays listed instead of reading as no
+// match with a try-another-name empty state.
+test('form: a channel-only query keeps the channel members listed', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-wa', name: 'Ada Rossi', email: null,
+      phone: null, company: null, searchMatch: [],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'whatsapp';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  assert.equal(results.findAll('button').length, 1, 'the channel member stays listed');
+  assert.ok(!results.textContent.includes('Prova con un altro nome'), 'no name-oriented empty state for a channel query');
+});
+
+test('form: customerMatchReason prints only the matched email or phone', () => {
+  assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, ['email']), 'ma…@example.it');
+  assert.equal(customerMatchReason({ phone: { value: '+39 333 123 4567' } }, ['phone']), 'tel. …4567');
+  assert.equal(customerMatchReason({ name: 'Ada Rossi' }, ['name']), null, 'a name match needs no reason');
+  assert.equal(customerMatchReason({ company: { name: 'Pizzeria Anna' } }, ['company']), null, 'the company is never a reason in the form');
+  assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, null), null, 'no reason, no explanation');
+});
+
 test('form: customerHint prefers a partial email, then the phone, then the company', () => {
   assert.equal(customerHint({ email: 'ada@example.com' }), 'ad…@example.com');
   assert.equal(customerHint({ email: 'a@example.com' }), 'a…@example.com');
@@ -280,7 +386,7 @@ test('form: customerHint prefers a partial email, then the phone, then the compa
 
 // backlog:134f3ed7 (review giro 1 P2): closeManual() dropped the typed
 // values but kept the typed marks, so the reopened form read its proposed
-// date (tomorrow) as «written» and raised «Hai del testo non salvato».
+// date (today 2026-10-21 now) as «written» and raised «Hai del testo non salvato».
 test('form: a date typed then dropped by Esc is not unsaved text on reopen', async () => {
   const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
   resetVersionWatchState();
@@ -293,7 +399,7 @@ test('form: a date typed then dropped by Esc is not unsaved text on reopen', asy
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
   assert.equal(hasUnsavedWork(emptyPage), false, 'the proposed date is nobody’s unsaved text');
   resetVersionWatchState();
 });

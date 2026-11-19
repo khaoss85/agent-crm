@@ -1705,6 +1705,9 @@ export async function readSchedule({ appointments }, subject) {
     // instant of the decision, so the scheda's history reads it.
     cancelReason: row.cancelReason ?? null,
     decidedAt: row.decidedAt ?? null,
+    // backlog:0d68c387: the instant the booking was fixed, so the cronologia
+    // orders the fissato row by event date, not by slot date.
+    bookedAt: row.bookedAt ?? null,
   })));
 }
 

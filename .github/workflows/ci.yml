@@ -47,12 +47,15 @@ on:
 jobs:
   # The PR gate. `push` is limited to `main` above, so this is every change
   # that is not yet merged: `npm run check`, the tests of the touched files
-  # (`scripts/ci-touched-tests.js`), the smoke demo, the published recipe
-  # replay, the agreement gates (`gtm:check`, `repo:truth -- --check`
-  # without `--require-current`), the verifier-fixture drift check, the
-  # checked-in plan-pin currency check and the package surface version gate
+  # (`scripts/ci-touched-tests.js`, `gtm:check` in the same lane), the pilot
+  # browser proof on this head (`scripts/ci-pilot-browser.sh`, only when
+  # the diff touches `apps/admin/public/`, skipped otherwise), the smoke
+  # demo, the published recipe replay, the agreement gate
+  # (`repo:truth -- --check` without `--require-current`), the
+  # verifier-fixture drift check, the checked-in plan-pin currency check
+  # and the package surface version gate
   # (`tests/package-surface-version.test.js`). All
-  # eight phases run under ONE machine lock
+  # nine phases run under ONE machine lock
   # via `scripts/ci-fast.sh`, capped below ten minutes in total by the
   # wrapper (HEAVY_JOB_MAX_SEC=540 kills the run past nine minutes): a PR
   # holds the shared lock less than ten minutes in total, enforced, not an
@@ -81,14 +84,24 @@ jobs:
     steps:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
+      # Clean checkout every job (backlog:f16911e3, no checkout reuse on this
+      # public repo's self-hosted runner): clean:true wipes the worktree only,
+      # never `.git`, so `.git/hooks`, `.git/info/attributes` or `.git/config`
+      # keys from a previous job can persist on the runner dir — fresh dir per
+      # job stays a follow-up; the saving lives only on the npm cache below.
       - uses: actions/checkout@v4
         with:
+          clean: true
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No cache: npm on the self-hosted runners: ~/.npm stays on disk between
-          # runs, and restoring the 160 MB Actions cache cost ~70 s per job.
+          # Savings live ONLY on dependencies, never on the workspace: the npm
+          # cache restores read-only outside the work dir, keyed by the
+          # package-lock hash, and npm itself verifies every tarball against
+          # the lockfile before use (backlog:f16911e3; baseline 13/11: ~1.2 GB
+          # rewritten per job start plus ~107 MB of npm ci, disk wait 16-20%).
+          cache: 'npm'
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -119,10 +132,11 @@ jobs:
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
-      # The whole gate behind one lock: `scripts/ci-fast.sh` runs the eight
-      # phases sequentially (check, touched tests, smoke, recipe replay,
-      # gtm:check, truth agreement, verifier-fixture drift, plan-pin currency,
-      # package surface versions) under a single heavy-job acquisition,
+      # The whole gate behind one lock: `scripts/ci-fast.sh` runs the nine
+      # phases sequentially (check, touched tests and gtm, pilot browser,
+      # smoke, recipe replay, truth agreement, verifier-fixture drift,
+      # plan-pin currency, package surface versions) under a single
+      # heavy-job acquisition,
       # and HEAVY_JOB_MAX_SEC=540 fails the step red past nine minutes of
       # lock instead of queueing Arvo behind it. (`main`'s measure step
       # keeps the wrapper default: the full suite needs it.) Each phase
@@ -202,13 +216,19 @@ jobs:
       # `node --test` runs (the PR gate, the pre-push hook) still run only
       # the slices' wiring. Same backlog as the slicing above.
     steps:
+      # Clean checkout every job (backlog:f16911e3): no checkout reuse;
+      # clean:true wipes the worktree only, never the runner's `.git`
+      # (fresh dir per job stays a follow-up). The disk saving lives only
+      # on the npm cache below.
       - uses: actions/checkout@v4
         with:
+          clean: true
           # Full history: see the job-level comment above.
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: 'npm'
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -392,8 +412,12 @@ jobs:
       cancel-in-progress: true
     if: ${{ github.event_name == 'push' }}
     steps:
+      # Clean checkout every job (backlog:f16911e3): no checkout reuse;
+      # clean:true wipes the worktree only, never the runner's `.git`
+      # (fresh dir per job stays a follow-up).
       - uses: actions/checkout@v4
         with:
+          clean: true
           # A job that reads history, because it checks a historical fact.
           # site/claims.json records the commit its public numbers were
           # measured at, and scripts/measurement.js has to show that commit is an
@@ -415,6 +439,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          # Read-only npm cache outside the work dir (backlog:f16911e3).
+          cache: 'npm'
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this

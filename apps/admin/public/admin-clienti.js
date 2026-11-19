@@ -91,11 +91,14 @@ const CALENDAR_STATUS_LABELS = Object.freeze({ booked: 'prenotato', confirmed: '
  * «no signed business found in the composed packages (orders: not readable
  * here; …)»). The tooltip says in plain Italian why the customer is in
  * that state; an unknown state carries no tooltip rather than a raw
- * diagnostic.
+ * diagnostic. The Contatto wording stays honest when the evidence is not
+ * all readable («…so this is not a claim none exist»): «finora non
+ * risultano» claims no definitive absence (ritorno 1, verifier-back
+ * 2026-11-17).
  */
 const STATO_TOOLTIPS = Object.freeze({
   cliente: 'È un cliente perché ha almeno un acquisto confermato.',
-  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+  contatto: 'È un contatto perché finora non risultano acquisti confermati.',
 });
 
 /** Plain-Italian tooltip for a customer state, or null when unknown. */
@@ -254,6 +257,23 @@ export function createCustomerListView(deps) {
     page: 1, pageSize: 10, columns: null,
   };
   let data = null;
+  // backlog:5af848afdb63: the last answer's view pills, with their numbers,
+  // so a failed read keeps the other views' counts instead of wiping them.
+  let lastViews = null;
+  let lastViewsKey = null;
+  /** The space and the explicit filters a pill count was read over: counts
+   * never depend on the active view, so a failed read reuses them while the
+   * space and the filters match — never another space's numbers. */
+  function filterKey() {
+    return [activeSpaceId() ?? '', state.q, state.canale, state.stato, state.campo, state.valore].join('|');
+  }
+  /** Keep the last answer's view pills (with their numbers) for a later failed read. */
+  function rememberViews(key) {
+    if (Array.isArray(data?.views)) {
+      lastViews = data.views;
+      lastViewsKey = key;
+    }
+  }
   let renderToken = 0;
   // Search while typing (backlog:754918ad8da7): the quiet time before one
   // read, and the timer — both injectable so tests drive them by hand. A
@@ -384,6 +404,7 @@ export function createCustomerListView(deps) {
       statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
     }
     frame.body.setAttribute('aria-busy', 'true');
+    const key = filterKey();
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
@@ -406,6 +427,7 @@ export function createCustomerListView(deps) {
       };
     }
     if (token !== renderToken) return;
+    rememberViews(key);
     paint();
     reportTotal();
     armRefresh(token);
@@ -455,6 +477,7 @@ export function createCustomerListView(deps) {
       return;
     }
     let next;
+    const key = filterKey();
     try {
       next = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch {
@@ -464,6 +487,7 @@ export function createCustomerListView(deps) {
     if (token !== renderToken) return;
     if (unreadShape(next) !== unreadShape(data)) {
       data = next;
+      rememberViews(key);
       paint();
     }
     armRefresh(token);
@@ -570,9 +594,33 @@ export function createCustomerListView(deps) {
     return wrap;
   }
 
+  /**
+   * What the current read selects: the view label and the active explicit
+   * filters. The empty page and the failed read name the same scope, so
+   * «Nessun cliente…» and the error line agree (backlog:5af848afdb63).
+   */
+  function readScope(views, columnsMeta) {
+    const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
+    const inView = state.vista !== 'tutti' && viewLabel !== null ? ` in «${viewLabel}»` : '';
+    const excluding = [];
+    if (state.q !== '') excluding.push(`ricerca «${state.q}»`);
+    if (state.canale !== 'all') excluding.push(`canale ${channelLabel(state.canale)}`);
+    if (state.stato !== 'all') excluding.push(`stato ${STATO_LABELS[state.stato] ?? state.stato}`);
+    if (state.campo !== '') {
+      const campoLabel = columnsMeta.find((column) => column.id === `campo:${state.campo}`)?.label ?? state.campo;
+      excluding.push(state.valore !== '' ? `${campoLabel}: «${state.valore}»` : `campo ${campoLabel}`);
+    }
+    return { viewLabel, inView, excluding };
+  }
+
   /** The menus and the columns, from the last answer or the prototype fallbacks. */
   function metaOf() {
-    const views = data?.views ?? FALLBACK_VIEWS;
+    // backlog:5af848afdb63: a failed read keeps the last pills — with their
+    // numbers — while the space and the filters match, so one refusing list
+    // never wipes the others' counts, nor borrows another space's. Unknown
+    // stays bare: a missing count is «unknown», never a false 0.
+    const views = Array.isArray(data?.views) ? data.views
+      : (lastViews !== null && lastViewsKey === filterKey() ? lastViews : FALLBACK_VIEWS);
     const sorts = data?.sorts ?? FALLBACK_SORTS;
     // Custom fields (backlog:434cc39a): every space-wide definition reads
     // as an opt-in list column, off until the operator asks for it — the
@@ -756,10 +804,25 @@ export function createCustomerListView(deps) {
     frame.status.textContent = '';
     if (!data) return;
     if (data.error) {
+      // backlog:5af848afdb63: a failed read names what it was for — the view
+      // and the filters, like the empty page — and offers Riprova on the same
+      // read, in Italian. The pills above keep the last numbers read.
       const unavailable = data.status === 404;
-      frame.status.textContent = unavailable
-        ? 'Clienti non composto in questo spazio'
-        : data.error;
+      frame.status.textContent = '';
+      if (unavailable) {
+        frame.status.textContent = 'Clienti non composto in questo spazio';
+      } else {
+        const { viewLabel, excluding } = readScope(meta.views, meta.columnsMeta);
+        const viewName = state.vista !== 'tutti' && viewLabel !== null ? `«${viewLabel}»` : (excluding.length > 0 ? 'Clienti' : '');
+        const scope = viewName === '' ? '' : (excluding.length > 0 ? `${viewName} con ${excluding.join(', ')}` : viewName);
+        const failed = String(data.error ?? '');
+        frame.status.textContent = scope === '' ? failed : `${scope}: ${failed.charAt(0).toLowerCase()}${failed.slice(1)}`;
+      }
+      const retry = el('button', 'bo-clienti-retry ui-btn', 'Riprova');
+      retry.setAttribute('type', 'button');
+      retry.setAttribute('data-action', 'clienti-retry');
+      retry.addEventListener('click', () => { reload(); });
+      frame.status.appendChild(retry);
       return;
     }
     drawList(frame.body, meta.columnsMeta, meta.sizes);
@@ -1159,17 +1222,7 @@ export function createCustomerListView(deps) {
       // excludes — the view, the filters, or both — never a bare «no
       // customers». «Nessun cliente corrisponde…» only answers an actual
       // search or filter.
-      const views = data?.views ?? FALLBACK_VIEWS;
-      const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
-      const inView = state.vista !== 'tutti' && viewLabel !== null ? ` in «${viewLabel}»` : '';
-      const excluding = [];
-      if (state.q !== '') excluding.push(`ricerca «${state.q}»`);
-      if (state.canale !== 'all') excluding.push(`canale ${channelLabel(state.canale)}`);
-      if (state.stato !== 'all') excluding.push(`stato ${STATO_LABELS[state.stato] ?? state.stato}`);
-      if (state.campo !== '') {
-        const campoLabel = columnsMeta.find((column) => column.id === `campo:${state.campo}`)?.label ?? state.campo;
-        excluding.push(state.valore !== '' ? `${campoLabel}: «${state.valore}»` : `campo ${campoLabel}`);
-      }
+      const { inView, excluding } = readScope(data?.views ?? FALLBACK_VIEWS, columnsMeta);
       statusLine.textContent = total === 0
         ? (excluding.length === 0
           ? (state.vista === AWAITING_VIEW ? 'Nessuno aspetta una risposta.'

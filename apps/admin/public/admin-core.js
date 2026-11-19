@@ -245,7 +245,11 @@ export function shellNavInput(envelope) {
   // operation, published in its domain block's operations list.
   const agentOps = envelope?.domains?.agents?.operations;
   const agentsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-agent');
-  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, modulesSupported };
+  // backlog:0d2d8f2e: Squadre ride the same agents package (the server
+  // answers /api/squads/* only when it is composed), so the voice follows
+  // it too — the same rule as Agenti, never a link to a blank screen.
+  const squadsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-squad');
+  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, modulesSupported };
 }
 
 /**
@@ -415,6 +419,14 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'agenti' };
   }
+  // Squads route: #/squadre (backlog:0d2d8f2e). One screen, same
+  // canonical discipline: anything under the prefix is invalid, so a
+  // hostile hash never becomes a request path.
+  if (rawParts.length && rawParts[0] === 'squadre') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'squadre' };
+  }
   if (rawParts.length && rawParts[0] === 'sequenze') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 1) return { view: 'invalid' };
@@ -439,12 +451,24 @@ export function parseModuleRoute(hash) {
   }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
+  // backlog:bfc070243427: #/quotes/<id>/lista names the quotes list as the
+  // origin — the detail's «←» goes back there, like the offer page names
+  // its scheda origin under #/offerte/<id>/cliente/….
+  // backlog:bfc070243427 (seguito): #/quotes/<id>/offerta/<offer> names the
+  // offer as the origin — a quote opened from its offer goes back to the
+  // offer, never to the customer scheda.
   if (rawParts.length && rawParts[0] === 'quotes') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length === 1) return { view: 'quotes' };
-    if (rawParts.length !== 2) return { view: 'invalid' };
+    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista') && !(rawParts.length === 4 && rawParts[2] === 'offerta')) return { view: 'invalid' };
     const quoteId = safeDecode(rawParts[1]);
     if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
+    if (rawParts.length === 3) return { view: 'quote-detail', quoteId, from: 'quotes' };
+    if (rawParts.length === 4) {
+      const offerId = safeDecode(rawParts[3]);
+      if (offerId === null || offerId === '' || offerId.includes('/')) return { view: 'invalid' };
+      return { view: 'quote-detail', quoteId, from: { offer: offerId } };
+    }
     return { view: 'quote-detail', quoteId };
   }
   // Work routes: #/work and #/work/<id> (Work v1, ADR-030). Same canonical
@@ -1000,22 +1024,42 @@ export function customerDataDeferredLine(deferred) {
 export { IMMUTABLE_FIELDS };
 
 /**
+ * What the operator reads when the service is restarting under a request
+ * (backlog:7d4e99ef43d5, production 17/11: a codeless 503 on «Aggiorna»
+ * read «Request failed (503)», in English): Italian, a wait with a retry,
+ * never the raw text.
+ */
+export const SERVICE_RESTARTING_TEXT = 'Il servizio si sta riavviando, riprova tra poco.';
+
+/**
  * The error a failed API answer throws, built from its status and parsed
  * payload (`{ error: { code, message, details } }`). A 504 BO_SEND_PENDING
  * names the queued request beside the error (`requestId`, `claimId` at the
  * top level, the pilot's send route shape): both travel on the error so the
- * composer reads the same request back instead of sending again. Kept pure
- * and here, not in the shell bootstrap, so the mapping is tested.
+ * composer reads the same request back instead of sending again. A 502/503/
+ * 504 the gateway answered alone (no body, no server code: the app never
+ * spoke) is a service restarting, not a refusal — the message says so in
+ * Italian, so no screen can print «Request failed». A verdict the server
+ * really named (a code, a message) keeps its technical shape: the owning
+ * view maps it to its own sentence. Kept pure and here, not in the shell
+ * bootstrap, so the mapping is tested.
  * @param {number} status
  * @param {any} payload the parsed JSON body, or null/undefined
  */
 export function apiFailure(status, payload) {
-  const error = new Error(payload?.error?.message || `Request failed (${status})`);
+  const code = payload?.error?.code ?? (status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN');
+  const serverMessage = payload?.error?.message;
+  const message = typeof serverMessage === 'string' && serverMessage !== ''
+    ? serverMessage
+    : ((status === 502 || status === 503 || status === 504) && GATEWAY_CODES.has(code)
+      ? SERVICE_RESTARTING_TEXT
+      : `Request failed (${status})`);
+  const error = new Error(message);
   Object.assign(error, {
     status,
     // backlog:3a9bee845cc4: a 429 without a body code is still a rate limit —
     // the log names TOO_MANY_REQUESTS instead of UNKNOWN.
-    code: payload?.error?.code ?? (status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN'),
+    code,
     details: payload?.error?.details ?? null,
   });
   if (typeof payload?.requestId === 'string' && payload.requestId !== '') Object.assign(error, { requestId: payload.requestId });
@@ -1220,6 +1264,118 @@ export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait, meth
       notify(false);
     }
   }
+}
+
+/**
+ * What a screen that polls while the space wakes shows
+ * (backlog:0d25ed7dc34f): Italian, a wait with nothing asked of the operator
+ * — the page reloads by itself when the space answers, like the pilot edge
+ * page (`renderWaitingPage` in accordo-arvo-pilot `src/shared/web.js`: a 503
+ * with `Retry-After` and a meta refresh). Never «rifiutata», never technical.
+ */
+export const SPACE_WAKING_TEXT = 'Lo spazio di lavoro si sta avviando: la pagina si ricarica da sola tra qualche secondo.';
+
+/**
+ * Poll `run` while it rejects with a waking service
+ * (backlog:0d25ed7dc34f): after a release the space answers 503 /
+ * WORKSPACE_STARTING (or the host is still waking: gateway 502/504, refused
+ * connection) for longer than one retry — the page reloads by itself when
+ * the space answers instead of stopping at the first refusal. The verdict
+ * is the shared one (isWakeTransient): reads poll on any waking signal, a
+ * write replays only on an explicit starting signal (pass its `method`), and
+ * an uncertain outcome or a lost session never polls. Bounded: at most
+ * `rounds` runs with `everyMs` between them; `stale()` aborts when the
+ * caller moved on (its screen is gone, no stray request). Answers
+ * `{ answer }` when a run resolves, `{ error }` on a final refusal or when
+ * the space never answered in time, `{ stale: true }` on abort. The notice
+ * opens on the first waking failure and closes at the end; a notifier that
+ * throws never masks the read.
+ * @param {() => Promise<any>} run
+ * @param {{ wait?: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, method?: unknown, stale?: () => boolean, onWaking?: (waking: boolean) => void }} [options]
+ */
+export async function pollWhileWaking(run, { wait = unrefWait, everyMs = 3000, rounds = 20, method = 'GET', stale = () => false, onWaking = () => {} } = {}) {
+  const gap = Number.isInteger(everyMs) && everyMs > 0 ? everyMs : 3000;
+  const total = Number.isInteger(rounds) && rounds > 0 ? rounds : 20;
+  const notify = (waking) => {
+    try {
+      onWaking(waking);
+    } catch {
+      // The shell could not paint the notice; the poll goes on.
+    }
+  };
+  const movedOn = () => {
+    try {
+      return stale() === true;
+    } catch {
+      return false;
+    }
+  };
+  let waiting = false;
+  let lastError = null;
+  for (let round = 0; round < total; round += 1) {
+    if (round > 0) await wait(gap);
+    if (movedOn()) break;
+    try {
+      const answer = await run();
+      if (waiting) notify(false);
+      return movedOn() ? { stale: true } : { answer };
+    } catch (error) {
+      if (!isWakeTransient(error, { method })) {
+        if (waiting) notify(false);
+        return { error };
+      }
+      lastError = error;
+      if (!waiting) {
+        waiting = true;
+        notify(true);
+      }
+    }
+  }
+  if (waiting) notify(false);
+  if (movedOn()) return { stale: true };
+  return { error: lastError };
+}
+
+/**
+ * A read dropped because its screen moved on (backlog:0d25ed7dc34f): the
+ * poll proved nothing about the space, so the caller shows nothing — no
+ * failure paint, no toast. Views already drop it through their render
+ * token or their inert mount handle; the shell router swallows it by code.
+ */
+export const READ_STALE_CODE = 'READ_STALE';
+
+/** Whether `error` is a read dropped for a screen already left. @param {unknown} error */
+export function isStaleRead(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  return record.code === READ_STALE_CODE;
+}
+
+/**
+ * Read through a waking space (backlog:0d25ed7dc34f): the same verdict as
+ * the single retry, but the read polls (bounded) while the failure says the
+ * service is waking — the screen paints by itself when the space answers
+ * instead of parking on a refusal with Riprova. A final refusal still throws,
+ * so the screen stays honest when the space never answers in time. A poll
+ * abandoned because the caller moved on throws a coded stale read, never an
+ * INVALID_RESPONSE: the late answer proved nothing and must not paint as a
+ * failure on the screen already left.
+ * @param {() => Promise<any>} run
+ * @param {{ method?: unknown, stale?: () => boolean, onWaking?: (waking: boolean) => void, wait?: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number }} [options]
+ */
+export async function readWhileWaking(run, { method = 'GET', stale = () => false, onWaking = () => {}, wait, everyMs, rounds } = {}) {
+  const settled = await pollWhileWaking(run, {
+    method,
+    stale,
+    onWaking,
+    ...(wait !== undefined ? { wait } : {}),
+    ...(everyMs !== undefined ? { everyMs } : {}),
+    ...(rounds !== undefined ? { rounds } : {}),
+  });
+  if (settled !== null && typeof settled === 'object' && 'answer' in settled) return settled.answer;
+  if (settled !== null && typeof settled === 'object' && settled.stale === true) {
+    throw Object.assign(new Error('stale'), { code: READ_STALE_CODE });
+  }
+  throw settled?.error ?? Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
 }
 
 /**

@@ -218,7 +218,21 @@ export function createCommercialDomain(options = {}) {
     // pin as the rotation), so a bearer revoked between the accept read and
     // its commit answers 404 QUOTE_LINK_INVALID instead of claiming the
     // rotated row. Additive: the link contract is unchanged.
-    version: 12,
+    // 13: every fresh mint and every regenerate records one
+    // `opportunity.quote_link_*` audit row (backlog:bf1bc20a), so the
+    // Cronologia shows each link creation even when the browser answer is
+    // lost. Additive: the share-link contract (input, answers) is unchanged.
+    // 14: the history row must have a place to land before the mint or the
+    // rotation commits (review #995 P1) — refuse with a typed storage error
+    // when the opportunity audit or the quote's opportunity is missing, so
+    // no live bearer is left behind without its Cronologia row. Additive:
+    // the share-link contract (input, answers) is unchanged.
+    // 15: without an offer the link still mints, resurfaces and rotates
+    // (arbitrato #995 giro 3, backlog:bf1bc20a) — opportunityId is optional
+    // in the module, so the history row lands on the `quote` audit (the
+    // Cronologia del preventivo) instead of refusing. Additive: the
+    // share-link contract (input, answers) is unchanged.
+    version: 15,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
