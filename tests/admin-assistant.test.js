@@ -1956,6 +1956,20 @@ test('backlog:a1f2db873cf3: the open panel re-reads the bar bottom on resize and
   assert.equal((listeners.get('keydown') ?? []).length, 1, 'close keeps the Esc shortcut for the next open');
 });
 
+test('backlog:8e1092b95c8a: Nuovo modulo e Assistente senza parole tecniche inglesi', async () => {
+  const banned = ['manifest', 'bundle', 'kernel', 'createaccordoapp', 'record'];
+  const check = (text, where) => {
+    const lower = String(text).toLowerCase();
+    for (const word of banned) assert.ok(!lower.includes(word), `${where} mostra «${word}»: ${text}`);
+  };
+  const suggestion = suggestionsFor('nuovo-modulo').find((entry) => entry.id === 'bo05:nuovo-modulo:crea-ai');
+  assert.ok(suggestion, 'the nuovo-modulo suggestion exists');
+  check(suggestion.detail, 'il suggerimento');
+  const answer = await runSuggestion(stubClient({}), 'bo05:nuovo-modulo:crea-ai');
+  assert.ok(answer.lines.length > 0, 'the answer has lines');
+  for (const line of answer.lines) check(line, 'la risposta');
+});
+
 test('backlog:a1f2db873cf3: without a measurable bar the CSS default stays and nothing throws', () => {
   const noBar = { style: {} };
   setPanelTopBelowBar({ querySelector: () => null }, noBar);
