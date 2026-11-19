@@ -206,6 +206,37 @@ export function missingBookingFields(values, hasCustomerPick) {
   return missing;
 }
 
+/**
+ * backlog:9ff9a9ee1fea — the place fails closed in Italian before any
+ * request, like the missing fields above: a link without its label never
+ * leaves the form (the detail hangs the link on the label), and a link the
+ * server would refuse never leaves either. Null when the place is fine.
+ * Pure and DOM-free so it is unit-tested without a browser.
+ * @param {unknown} value
+ */
+export function isWebLink(value) {
+  if (typeof value !== 'string') return false;
+  const link = value.trim();
+  const lower = link.toLowerCase();
+  const schemeLen = lower.startsWith('https://') ? 8 : lower.startsWith('http://') ? 7 : 0;
+  if (schemeLen === 0) return false;
+  // A bare scheme ('https://' with no host) is not a meeting link: the
+  // popover would paint a clickable anchor to nowhere and the write would
+  // fail late. The host carries at least a dotted name, no whitespace.
+  const host = link.slice(schemeLen);
+  if (host === '' || host.includes('.') === false) return false;
+  return /^\S+$/.test(host);
+}
+
+export function placeRefusal(claim) {
+  const place = typeof claim?.location === 'string' ? claim.location.trim() : '';
+  const link = typeof claim?.locationUrl === 'string' ? claim.locationUrl.trim() : '';
+  if (link === '') return null;
+  if (place === '') return 'Scrivi il luogo («Online») accanto al link: un link da solo non dice dove ci si vede.';
+  if (!isWebLink(link)) return 'Il link della riunione deve iniziare con http(s)://, come un indirizzo web.';
+  return null;
+}
+
 /** Week label for the nav ("19 – 25 ott 2026"), null when unparsable. */
 export function weekLabel(weekKeys) {
   if (!Array.isArray(weekKeys) || weekKeys.length === 0) return null;
@@ -3839,6 +3870,26 @@ export function createCalendarioView(deps) {
       person.appendChild(el(doc, 'span', { text: member }));
       pop.appendChild(person);
     }
+    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
+    // detail: the label paints as text, and the meeting link hangs on it
+    // so it stays readable aloud. Only an http(s) link becomes clickable —
+    // anything else paints as plain text, never a scriptable address.
+    const place = typeof row?.location === 'string' ? row.location.trim() : '';
+    if (place !== '') {
+      const placeUrl = typeof row?.locationUrl === 'string' ? row.locationUrl.trim() : '';
+      const placeRow = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-location' } });
+      if (isWebLink(placeUrl)) {
+        placeRow.appendChild(el(doc, 'span', { text: 'Luogo: ' }));
+        placeRow.appendChild(el(doc, 'a', {
+          className: 'cal-pop-link',
+          text: place,
+          attrs: { href: placeUrl, target: '_blank', rel: 'noopener', title: placeUrl },
+        }));
+      } else {
+        placeRow.textContent = `Luogo: ${place}`;
+      }
+      pop.appendChild(placeRow);
+    }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
     if (notes !== '') pop.appendChild(el(doc, 'p', { className: 'cal-pop-row cal-pop-note', text: `Nota: ${notes}` }));
     const origin = originOf(row);
@@ -4865,6 +4916,8 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
+      location: manualValue('location') === '' ? null : manualValue('location'),
+      locationUrl: manualValue('locationUrl') === '' ? null : manualValue('locationUrl'),
     });
     state.confirmed = null;
     state.serviceError = '';
@@ -4882,6 +4935,14 @@ export function createCalendarioView(deps) {
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
       state.aiNote = CONFIRM_SERVICE_NOTE;
+      renderAll();
+      return;
+    }
+    // backlog:9ff9a9ee1fea — a link without its place label never leaves
+    // the row either: the detail hangs the link on the label.
+    const slotPlace = placeRefusal(claim);
+    if (slotPlace !== null) {
+      state.aiNote = slotPlace;
       renderAll();
       return;
     }
@@ -5055,9 +5116,10 @@ export function createCalendarioView(deps) {
   /**
    * backlog:6e6750ff8163 — every field of «Nuovo appuntamento» carries its
    * visible label (Cliente, Persona del team, Servizio, Prezzo, Giorno,
-   * Inizio, Fine, Note): a placeholder alone vanishes as soon as the field
-   * holds a value («1.00» read as nothing). The label wraps its control, so
-   * a click on the words focuses the field and screen readers name it.
+   * Inizio, Fine, Luogo, Link riunione, Note): a placeholder alone vanishes
+   * as soon as the field holds a value («1.00» read as nothing). The label
+   * wraps its control, so a click on the words focuses the field and screen
+   * readers name it.
    * @param {string} label @param {any} control @param {{wide?: boolean}} [options]
    */
   function fieldBox(label, control, { wide = false } = {}) {
@@ -5372,12 +5434,18 @@ export function createCalendarioView(deps) {
     inputs.serviceKey = renderServiceChoice(form, priceInput);
     form.appendChild(fieldBox('Prezzo (€)', priceInput, { wide: true }));
     inputs.price = priceInput;
+    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
+    // form: a free address, or «Online» with the meeting link beside it.
+    // Both ride the claim and the detail; a link never travels alone.
     const fields = [
       ['date', 'date', 'Giorno', ''],
       ['start', 'time', 'Inizio', ''],
       ['end', 'time', 'Fine', ''],
+      ['location', 'text', 'Luogo', 'Indirizzo oppure Online'],
+      ['locationUrl', 'text', 'Link riunione', 'Solo se Online: https://…'],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
+    let linkBox = null;
     for (const [name, type, label, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
@@ -5390,10 +5458,24 @@ export function createCalendarioView(deps) {
         state.manualTyped.add(name);
       });
       inputs[name] = input;
-      // Giorno and Note take the row; Inizio and Fine sit side by side, so
-      // no date ever gets cut on the 340 px popover.
-      form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
+      // Giorno, Luogo, Link and Note take the row; Inizio and Fine sit side
+      // by side, so no date ever gets cut on the 340 px popover.
+      const box = fieldBox(label, input, { wide: name !== 'start' && name !== 'end' });
+      if (name === 'locationUrl') linkBox = box;
+      form.appendChild(box);
     }
+    // Restyle 19/11 (ece111d80305, regola AI-native: meno campi): «Link
+    // riunione» shows only when the place says Online, or a link is
+    // already there — an in-person booking never sees an empty extra field.
+    const syncLinkBox = () => {
+      if (linkBox === null) return;
+      const place = String(inputs.location?.value ?? '');
+      const link = String(inputs.locationUrl?.value ?? '');
+      if (/online/i.test(place) || link.trim() !== '') linkBox.removeAttribute('hidden');
+      else linkBox.setAttribute('hidden', '');
+    };
+    inputs.location?.addEventListener?.('input', syncLinkBox);
+    syncLinkBox();
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
@@ -5456,6 +5538,12 @@ export function createCalendarioView(deps) {
         } else inputs.serviceKey.value = rawService;
       }
       if (draft.notes) inputs.notes.value = String(draft.notes);
+      // backlog:9ff9a9ee1fea — a proposal draft round-trips the place the
+      // server validated, like the note: confirming from it stores the same
+      // place the draft described.
+      if (draft.location) inputs.location.value = String(draft.location);
+      if (draft.locationUrl) inputs.locationUrl.value = String(draft.locationUrl);
+      syncLinkBox();
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
       const dayKey = draftDayKey(draft);
@@ -5482,6 +5570,8 @@ export function createCalendarioView(deps) {
       if (dayKey) wrote.date = absorbed.date;
       if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
       if (draft.notes) wrote.notes = absorbed.notes;
+      if (draft.location) wrote.location = absorbed.location;
+      if (draft.locationUrl) wrote.locationUrl = absorbed.locationUrl;
       state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
@@ -5534,6 +5624,8 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        location: read('location') === '' ? null : read('location'),
+        locationUrl: read('locationUrl') === '' ? null : read('locationUrl'),
       }),
     };
   }
@@ -5690,6 +5782,15 @@ export function createCalendarioView(deps) {
       // book never leaves the form, on Proponi or Conferma alike.
       state.serviceError = presend;
       state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      renderAll();
+      return;
+    }
+    // backlog:9ff9a9ee1fea — a link without its place label never leaves
+    // the form, on Proponi or Conferma alike: the detail hangs the link on
+    // the label, and a bare url would paint as an unreadable link.
+    const placeStop = placeRefusal(claim);
+    if (placeStop !== null) {
+      state.bookingNote = placeStop;
       renderAll();
       return;
     }
@@ -5857,13 +5958,21 @@ export function createCalendarioView(deps) {
  * a start there is no source key yet (the server refuses the claim).
  * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
  *   teamMemberId: string, serviceKey: string, priceCents: number | null,
- *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null,
+ *   location?: string | null, locationUrl?: string | null}} input
  */
 export function bookingClaim(input) {
   const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
   const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
     ? input.customer.resource : 'contact';
   const member = input.teamMemberId;
+  // backlog:9ff9a9ee1fea — the place rides every claim (manual form,
+  // phrase Conferma, scheda window): trimmed here so every caller sends
+  // the same shape the server validates. An absent place omits the keys
+  // entirely, so the wire shape without a place is the one from before
+  // (the /bo bridge refuses fields it does not know: revert #1021).
+  const location = typeof input.location === 'string' && input.location.trim() !== '' ? input.location.trim() : null;
+  const locationUrl = typeof input.locationUrl === 'string' && input.locationUrl.trim() !== '' ? input.locationUrl.trim() : null;
   return {
     spaceId: input.spaceId,
     subject: { resource, id, owner: 'host' },
@@ -5874,6 +5983,8 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    ...(location === null ? {} : { location }),
+    ...(locationUrl === null ? {} : { locationUrl }),
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,
