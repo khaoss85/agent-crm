@@ -1718,7 +1718,15 @@ async function route() {
   } catch (error) {
     // backlog:0d25ed7dc34f (review Muse #1009): a read dropped because its
     // screen moved on proves nothing — no toast, no failure paint.
-    if (isStaleRead(error)) return;
+    // backlog:f268787b: the drop still logs a sanitized warn (cause and
+    // view, never the payload) before the return, so a stale failure stays
+    // diagnosable like the stale branch below.
+    if (isStaleRead(error)) {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-nav stale read dropped:', error?.code ?? null, target.view);
+      }
+      return;
+    }
     if (navToken !== navSeq) {
       // A screen already left: its handle was inert and the operator is on
       // another screen, so no toast there — but the failure stays
