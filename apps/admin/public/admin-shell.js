@@ -637,11 +637,15 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  * write the space's agents and sequences — left alone they would keep the
  * space just left behind. Calendario too (review #664): its week and its
  * queued phrase search belong to one space.
+ * Voce 5fc6709109fa: the dashboard is Oggi, the most space-scoped screen
+ * of all — after Cambia spazio it re-reads the new space in place instead
+ * of keeping the space just left behind. Unmounted the dashboard is the
+ * framework demo, so re-routing it is a no-op paint.
  * @param {unknown} view the routed view id
  * @param {{ mounted?: boolean }} [options]
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
-  if (view === 'dashboard') return mounted === true;
+  if (view === 'dashboard') return true;
   return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 

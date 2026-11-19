@@ -536,7 +536,10 @@ test('review #661 giro 2 P2: after a space switch the screen never writes to the
 test('review #661 giro 2 P2: switching space re-renders Agenti and Sequenze like the other space-scoped screens', () => {
   for (const view of ['agenti', 'sequenze', 'customer-card', 'sync']) assert.equal(rerendersOnSpaceSwitch(view), true, view);
   assert.equal(rerendersOnSpaceSwitch('dashboard', { mounted: true }), true);
-  assert.equal(rerendersOnSpaceSwitch('dashboard'), false);
+  // Voce 5fc6709109fa (contract change: the acceptance requires Oggi to
+  // show the new space without leaving the page): the dashboard re-renders
+  // on every shell — unmounted it is the framework demo, a no-op repaint.
+  assert.equal(rerendersOnSpaceSwitch('dashboard'), true);
   assert.equal(rerendersOnSpaceSwitch('reporting'), false);
 });
 
