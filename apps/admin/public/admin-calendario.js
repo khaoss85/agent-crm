@@ -969,6 +969,13 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:afa97ffe5a4d (production 18/11: 502 LLM_PROVIDER_FAILED, even
+  // after the retry) — the assistant is not answering: say so in Italian
+  // and offer the manual form (aiBlockOf 'down' paints «Compila a mano»
+  // beside this sentence).
+  if (isProviderFailure(error)) {
+    return 'L’assistente non risponde: riprova tra poco, oppure compila l’appuntamento a mano.';
+  }
   // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
   // event: the slot is held, the reminder would strand, or the booking is
   // closed and moves nowhere. The event stays where it was.
@@ -1154,17 +1161,32 @@ export function isMovableAppointment(row) {
 }
 
 /**
- * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
- * 'off' (AI switched off or not configured for the space) or 'cap' (the
- * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
- * other refusal.
+ * backlog:afa97ffe5a4d — whether the phrase POST met the AI provider
+ * failing (production 18/11: 502 LLM_PROVIDER_FAILED), not the pilot
+ * refusing: the POST retries once, then the card says the assistant is
+ * not answering and offers the manual form. Pure and DOM-free,
+ * unit-tested without a browser.
  * @param {unknown} error
- * @returns {'off'|'cap'|null}
+ */
+export function isProviderFailure(error) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  return /** @type {any} */ (record).code === 'LLM_PROVIDER_FAILED';
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space), 'cap' (the
+ * daily AI spend ceiling, 429) or 'down' (the provider failed, even after
+ * the retry — the next phrase may still work). All three offer
+ * «Compila a mano»; null for any other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|'down'|null}
  */
 export function aiBlockOf(error) {
   const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
   if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
+  if (isProviderFailure(error)) return 'down';
   return null;
 }
 
@@ -1668,7 +1690,7 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
-    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    /** The last phrase refusal blocked the AI ('off', 'cap' or 'down'): the card offers «Compila a mano». @type {'off'|'cap'|'down'|null} */
     aiBlocked: null,
     /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
     phraseNoDraft: false,
@@ -4269,15 +4291,29 @@ export function createCalendarioView(deps) {
   async function phraseAnswer({ resumeId = null, seq }) {
     let requestId = resumeId;
     if (requestId === null) {
+      // backlog:afa97ffe5a4d (production 18/11: the phrase POST met a 502
+      // LLM_PROVIDER_FAILED and the card gave up): a provider error retries
+      // the same POST once — the pilot's provider hiccups, the sentence is
+      // still there, so the operator never retypes it.
+      const postPhrase = () => client.request('/api/appointments/phrase', {
+        method: 'POST',
+        body: { spaceId: readSpace(), phrase: state.phrase },
+      });
+      let failed;
       try {
-        return await client.request('/api/appointments/phrase', {
-          method: 'POST',
-          body: { spaceId: readSpace(), phrase: state.phrase },
-        });
+        return await postPhrase();
       } catch (error) {
-        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
-        if (requestId === null) throw error;
+        failed = error;
       }
+      if (isProviderFailure(failed)) {
+        try {
+          return await postPhrase();
+        } catch (error) {
+          failed = error;
+        }
+      }
+      requestId = pendingRequestId(failed, 'BO_PHRASE_PENDING');
+      if (requestId === null) throw failed;
     }
     // A route away (or a newer search) during the POST owns the mount now:
     // never paint the waiting card over it (review #664, backlog:607f33ee).
