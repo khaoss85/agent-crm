@@ -3814,8 +3814,9 @@ export function createCustomerCardView(deps) {
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
     // a run that answers nothing refuses in time with the retry line, never
-    // a wait without end. With no messages the button says so at once under
-    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // a wait without end. With no messages the button sends nothing and one
+    // outcome lands with the re-read — never `Estraggo…`, never a busy label.
+    // When the run lands
     // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
@@ -3841,59 +3842,67 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => {
+      refresh.addEventListener('click', async () => {
         if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
-        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
-        // to extract — the button says so at once and sends nothing, never
-        // «Estraggo…», and never spins without end. The re-read below is the
-        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
-        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        // Backlog e5e3e886, seguito 18/11 (prova del Mac 18/11 21:1xZ): with
+        // no messages there is nothing to extract — one outcome per click
+        // and the button back at once: the warning alone used to be covered
+        // after 0,2 s by «Nessun dato nuovo» while the button stayed
+        // «Aggiorno…» for 3,4 s. No busy label here — the button stays
+        // «Aggiorna» while the re-read below flies under the same
+        // single-flight guard as the extract run. The single outcome lands
+        // with the re-read (arbitrato #853 P1, voce b9f6a2b58e00): changed
+        // facts read «Dati aggiornati», unchanged facts the no-message
+        // warning — never «Nessun dato nuovo», which now means a run
+        // happened and found nothing, and never «Estraggo…».
         if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
-          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-          return uiBusy(refresh, 'Aggiorno…', async () => {
-            busy = true;
-            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
-            // without messages flies under the same single-flight guard as
-            // the extract run — otherwise a repaint in flight lets two
-            // reload()s race and lands the first answer in a detached box.
-            // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: the reload is not
-            // an extract — it is tagged so the flying indicator never reads
-            // «Estraggo…» for it, and the flight is released before any
-            // landing paint, like the extract run below.
-            const painted = lastShown;
-            const flight = { kind: 'reload' };
-            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+          busy = true;
+          // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+          // without messages flies under the same single-flight guard as
+          // the extract run — otherwise a repaint in flight lets two
+          // reload()s race and lands the first answer in a detached box.
+          // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: the reload is not
+          // an extract — it is tagged so the flying indicator never reads
+          // «Estraggo…» for it, and the flight is released before any
+          // landing paint, like the extract run below.
+          const painted = lastShown;
+          const flight = { kind: 'reload' };
+          if (runKey !== null) enrichmentRuns.set(runKey, flight);
+          try {
+            let fresh;
             try {
-              let fresh;
-              try {
-                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
-              } catch (error) {
-                if (isExtractionTimeout(error)) {
-                  toast('Non ha risposto in tempo: riprova.', true);
-                  if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
-                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
-                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
-                  }
-                } else {
-                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+              fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+            } catch (error) {
+              if (isExtractionTimeout(error)) {
+                toast('Non ha risposto in tempo: riprova.', true);
+                if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+                if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                  paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
                 }
-                return;
-              }
-              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
-              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
-                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
               } else {
-                while (box.firstChild) box.removeChild(box.firstChild);
-                enriched(box, fresh, reload, null, ctx, null);
+                toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
               }
-              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            } finally {
-              busy = false;
-              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              return;
             }
-          });
+            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+            if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+              paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+            } else {
+              while (box.firstChild) box.removeChild(box.firstChild);
+              enriched(box, fresh, reload, null, ctx, null);
+            }
+            if (before === after) {
+              toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+            } else {
+              toast('Dati aggiornati');
+            }
+          } finally {
+            busy = false;
+            if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+          }
+          return undefined;
         }
         return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
