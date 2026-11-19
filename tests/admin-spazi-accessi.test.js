@@ -30,6 +30,7 @@ import {
   effectiveSwitches,
   formatSpaceStat,
   memberInitials,
+  profileMemberOf,
   spaceRoleLabel,
   teamCalendarState,
   teamChannelTiles,
@@ -68,19 +69,26 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
           members.push({ subject: body.subject, role: body.role, status: 'active' });
           return { subject: body.subject };
         }
-        return { items: members };
+        // Review giro 2 (P2): no aliasing — the view reconciles from the
+        // server truth, never from the object the POST just wrote.
+        return { items: members.map((row) => ({ ...row })) };
       }
       if (path.startsWith('/api/spine/memberships/') && path.endsWith('/suspend')) {
         const subject = decodeURIComponent(path.split('/')[4]);
         if (fail.suspend && Object.hasOwn(fail.suspend, subject)) throw fail.suspend[subject];
         const found = members.find((row) => row.subject === subject);
         if (!found) throw Object.assign(new Error('no such member'), { code: 'NOT_FOUND' });
-        members.splice(members.indexOf(found), 1);
+        // Suspended memberships stay listed with their new status (the
+        // screen renders «sospeso»), like the production store — removal
+        // from the roster would hide the row the retry test reopens.
+        found.status = 'suspended';
         return { subject };
       }
       if (path.startsWith('/api/space-permissions/effective')) {
         if (fail.overrides) throw fail.overrides;
-        return { spaceId: SPACE, overrides: overrides.filter((row) => row.spaceId === SPACE) };
+        // Review giro 2 (P2): same no-aliasing rule as the memberships GET —
+        // the settled flip paint must come from the server store.
+        return { spaceId: SPACE, overrides: overrides.filter((row) => row.spaceId === SPACE).map((row) => ({ ...row })) };
       }
       if (path === '/api/space-permissions/set-permission') {
         const found = overrides.find((row) => row.spaceId === body.spaceId && row.permission === body.permission);
@@ -2136,6 +2144,343 @@ test('backlog:3136d15d only a paused child switch reads not-allowed, a busy one 
   const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
   assert.doesNotMatch(css, /\.bo-spazi-toggle:disabled\s*,/);
+});
+
+// backlog:71a6574a (verifica Mac 11/11 12:48Z, punti 2 e 5): after a 200
+// the screen paints the write at once — state and buttons come back live
+// instead of staying grey through the re-read; the refresh after it
+// reconciles with the server truth.
+const gatedGets = (base, prefixes) => {
+  let hold = false;
+  const waiters = [];
+  return {
+    arm: () => { hold = true; },
+    free: () => { hold = false; while (waiters.length > 0) (waiters.pop())(); },
+    client: {
+      async request(path, options = {}) {
+        const method = String(options?.method ?? 'GET').toUpperCase();
+        if (hold && method === 'GET' && prefixes.some((prefix) => path.startsWith(prefix))) {
+          await new Promise((resolve) => { waiters.push(resolve); });
+        }
+        return base.request(path, options);
+      },
+    },
+  };
+};
+
+const statusColumn = (mount) => mount.findAll('span')
+  .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-status'))
+  .map((node) => node.textContent);
+
+test('71a6574a: a flipped switch paints at once, before the re-read lands', async () => {
+  const calls = [];
+  const overrides = [];
+  const gate = gatedGets(stubClient({ calls, overrides }), ['/api/space-permissions/effective']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  const done = mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(8);
+  // The 200 already landed: the toggle reads the flipped state and every
+  // button is live, while the re-read is still held.
+  const live = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(live.find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta')?.getAttribute('aria-checked'), 'false');
+  assert.ok(!mount.findAll('button').some((node) => node.disabled), 'no grey disabled button while the re-read is out');
+  assert.doesNotMatch(text(mount), /Salvo/, 'no «Salvo…» while the re-read is out');
+  gate.free();
+  await done;
+  await flush();
+  const settled = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(settled.find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta')?.getAttribute('aria-checked'), 'false', 'the server truth keeps the flipped state');
+});
+
+test('71a6574a: an invited person paints at once, before the re-read lands', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
+  // Review giro 4 (P1): the stub 200 carries no status, so the pending row
+  // stays — «invio in corso», never an unconfirmed «invitato».
+  assert.ok(statusColumn(mount).includes('invio in corso'), 'the new row reads «invio in corso» while the re-read is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no invented «invitato» without a confirming 200');
+  assert.ok(!mount.findAll('button').some((node) => node.disabled), 'no grey disabled button while the re-read is out');
+  gate.free();
+  await done;
+  await flush();
+  const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth keeps the invited person');
+  assert.ok(statusColumn(mount).includes('attivo'), 'the re-read paints the server truth');
+  assert.ok(!statusColumn(mount).includes('invio in corso'), 'the pending row is gone once the truth lands');
+});
+
+// Backlog 71a6574a review giro 4 (P1): the 200 never confirms «invitato» —
+// before it answers the row reads «invio in corso» and nothing else.
+test('71a6574a review giro 4 (P1): before the 200 the invited row reads «invio in corso», never «invitato»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const base = stubClient({ members });
+  let releasePost = null;
+  const client = {
+    async request(path, options = {}) {
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      if (path === '/api/spine/memberships' && method === 'POST') {
+        await new Promise((resolve) => { releasePost = resolve; });
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  await v.render();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  assert.ok(releasePost !== null, 'the 200 is still out');
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed before the 200');
+  assert.ok(statusColumn(mount).includes('invio in corso'), 'the row reads «invio in corso» while the request is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no «invitato» before the 200 confirms it');
+  releasePost();
+  await done;
+  await flush();
+  assert.ok(statusColumn(mount).includes('attivo'), 'after the 200 the re-read paints the server truth');
+});
+
+// Backlog 71a6574a review giro 4 (P1): the production grant answers
+// `{entity, binding, event}` with the status on the entity — a confirmed
+// status paints at once, even while the re-read is out.
+test('71a6574a review giro 4 (P1): a 200 carrying a status paints that status at once', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const base = stubClient({ members });
+  const client = {
+    async request(path, options = {}) {
+      const answer = await base.request(path, options);
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      if (path === '/api/spine/memberships' && method === 'POST') {
+        // The production grant shape: the status lives on the entity.
+        return { entity: { subject: 'nuova@esempio.it', role: 'operator', status: 'active' }, binding: null, event: null };
+      }
+      return answer;
+    },
+  };
+  const gate = gatedGets(client, ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  assert.ok(statusColumn(mount).includes('attivo'), 'the 200-confirmed status paints while the re-read is out');
+  assert.ok(!statusColumn(mount).includes('invitato'), 'no invented «invitato» beside the confirmed status');
+  gate.free();
+  await done;
+  await flush();
+  assert.ok(statusColumn(mount).includes('attivo'), 'the server truth keeps the confirmed status');
+});
+
+test('71a6574a: a removed person reads sospeso at once, before the re-read lands', async () => {
+  const members = [
+    { subject: 'dan', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.it' },
+    { subject: 'marco', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.it' },
+  ];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Daniele Pelleri'));
+  await remove.listeners.click[0]();
+  await flush();
+  mount.findAll('input').find((node) => (node.getAttribute('aria-label') ?? '').startsWith('Motivo della rimozione')).value = 'fine rapporto';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Conferma rimozione').listeners.click[0]();
+  await flush(8);
+  const row = mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member'))
+    .find((node) => node.textContent.includes('Daniele Pelleri'));
+  assert.ok(row, 'the row is still there');
+  const status = row.findAll('span').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-status'));
+  assert.equal(status?.textContent, 'sospeso', 'the row reads sospeso while the re-read is out');
+  assert.ok(!mount.findAll('button').some((node) => node.disabled), 'no grey disabled button while the re-read is out');
+  gate.free();
+  await done;
+  await flush();
+  assert.doesNotMatch(text(mount), /Conferma rimozione/, 'the confirm closed once the server truth landed');
+  assert.ok(statusColumn(mount).includes('sospeso'), 'the server truth keeps the suspended person');
+});
+
+test('71a6574a: the person row shows the email under the name and the status in its own column', async () => {
+  const members = [
+    { subject: 'dan', role: 'owner', status: 'suspended', displayName: 'Daniele Pelleri', email: 'dan@esempio.it' },
+    { subject: 'marco', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.it' },
+    { subject: 'github|7', role: 'operator', status: 'active', displayName: 'Ada Neri' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const emails = byClassIn(mount, 'div', 'bo-spazi-email').map((node) => node.textContent);
+  assert.deepEqual(emails, ['dan@esempio.it', 'marco@esempio.it'], 'emails paint whole under the names, never joined with the status');
+  assert.equal(byClassIn(mount, 'div', 'bo-spazi-email')[0].getAttribute('title'), 'dan@esempio.it', 'the full address survives the ellipsis');
+  assert.deepEqual(statusColumn(mount), ['attivo', 'sospeso', 'attivo'], 'the status reads in its own column, in row order');
+  const subjects = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(subjects.every((name) => !name.includes('·')), 'no «name · status» where the name stands');
+  const access = byClassIn(mount, 'div', 'bo-spazi-access').map((node) => node.textContent);
+  assert.deepEqual(access, ['Accesso GitHub'], 'a row without mailbox keeps its access kind under the name');
+});
+
+test('71a6574a: the self row borrows the profile name and mailbox instead of a bare handle', () => {
+  const rows = buildTeamRows(
+    [{ subject: 'github|48571113', role: 'operator', status: 'active', displayName: 'khaoss85' }],
+    { selfSubject: 'github|48571113', selfName: 'Daniele Pelleri', selfEmail: 'dan@esempio.it' },
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Daniele Pelleri', 'the profile name wins over the bare handle');
+  assert.equal(rows[0].email, 'dan@esempio.it', 'the profile mailbox fills the missing row email');
+  assert.equal(rows[0].initials, 'DP');
+});
+
+test('71a6574a: another row never borrows the profile name or mailbox', () => {
+  const rows = buildTeamRows(
+    [
+      { subject: 'github|48571113', role: 'operator', status: 'active', displayName: 'khaoss85' },
+      { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.it' },
+    ],
+    { selfSubject: 'google|7', selfName: 'Daniele Pelleri', selfEmail: 'dan@esempio.it' },
+  );
+  const other = rows.find((row) => row.subjects.includes('github|48571113'));
+  assert.equal(other.name, 'khaoss85', 'the handle stays, without enrichment');
+  assert.equal(other.email, null, 'no mailbox is lent to another row');
+});
+
+test('71a6574a: profileMemberOf reads the profile member name and mailbox, never a technical id', () => {
+  assert.deepEqual(
+    profileMemberOf({ member: { name: 'Daniele Pelleri', email: 'dan@esempio.it' } }),
+    { name: 'Daniele Pelleri', email: 'dan@esempio.it' },
+  );
+  assert.deepEqual(profileMemberOf({ member: { name: 'khaoss85' } }), { name: 'khaoss85', email: null });
+  assert.equal(profileMemberOf(null), null, 'an unreadable profile adds nothing');
+  assert.equal(profileMemberOf({}), null, 'no member, no fallback');
+  assert.equal(profileMemberOf({ member: { name: 'google|123', email: 'broker+x@accordo.invalid' } }), null, 'technical ids never become a name');
+});
+
+test('71a6574a: the painted self row shows the profile name and mailbox instead of a bare handle', async () => {
+  const members = [{ subject: 'google|sessione-test', role: 'owner', status: 'active', displayName: 'khaoss85' }];
+  const base = stubClient({ members });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') return { member: { name: 'Daniele Pelleri', email: 'dan@esempio.it' } };
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  await v.render();
+  await flush();
+  assert.deepEqual(
+    byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent),
+    ['Daniele Pelleri'],
+    'the profile name wins over the bare handle',
+  );
+  assert.deepEqual(
+    byClassIn(mount, 'div', 'bo-spazi-email').map((node) => node.textContent),
+    ['dan@esempio.it'],
+    'the profile mailbox paints under the name',
+  );
+});
+
+test('71a6574a review giro 1 (P2): a click while the post-flip re-read is out opens its confirm, never «Permessi non disponibili.»', async () => {
+  const calls = [];
+  const overrides = [];
+  const gate = gatedGets(stubClient({ calls, overrides }), ['/api/space-permissions/effective']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  const first = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await first.listeners.click[0]();
+  await flush();
+  const done = mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and the re-read is still held: clicking another switch
+  // must open its confirmation against the confirmed snapshot.
+  const second = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
+  await second.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Permessi non disponibili/, 'no unavailable note while the re-read is out');
+  assert.match(text(mount), /(Accendere|Spegnere) «Inviare risposte senza approvazione»\?/, 'the second switch confirm opened');
+  gate.free();
+  await done;
+  await flush();
+  const settled = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(settled.find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta')?.getAttribute('aria-checked'), 'false', 'the server truth keeps the flipped state');
+});
+
+test('71a6574a review giro 2 (P2): a click while the post-invite re-read is out opens its confirm, never «Permessi non disponibili.»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships', '/api/space-permissions/effective']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and both re-reads are still held: the invited row paints
+  // at once, and clicking a switch must open its confirmation against the
+  // confirmed overrides snapshot.
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Permessi non disponibili/, 'no unavailable note while the re-read is out');
+  assert.match(text(mount), /(Accendere|Spegnere) «Scrivere bozze di risposta»\?/, 'the switch confirm opened');
+  gate.free();
+  await done;
+  await flush();
+  const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth keeps the invited person');
+});
+
+test('71a6574a review giro 3 (P1): a render while the post-invite re-read is out keeps the chosen team, never «Team non disponibile.»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell’invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and the membership re-read is still held: any render in
+  // between (here a switch click, like the reviewer scenario) must keep the
+  // just-painted team instead of «Team non disponibile.».
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Team non disponibile/, 'no unavailable team while the re-read is out');
+  assert.ok(byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent).includes('nuova@esempio.it'), 'the chosen team stays painted');
+  gate.free();
+  await done;
+  await flush();
+  const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth replaces the optimistic team');
 });
 
 // backlog:dd570f6d501e (seguito, prova del Mac): an outside click sent focus
