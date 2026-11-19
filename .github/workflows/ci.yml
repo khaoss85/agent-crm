@@ -71,13 +71,21 @@ jobs:
     concurrency:
       group: ci-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    # Same billing-lock routing as `verify` below.
-    runs-on: [self-hosted, accordo-ci]
+    # Cure lane (backlog:55ca4e0cb76d): a PR with the `cure` label heals a red
+    # main, so it must not queue 3 h behind ordinary PRs on the two shared
+    # runners. It runs on the reserved `accordo-cure` runner instead; any PR
+    # without the label stays on today's `accordo-ci` runners and rank.
+    runs-on: ${{ contains(github.event.pull_request.labels.*.name, 'cure') && fromJSON('["self-hosted", "accordo-cure"]') || fromJSON('["self-hosted", "accordo-ci"]') }}
     env:
       # The PR gate waits in the CI server's own queue too (scripts/ci-heavy.sh): in the shared
       # queue it waited 20-25 min behind other factories while holding a runner, and main's
       # light checks queued for hours (server, 08/11, decision of the Leader).
       ACCORDO_HEAVY_QUEUE: ci
+      # Cure lane (backlog:55ca4e0cb76d): the heavy name of a `cure` PR
+      # contains `main-red`, which the server queue ranks 0
+      # (heavy-job-priority.json `*/main-red-*`), ahead of every other
+      # waiter. Any other PR keeps `fast`: today's name and rank.
+      CI_FAST_HEAVY_NAME: ${{ contains(github.event.pull_request.labels.*.name, 'cure') && 'fast-main-red-cure' || 'fast' }}
       ACCORDO_TEST_POSTGRES: '1'
       # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
       # cluster per runner, on the port the runner's .env names (ACCORDO_PG_PORT).
@@ -132,6 +140,12 @@ jobs:
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
+      # Cure routing, visible in the job log (backlog:55ca4e0cb76d): which
+      # runner this PR took and which heavy name (queue rank) the gate runs
+      # under. A `cure` PR reads `accordo-cure` / `fast-main-red-cure` here.
+      - name: Cure routing (runner and queue rank)
+        run: |
+          echo "cure routing: labels=[${{ join(github.event.pull_request.labels.*.name, ', ') }}] heavy-name=$CI_FAST_HEAVY_NAME"
       # The whole gate behind one lock: `scripts/ci-fast.sh` runs the nine
       # phases sequentially (check, touched tests and gtm, pilot browser,
       # smoke, recipe replay, truth agreement, verifier-fixture drift,
