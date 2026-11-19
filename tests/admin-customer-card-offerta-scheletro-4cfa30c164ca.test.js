@@ -12,12 +12,15 @@
  * codice di prima (1 riquadro fantasma a profilo noto), verde dopo.
  *
  * Contratto deciso (main, backlog:9b28b3bc6003, #992 — questa PR lo
- * adotta dopo il merge di main, al posto del blank di c4e8586e): lo
- * scheletro copre solo l'ignoto, mentre il profilo è in volo. A profilo
+ * adotta dopo il merge di main, al posto del blank di c4e8586e): a profilo
  * noto e vuoto, anche con lo schema ancora in volo, niente scheletro e
- * niente riquadro. Il segnaposto a profilo in volo risponde anche alla
- * review P2 su c4e8586e: per chi ha offerte resta un placeholder, mai un
- * salto dal vuoto.
+ * niente riquadro. Aggiornato dalla ANSWER del supervisore (18/11 16:1xZ,
+ * NON PASSA con #1014 su Ada Rossi): a PRIMA visita lo scheletro non si
+ * disegna nemmeno mentre il profilo è in volo — resta solo quando la
+ * lettura precedente dello stesso cliente ne aveva una (backlog:4cfa30c164ca,
+ * tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js). La
+ * review P2 su c4e8586e (placeholder per chi ha offerte) vive lì, sulle
+ * riletture dello stesso cliente.
  */
 
 import test from 'node:test';
@@ -160,9 +163,9 @@ test('4cfa30c164ca: a profilo noto e vuoto, nessuno scheletro Offerta mentre res
   client.gates.get('timeline').release.resolve(TIMELINE);
   await flush();
   assert.ok(mount.textContent.includes('Ada Rossi'), 'il nome dipinge prima del profilo');
-  // A profilo ignoto lo scheletro copre l'ignoto (contratto 9b28b3bc6003).
-  assert.equal(offerBoxes(mount).length, 1, 'un segnaposto Offerta mentre il profilo è in volo');
-  assert.ok(isSkeleton(offerBoxes(mount)[0]), 'il segnaposto è uno scheletro, non un riquadro');
+  // Contratto nuovo (ANSWER supervisore 18/11 su #1014): a prima visita
+  // nessuno scheletro mentre il profilo è in volo, nemmeno con carta nota.
+  assert.equal(offerBoxes(mount).length, 0, 'a prima visita, profilo in volo: nessuno scheletro Offerta');
   // Il profilo arriva, vuoto; lo schema resta in volo: il NON PASSA.
   client.gates.get('profile').release.resolve(EMPTY_PROFILE);
   await flush(5);
@@ -184,10 +187,10 @@ test('4cfa30c164ca: con un’offerta vera il segnaposto diventa il riquadro a pr
   client.gates.get('card').release.resolve(CARD);
   client.gates.get('timeline').release.resolve(TIMELINE);
   await flush();
-  // Risposta P2 su c4e8586e, misurabile: a profilo in volo c'è il
-  // segnaposto anche quando l'offerta arriverà, mai il vuoto.
-  assert.equal(offerBoxes(mount).length, 1, 'segnaposto Offerta in attesa anche con offerta futura');
-  assert.ok(isSkeleton(offerBoxes(mount)[0]), 'il segnaposto è uno scheletro');
+  // Contratto nuovo (ANSWER supervisore 18/11 su #1014): a prima visita
+  // nessun segnaposto mentre il profilo è in volo, anche se l'offerta
+  // arriverà — il riquadro dipinge a lettura arrivata.
+  assert.equal(offerBoxes(mount).length, 0, 'a prima visita, profilo in volo: nessun segnaposto Offerta');
   client.gates.get('profile').release.resolve({
     ...EMPTY_PROFILE,
     opportunities: {

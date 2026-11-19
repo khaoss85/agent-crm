@@ -2876,6 +2876,9 @@ a.ui-connect, a.ui-connect:hover { text-decoration: none; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-actions { display: flex; gap: 14px; margin: 0; padding: 6px 0 0; border: 0; background: transparent; }
 button.bo-scheda-note-action { min-height: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pending-ink); font-size: 12.5px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 button.bo-scheda-note-action:hover { transform: none; color: var(--ink); }
+/* backlog:4cfa30c164ca: the Dettagli «Modifica» keeps its natural width like
+   the other secondary voices — the card column would stretch a bare button. */
+button.bo-scheda-details-edit { align-self: flex-start; }
 .bo-scheda-note-paper .bo-scheda-note-form.bo-scheda-note-edit { padding: 6px 0 0; }
 .bo-scheda-note-edit .bo-scheda-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .bo-scheda-note-edit .bo-scheda-form-actions button { padding: 8px 16px; }

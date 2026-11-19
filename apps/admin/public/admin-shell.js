@@ -118,7 +118,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   'stato-sync': 'Chiedi: «c\u2019è qualcosa che non si è sincronizzato?»',
 });
 
-export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
+// backlog:dd6a01de569b: no ⌘K here — the fallback also paints on unknown
+// pages at 390px, where no keyboard exists. Desktop keeps the kbd hint.
+export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa…';
 
 /**
  * Backlog 3136d15da7bd: with the space AI off the top bar must say so —

@@ -1551,6 +1551,11 @@ async function route() {
   // screen just opened. Same shared-mount race as the list and the form.
   if (target.view !== 'customer-card') {
     customerCardView.invalidate();
+    // backlog:fc09e6f16326: leaving the scheda takes its «Nota eliminata ·
+    // Annulla» toast away — never left on the next screen. A withdrawal
+    // still waiting stays waiting: back on the same customer the card shows
+    // its Annulla again until the window ends (never silently undone).
+    customerCardView.suspendNoteToast();
     // Leaving the scheda forgets its name: a later visit never paints a
     // stale one before its own read (review Muse #878).
     customerTitle = null;

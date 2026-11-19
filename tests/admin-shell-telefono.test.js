@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildShellNav, createShellView } from '../apps/admin/public/admin-shell.js';
+import { aiPlaceholder, buildShellNav, createShellView } from '../apps/admin/public/admin-shell.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -306,4 +306,18 @@ test('backlog:dd6a01de569b: a scrolled page gives the sticky bar an edge, shadow
   assert.ok(scrolled, 'the phone draws the scrolled edge');
   assert.match(scrolled[1], /box-shadow:/, 'the edge is a shadow');
   assert.doesNotMatch(scrolled[1], /border/, 'never a border: the 120px budget cannot move');
+});
+
+test('backlog:dd6a01de569b: the fallback names no ⌘K — unknown pages show it on a phone', () => {
+  // Verifier 2026-11-17: on an unknown path (#/percorso-inesistente) the bar
+  // falls back to AI_ENTRY_FALLBACK, which still names ⌘K — painted at 390px
+  // where no keyboard exists. The kbd hint keeps ⌘K on desktop.
+  assert.ok(!aiPlaceholder('percorso-inesistente').includes('⌘K'), 'the fallback names no key');
+  assert.ok(!aiPlaceholder(null).includes('⌘K'), 'no key without a screen either');
+  const { topbar, view } = mountShell();
+  view.update({ items: buildShellNav({ customerDataAvailable: true }), activeScreenId: 'percorso-inesistente', screenLabel: 'Questa pagina non esiste' });
+  const input = topbar.findAll('input')[0];
+  assert.ok(input, 'the AI bar renders on an unknown page');
+  assert.ok(!String(input.getAttribute('placeholder') ?? '').includes('⌘K'), `no ⌘K on a phone, got ${input.getAttribute('placeholder')}`);
+  assert.ok(!String(input.getAttribute('aria-label') ?? '').includes('⌘K'), 'the assistive name stays key-free too');
 });

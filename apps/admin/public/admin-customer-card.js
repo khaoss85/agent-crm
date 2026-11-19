@@ -1449,6 +1449,11 @@ export function createCustomerCardView(deps) {
   // The note writer picked under «Note» (Dan 06/11). Kept with the channel
   // filter through a re-read of the same scheda, reset on a new one.
   let noteAuthorFilter = null;
+  // backlog:d77f434ba40c: the recap's «Vedi in cronologia» link resets the
+  // timeline filter before scrolling — an active channel chip would hide
+  // the past bookings the vista advertises. Re-assigned on every
+  // timeline paint, so it always redraws the list on screen.
+  let resetTimelineFilter = null;
   // How far the conversation is opened (Mostra precedenti). Kept with the
   // channel filter when the same scheda re-reads itself, reset on a new one.
   let timelineShown = TIMELINE_PAGE;
@@ -3532,7 +3537,9 @@ export function createCustomerCardView(deps) {
     }
     if (editCtx && card?.subject?.resource === 'contact'
       && contact && typeof contact.id === 'string' && contact.id !== '') {
-      const edit = el('button', undefined, 'Modifica');
+      // backlog:4cfa30c164ca: a natural-width button like the other
+      // secondary voices — never stretched full-width by the card column.
+      const edit = el('button', 'bo-scheda-details-edit', 'Modifica');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', 'edit-details');
       // Dan 06/11: Annulla puts this card back as it was — no reload of the
@@ -4735,6 +4742,13 @@ export function createCustomerCardView(deps) {
         list.appendChild(older);
       }
     };
+    resetTimelineFilter = () => {
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+      drawChips();
+      drawList();
+    };
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -5674,6 +5688,19 @@ export function createCustomerCardView(deps) {
       return Number.isFinite(startsMs) && startsMs >= nowMs;
     });
   };
+  // backlog:d77f434ba40c: the bookings that already happened — a
+  // booked/confirmed row starting before now — so «Nessun appuntamento»
+  // never hides the past the cronologia still lists. Cancelled-only past
+  // keeps the plain empty state (its row reads «Appuntamento annullato»).
+  const pastBookedOf = (timeline) => {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    const nowMs = Date.now();
+    return items.filter((item) => {
+      if (!['booked', 'confirmed'].includes(String(item?.status ?? ''))) return false;
+      const startsMs = Date.parse(String(item?.startsAt ?? ''));
+      return Number.isFinite(startsMs) && startsMs < nowMs;
+    });
+  };
   /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
   function appointmentBody(box, next, serviceNames = null, customerName = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
@@ -5712,6 +5739,24 @@ export function createCustomerCardView(deps) {
   }
 
   // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  /**
+   * backlog:4cfa30c164ca (supervisore 18/11, prova Mac live bd3ed7f con
+   * #1014): the commercial row the offer section would paint — the same
+   * choice offer() makes below — so the skeleton gate asks the same
+   * question the section answers. Null when the customer has none (or the
+   * profile is unknown): the skeleton then stays off.
+   * @param {any} profile
+   */
+  const commercialFirst = (profile) => {
+    const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items)
+      ? profile.quotes.items : null;
+    const opportunities = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
+      ? profile.opportunities.items : null;
+    if (quotes === null && opportunities === null) return null;
+    const fromQuote = (quotes ?? []).length > 0;
+    return fromQuote ? (quotes[0] ?? null) : ((opportunities ?? [])[0] ?? null);
+  };
+
   function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
@@ -6010,7 +6055,38 @@ export function createCustomerCardView(deps) {
     }
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+      // backlog:d77f434ba40c: with past bookings only the section shows
+      // upcoming ones, so it says so («Nessun appuntamento in programma»)
+      // and the past stays one link away, in the cronologia below.
+      const past = pastBookedOf(timeline);
+      if (past.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+        return;
+      }
+      // Review #1057 (P2): the timeline hides booked rows while the listino
+      // loads, so the vista holds grey bars instead of advertising cronologia
+      // rows that are not on screen yet — like the upcoming path below.
+      if (!servicesReady) {
+        box.appendChild(uiSkeleton(doc, { width: '62%', block: true }));
+        box.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+        return;
+      }
+      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento in programma'));
+      box.appendChild(el('p', 'bo-muted',
+        `${past.length === 1 ? '1 passato' : `${past.length} passati`} in cronologia`));
+      const more = el('button', 'bo-scheda-vista', 'Vedi in cronologia');
+      more.setAttribute('type', 'button');
+      more.setAttribute('data-action', 'vista-past-appointments');
+      more.addEventListener('click', () => {
+        // Review Codex #1057 (P2): an active channel chip would hide the
+        // past bookings at the destination — back to Tutti first, so the
+        // cronologia the vista advertises is on screen after the scroll.
+        resetTimelineFilter?.();
+        let root = box;
+        while (root.parentNode) root = root.parentNode;
+        root.querySelector?.('.bo-scheda-timeline')?.scrollIntoView?.({ block: 'start' });
+      });
+      box.appendChild(more);
       return;
     }
     // backlog:26afd13657c5: the listino names the service here too — like
@@ -6212,6 +6288,11 @@ export function createCustomerCardView(deps) {
       if (!returning) {
         flushWithdrawals();
         noteEditing = null;
+      } else {
+        // backlog:fc09e6f16326: back on the same customer — a suspended
+        // «Annulla» comes back with the scheda instead of sitting on the
+        // screen the operator just left.
+        reshowSuspendedWithdrawToast(resource, id);
       }
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
@@ -6480,6 +6561,13 @@ export function createCustomerCardView(deps) {
   const withdrawalHere = (pending, resource, id) => pending.spaceId === activeSpaceId()
     && pending.resource === resource && pending.id === id;
   /**
+   * backlog:fc09e6f16326: the «Nota eliminata · Annulla» toast the router hid
+   * when the operator left the scheda for another screen. The withdrawals
+   * still wait: back on the same customer the card shows their Annulla again
+   * until the window ends, so the toast never sits on the wrong screen.
+   */
+  let noteToastSuspended = false;
+  /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
    * this id. The id belongs to a space — on the pilot it is the space
@@ -6596,6 +6684,9 @@ export function createCustomerCardView(deps) {
   function flushWithdrawals(options = {}) {
     const unsent = [...pendingWithdrawals.entries()]
       .filter(([, pending]) => pending.state === 'waiting' || pending.state === 'restored');
+    // backlog:fc09e6f16326: whatever waited is sent now — a suspended toast
+    // has nothing to come back to.
+    noteToastSuspended = false;
     if (unsent.length === 0) return;
     if (unsent.some(([, pending]) => pending.state === 'waiting')) hideToast(NOTE_TOAST_SCOPE);
     // Review Muse #883 (P2): a withdrawal restored from the previous page
@@ -6603,6 +6694,36 @@ export function createCustomerCardView(deps) {
     for (const [pendingKey, pending] of unsent) {
       pending.state = 'waiting';
       void commitWithdrawal(pendingKey, options);
+    }
+  }
+  /**
+   * backlog:fc09e6f16326: the operator left the scheda for another screen —
+   * its «Nota eliminata · Annulla» toast leaves too, never sitting on the
+   * next screen. A withdrawal still waiting stays waiting: the router calls
+   * this next to invalidate(), and the card shows the Annulla again on the
+   * way back to the same customer until the window ends.
+   */
+  function suspendNoteToast() {
+    if (noteToastSuspended) return;
+    const waiting = [...pendingWithdrawals.values()]
+      .some((pending) => pending.state === 'waiting' || pending.state === 'restored');
+    if (!waiting) return;
+    hideToast(NOTE_TOAST_SCOPE);
+    noteToastSuspended = true;
+  }
+  /**
+   * backlog:fc09e6f16326: back on the same customer while the «Annulla»
+   * window is still open — the toast the router hid on the way out comes
+   * back with its working Annulla. After the window ends nothing still waits,
+   * so nothing comes back.
+   * @param {string} resource @param {string} id
+   */
+  function reshowSuspendedWithdrawToast(resource, id) {
+    if (!noteToastSuspended) return;
+    noteToastSuspended = false;
+    for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+      if (pending.state !== 'waiting' || !withdrawalHere(pending, resource, id)) continue;
+      showWithdrawToast(pending, pendingKey);
     }
   }
   // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
@@ -6701,6 +6822,34 @@ export function createCustomerCardView(deps) {
     }
   }
   /**
+   * backlog:fc09e6f16326: the «Nota eliminata · Annulla» toast of one waiting
+   * withdrawal. Shown on «Elimina», and shown again on the way back to the
+   * same customer when the router hid it on the way out — the same window,
+   * the same Annulla, never a second timer.
+   * @param {{ resource: string, id: string, noteId: string, spaceId: string | null, state: string }} pending @param {string} pendingKey
+   */
+  function showWithdrawToast(pending, pendingKey) {
+    toast('Nota eliminata', false, {
+      scope: NOTE_TOAST_SCOPE,
+      duration: NOTE_WITHDRAW_GRACE_MS,
+      action: {
+        label: 'Annulla',
+        run: () => {
+          // The toast stays while the pointer is on it, so «Annulla» can
+          // come after the withdrawal left: say so, never a silent tap.
+          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
+            toast('La nota è già stata eliminata: non si può più annullare.', true);
+            return;
+          }
+          pendingWithdrawals.delete(pendingKey);
+          noteToastSuspended = false;
+          repaintIfShown(pending.resource, pending.id);
+          toast('Nota ripristinata');
+        },
+      },
+    });
+  }
+  /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
    * toast for the grace window, the withdrawal sent when it ends.
    * @param {string} resource @param {string} id @param {string} noteId
@@ -6719,24 +6868,8 @@ export function createCustomerCardView(deps) {
     pendingWithdrawals.set(pendingKey, pending);
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
-    toast('Nota eliminata', false, {
-      scope: NOTE_TOAST_SCOPE,
-      duration: NOTE_WITHDRAW_GRACE_MS,
-      action: {
-        label: 'Annulla',
-        run: () => {
-          // The toast stays while the pointer is on it, so «Annulla» can
-          // come after the withdrawal left: say so, never a silent tap.
-          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
-            toast('La nota è già stata eliminata: non si può più annullare.', true);
-            return;
-          }
-          pendingWithdrawals.delete(pendingKey);
-          repaintIfShown(resource, id);
-          toast('Nota ripristinata');
-        },
-      },
-    });
+    noteToastSuspended = false;
+    showWithdrawToast(pending, pendingKey);
     void wait(NOTE_WITHDRAW_GRACE_MS).then(() => commitWithdrawal(pendingKey));
   }
   /** @type {Array<any> | null} */
@@ -6953,6 +7086,13 @@ export function createCustomerCardView(deps) {
     // backlog:1a96094db71d: a part still in flight paints its section as a
     // skeleton (the same card, its title, grey bars), never an empty claim.
     const waits = (...parts) => pending !== null && parts.some((part) => pending.has(part));
+    // backlog:4cfa30c164ca: what THIS customer's previous settled read had —
+    // the offer and appointment skeletons paint only on that basis, never on
+    // a first visit (another customer's read, or none, says nothing). On a
+    // full settled paint (pending null) these stay unused.
+    const prevLoaded = lastShown !== null && lastShown.key === key ? lastShown.loaded : null;
+    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null;
+    const prevHadAppt = upcomingOf(prevLoaded?.timeline ?? null).length > 0;
     // backlog:26afd13657c5: the appointment rows wait for the listino — a
     // row never flashes the slug words while the services read is still in
     // flight. A settled read paints at once, even failed or 404 (slug
@@ -7050,21 +7190,29 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    // backlog:9b28b3bc6003 (main, #992 — supersedes the blank tried in this
-    // PR): the offer section hides itself when the customer has none, so
-    // the skeleton only covers the unknown — while the profile is still in
-    // flight. The pipelines only name the stage (the line falls back to the
-    // core stage without them), so a slow schema read never paints an
-    // «Offerta» skeleton over a customer with no offer. The placeholder also
-    // answers review P2 on c4e8586e: with-offer customers keep a placeholder
-    // instead of a blank-to-card jump. Measured by
-    // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js.
-    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
-    else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    // backlog:9b28b3bc6003 (main, #992): the offer section hides itself
+    // when the customer has none. backlog:4cfa30c164ca (supervisore 18/11,
+    // NON PASSA su Ada Rossi con #1014): the skeleton painted while the
+    // profile was still in flight, then vanished — a ghost box on every
+    // first visit. So the skeleton stays off until the read says whether
+    // an offer exists: it paints only when the previous read of THIS
+    // customer had one (a back-navigation re-read keeps its placeholder
+    // instead of a blank-to-card jump, review P2 on c4e8586e), never on a
+    // first visit. The pipelines only name the stage (the line falls back
+    // to the core stage without them), so a slow schema read never paints
+    // an «Offerta» skeleton over a customer with no offer. Measured by
+    // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js.
+    if (waits('profile')) {
+      if (prevHadOffer) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
-    // listino — a grey skeleton while the services read is in flight, never
-    // the slug words first.
-    if (waits('timeline') || !servicesReady) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    // listino — never the slug words first. backlog:4cfa30c164ca: the same
+    // ghost rule as the offer card — while the timeline or the listino are
+    // still in flight no skeleton paints unless the previous read of THIS
+    // customer had an upcoming appointment.
+    if (waits('timeline') || !servicesReady) {
+      if (prevHadAppt) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    }
     // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
     else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
     grid.appendChild(left);
@@ -7128,5 +7276,5 @@ export function createCustomerCardView(deps) {
     resetTitle();
   }
 
-  return { renderCard, invalidate };
+  return { renderCard, invalidate, suspendNoteToast };
 }
