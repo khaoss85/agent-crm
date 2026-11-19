@@ -2049,7 +2049,14 @@ export function createCustomerCardView(deps) {
       host: mount,
       customer: typeof card?.name === 'string' ? card.name : null,
       numbers,
-      ...(callAfterSave ? {} : { mode: 'save' }),
+      ...(callAfterSave ? {} : {
+        mode: 'save',
+        // backlog:28511aa43cc7: Annulla brings the composer back with the
+        // typed text — the draft survives through composerDrafts.
+        onCancel: typeof options.onCancel === 'function'
+          ? options.onCancel
+          : () => openComposer(card, navCtx, 'email'),
+      }),
       choose: async (number, held) => {
         if (held) {
           if (!callAfterSave) return null;
@@ -2970,16 +2977,26 @@ export function createCustomerCardView(deps) {
     // survives the window through composerDrafts, like through ✕.
     const missingPhone = channels.find((entry) => (entry.channel === 'whatsapp' || entry.channel === 'sms')
       && entry.recipient === null) ?? null;
+    // backlog:28511aa43cc7: the missing number reads on its own status
+    // line, never merged into the channels line below — one sentence per
+    // line, like the AI row reads them.
+    const offLines = [];
     if (missingPhone !== null) {
-      const line = el('span', undefined, `${missingPhone.label} manca perché il cliente non ha un numero. `);
+      const ownLine = el('p', 'bo-composer-off', `${missingPhone.label} manca perché il cliente non ha un numero. `);
       const add = el('button', 'bo-composer-add-phone', 'Aggiungi un numero');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'composer-add-phone');
       add.addEventListener('click', () => {
-        openNumberWindow(card, navCtx, [], { callAfterSave: false });
+        // backlog:28511aa43cc7: Annulla in the number window brings the
+        // composer back with the typed text — the draft survives through
+        // composerDrafts, like through ✕.
+        openNumberWindow(card, navCtx, [], {
+          callAfterSave: false,
+          onCancel: () => openComposer(card, navCtx, 'email'),
+        });
       });
-      line.appendChild(add);
-      offLine.appendChild(line);
+      ownLine.appendChild(add);
+      offLines.push(ownLine);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -2987,15 +3004,27 @@ export function createCustomerCardView(deps) {
     // collegato» line used to win — with nothing linked at all the one line
     // is the way to Connettori.
     const spaceUnlinked = !channels.some((entry) => entry.linked === true);
-    if (spaceUnlinked) {
-      offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
-    } else if (offLinked.length > 0) {
-      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
-      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+    if (missingPhone === null) {
+      if (spaceUnlinked) {
+        offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else if (offLinked.length > 0) {
+        offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      if (offLine.firstChild) offLines.push(offLine);
+    } else if (spaceUnlinked || offLinked.length > 0) {
+      const channelsLine = el('p', 'bo-composer-off', '');
+      if (spaceUnlinked) {
+        channelsLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else {
+        channelsLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        channelsLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      offLines.push(channelsLine);
     }
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
-    if (offLine.firstChild) body.appendChild(offLine);
+    for (const statusLine of offLines) body.appendChild(statusLine);
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
@@ -3003,7 +3032,7 @@ export function createCustomerCardView(deps) {
     // Collega when it links Connettori — the AI row then names it in words.
     const ai = composerAiRow({
       spaceId, navCtx, text,
-      connectorLink: Boolean(offLine.firstChild),
+      connectorLink: offLines.length > 0,
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
       restoreSubject: (value) => {
