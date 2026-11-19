@@ -2296,7 +2296,7 @@ export function createCustomerCardView(deps) {
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
     }
-    const panel = old ?? el('div', 'bo-scheda-note-top');
+    const panel = old ?? el('div', 'bo-scheda-composer');
     panel.setAttribute('data-composer', 'open');
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Scrivi al cliente');
