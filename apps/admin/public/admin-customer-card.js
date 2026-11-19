@@ -3537,7 +3537,9 @@ export function createCustomerCardView(deps) {
     }
     if (editCtx && card?.subject?.resource === 'contact'
       && contact && typeof contact.id === 'string' && contact.id !== '') {
-      const edit = el('button', undefined, 'Modifica');
+      // backlog:4cfa30c164ca: a natural-width button like the other
+      // secondary voices — never stretched full-width by the card column.
+      const edit = el('button', 'bo-scheda-details-edit', 'Modifica');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', 'edit-details');
       // Dan 06/11: Annulla puts this card back as it was — no reload of the
@@ -5737,6 +5739,24 @@ export function createCustomerCardView(deps) {
   }
 
   // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  /**
+   * backlog:4cfa30c164ca (supervisore 18/11, prova Mac live bd3ed7f con
+   * #1014): the commercial row the offer section would paint — the same
+   * choice offer() makes below — so the skeleton gate asks the same
+   * question the section answers. Null when the customer has none (or the
+   * profile is unknown): the skeleton then stays off.
+   * @param {any} profile
+   */
+  const commercialFirst = (profile) => {
+    const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items)
+      ? profile.quotes.items : null;
+    const opportunities = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
+      ? profile.opportunities.items : null;
+    if (quotes === null && opportunities === null) return null;
+    const fromQuote = (quotes ?? []).length > 0;
+    return fromQuote ? (quotes[0] ?? null) : ((opportunities ?? [])[0] ?? null);
+  };
+
   function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
@@ -7009,6 +7029,13 @@ export function createCustomerCardView(deps) {
     // backlog:1a96094db71d: a part still in flight paints its section as a
     // skeleton (the same card, its title, grey bars), never an empty claim.
     const waits = (...parts) => pending !== null && parts.some((part) => pending.has(part));
+    // backlog:4cfa30c164ca: what THIS customer's previous settled read had —
+    // the offer and appointment skeletons paint only on that basis, never on
+    // a first visit (another customer's read, or none, says nothing). On a
+    // full settled paint (pending null) these stay unused.
+    const prevLoaded = lastShown !== null && lastShown.key === key ? lastShown.loaded : null;
+    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null;
+    const prevHadAppt = upcomingOf(prevLoaded?.timeline ?? null).length > 0;
     // backlog:26afd13657c5: the appointment rows wait for the listino — a
     // row never flashes the slug words while the services read is still in
     // flight. A settled read paints at once, even failed or 404 (slug
@@ -7106,21 +7133,29 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    // backlog:9b28b3bc6003 (main, #992 — supersedes the blank tried in this
-    // PR): the offer section hides itself when the customer has none, so
-    // the skeleton only covers the unknown — while the profile is still in
-    // flight. The pipelines only name the stage (the line falls back to the
-    // core stage without them), so a slow schema read never paints an
-    // «Offerta» skeleton over a customer with no offer. The placeholder also
-    // answers review P2 on c4e8586e: with-offer customers keep a placeholder
-    // instead of a blank-to-card jump. Measured by
-    // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js.
-    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
-    else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    // backlog:9b28b3bc6003 (main, #992): the offer section hides itself
+    // when the customer has none. backlog:4cfa30c164ca (supervisore 18/11,
+    // NON PASSA su Ada Rossi con #1014): the skeleton painted while the
+    // profile was still in flight, then vanished — a ghost box on every
+    // first visit. So the skeleton stays off until the read says whether
+    // an offer exists: it paints only when the previous read of THIS
+    // customer had one (a back-navigation re-read keeps its placeholder
+    // instead of a blank-to-card jump, review P2 on c4e8586e), never on a
+    // first visit. The pipelines only name the stage (the line falls back
+    // to the core stage without them), so a slow schema read never paints
+    // an «Offerta» skeleton over a customer with no offer. Measured by
+    // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js.
+    if (waits('profile')) {
+      if (prevHadOffer) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
-    // listino — a grey skeleton while the services read is in flight, never
-    // the slug words first.
-    if (waits('timeline') || !servicesReady) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    // listino — never the slug words first. backlog:4cfa30c164ca: the same
+    // ghost rule as the offer card — while the timeline or the listino are
+    // still in flight no skeleton paints unless the previous read of THIS
+    // customer had an upcoming appointment.
+    if (waits('timeline') || !servicesReady) {
+      if (prevHadAppt) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    }
     // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
     else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
     grid.appendChild(left);

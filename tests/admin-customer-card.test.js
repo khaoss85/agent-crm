@@ -6374,14 +6374,20 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca (supervisore 18/11, NON PASSA con #1014 su Ada
+  // Rossi): a prima visita «Offerta» e «Prossimo appuntamento» non si
+  // disegnano finché le letture non dicono se esistono — niente scheletri
+  // fantasma che poi spariscono.
+  assert.equal(sectionTitled(mount, 'Offerta') ?? null, null, 'nessun fantasma Offerta a letture ignote');
+  assert.equal(sectionTitled(mount, 'Prossimo appuntamento') ?? null, null, 'nessun fantasma Appuntamento a letture ignote');
   // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
-  // skeleton covers only the unknown — while the profile is still in
-  // flight. The phantom was a skeleton held by the slow schema read after
-  // the profile was already known empty; that case paints nothing (see
-  // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js).
+  // skeleton paints only when the previous read of this customer had one —
+  // never on a first visit, and never held by the slow schema read after
+  // the profile was already known empty (see
+  // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
