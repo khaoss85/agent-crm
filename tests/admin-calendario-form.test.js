@@ -398,6 +398,54 @@ test('form: «anna» keeps only rows with a visible correspondence', () => {
   assert.equal(customerNameExplains(magrini, ['name'], 'anna'), false, '«anna» is nowhere in «Massimiliano Magrini»');
 });
 
+// backlog:f6b9d189 (Mac 19/11 sul live b22bc60 con #985: «esempio.dan»
+// elencava «Daniele …@esempio.it» senza nessun indizio — «dan» stava nel
+// nome e toglieva l'indizio, mentre «esempio» combaciava solo sul dominio
+// nascosto). La riga resta solo con il motivo che mostra TUTTA la ricerca.
+test('form: Mac «esempio.dan» never reads bare when a word matched off the name', () => {
+  // Server blame su questa testa (packages/customer-data searchMatchFields).
+  const daniele = { name: 'Daniele Prova', email: 'prova40@esempio.it', phone: { value: '+393331234567' } };
+  const blame = ['name', 'email'];
+  assert.equal(customerNameExplains(daniele, blame, 'esempio.dan'), false, '«esempio» is nowhere in the shown name');
+  assert.equal(customerResultVisible(daniele, blame, 'esempio.dan'), true, 'the row stays: the email matched too');
+  assert.ok(customerMatchReason(daniele, blame, 'esempio.dan').includes('esempio'), 'the motive shows the domain word');
+});
+
+// backlog:f6b9d189 (Mac 19/11: «-note@» dava righe con l'indizio mascherato
+// «pr…@» che nascondeva «note»). Rifatto sulla testa: il motivo ancorato
+// mostra il pezzo combaciato dentro la parte mascherata.
+test('form: Mac «-note@» shows the matched piece inside the masked local part', () => {
+  const rossi = { name: 'Daniele Rossi', email: 'prenote@esempio.it', phone: null };
+  const blame = ['email'];
+  assert.equal(customerResultVisible(rossi, blame, '-note@'), true, 'the row stays: the email matched');
+  const reason = customerMatchReason(rossi, blame, '-note@');
+  assert.ok(reason.includes('note'), `the motive shows the searched piece, got: ${reason}`);
+  assert.ok(!reason.includes('prenote@'), `never the whole address, got: ${reason}`);
+});
+
+// backlog:f6b9d189 (Mac 19/11: «note@esempio» senza indizio — «note» stava
+// nel nome e toglieva l'indizio, mentre «esempio» combaciava solo sul
+// dominio nascosto). Come «esempio.dan»: il nome spiega solo TUTTA la ricerca.
+test('form: Mac «note@esempio» never reads bare when a word matched off the name', () => {
+  const maria = { name: 'Note di Maria', email: 'maria@esempio.it', phone: null };
+  const blame = ['name', 'email'];
+  assert.equal(customerNameExplains(maria, blame, 'note@esempio'), false, '«esempio» is nowhere in the shown name');
+  assert.equal(customerResultVisible(maria, blame, 'note@esempio'), true, 'the row stays: the email matched too');
+  assert.ok(customerMatchReason(maria, blame, 'note@esempio').includes('esempio'), 'the motive shows the domain word');
+});
+
+// backlog:f6b9d189 (Mac 19/11: con «ova40» il pezzo stava in «pr…@», la parte
+// mascherata dell'email). L'indizio mostra quel pezzo senza svelare il resto:
+// mai l'intera parte locale quando il pezzo la chiude.
+test('form: Mac «ova40» shows only the matched piece, never the whole local part', () => {
+  const daniele = { name: 'Daniele Prova', email: 'prova40@esempio.it', phone: { value: '+393331234567' } };
+  const blame = ['email'];
+  assert.equal(customerResultVisible(daniele, blame, 'ova40'), true, 'the row stays: the email matched');
+  const reason = customerMatchReason(daniele, blame, 'ova40');
+  assert.ok(reason.includes('ova40'), `the motive shows the searched piece, got: ${reason}`);
+  assert.ok(!reason.includes('prova40'), `the motive never publishes the whole local part, got: ${reason}`);
+});
+
 test('form: the visible-correspondence rule also holds without the server reason', () => {
   const magrini = { name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it', company: { name: 'Pizzeria Anna' } };
   assert.equal(customerResultVisible(magrini, null, 'anna'), false, 'an older server row matched through its company leaves the box');

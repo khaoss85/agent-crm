@@ -1280,9 +1280,11 @@ function customerWordEndIn(folded, word) {
  * backlog:f6b9d189 — the email motive anchored on the searched words: the
  * smallest prefix still holding the end of a matched word
  * («mario.anna…@example.it» for «anna»), else a trailing window of at most
- * ten characters. Never the whole local part on its own: the window always
- * ends with «…» (or is the short prefix the homonym hints already print),
- * and the domain stays whole. Null when no searched word sits in the
+ * ten characters. When the match runs to the end of the local part, only
+ * the matched word reads («…ova40…@esempio.it» for «ova40» on «prova40»),
+ * never the whole local part on its own: the window always ends with «…»
+ * (or is the short prefix the homonym hints already print), and the domain
+ * stays whole. Null when no searched word sits in the
  * address — the row then has no visible email correspondence.
  * @param {any} item one `/api/customer-data/customers` item
  * @param {string[]} textWords the folded text words of the query
@@ -1292,13 +1294,20 @@ function customerAnchoredEmail(item, textWords, digitWords) {
   const split = customerHintSplitEmail(item);
   if (split === null) return null;
   const { folded, origEndOf } = foldCustomerTextMapped(split.local);
-  const end = [...textWords, ...digitWords]
-    .map((word) => customerWordEndIn(folded, word))
-    .find((found) => found >= 0) ?? -1;
+  const winner = [...textWords, ...digitWords]
+    .find((word) => customerWordEndIn(folded, word) >= 0) ?? null;
+  const end = winner === null ? -1 : customerWordEndIn(folded, winner);
   if (end >= 0) {
     const origEnd = origEndOf(end);
-    if (origEnd <= 12) return `${split.local.slice(0, origEnd)}…@${split.domain}`;
-    return `…${split.local.slice(Math.max(0, origEnd - 10), origEnd)}…@${split.domain}`;
+    if (origEnd < split.local.length) {
+      if (origEnd <= 12) return `${split.local.slice(0, origEnd)}…@${split.domain}`;
+      return `…${split.local.slice(Math.max(0, origEnd - 10), origEnd)}…@${split.domain}`;
+    }
+    // The match closes the local part («ova40» on «prova40»): a plain
+    // prefix would publish the whole local part, so only the matched word
+    // reads, with «…» on both sides — the piece, never the rest.
+    const start = origEndOf(Math.max(0, end - winner.length));
+    return `…${split.local.slice(start, origEnd)}…@${split.domain}`;
   }
   // The blame can sit on the domain («e» in «bea@example.com»): the motive
   // then falls back to the minimal prefix, whose whole domain stays
@@ -1361,10 +1370,13 @@ export function customerLocalBlame(item, query = '') {
 
 /**
  * backlog:f6b9d189 — whether the shown name explains a name blame: the
- * blame must name the field AND the searched words must visibly sit in
- * the name. A name blame the name cannot show (or a channel-only query,
- * which blames nothing) explains nothing — the row then needs a motive
- * from another field or leaves the box.
+ * blame must name the field AND every searched text word must visibly sit
+ * in the name. One word is not enough («esempio.dan» on «Daniele …» read
+ * bare while «esempio» matched only the hidden domain): the row then needs
+ * a motive from another field. Digit words belong to the held phone, never
+ * to the bare name. A name blame the name cannot show (or a channel-only
+ * query, which blames nothing) explains nothing — the row then needs a
+ * motive from another field or leaves the box.
  * @param {any} item one `/api/customer-data/customers` item
  * @param {unknown} match the explained fields, if the server sent them
  * @param {unknown} query the typed search text
@@ -1372,9 +1384,10 @@ export function customerLocalBlame(item, query = '') {
 export function customerNameExplains(item, match, query = '') {
   if (!Array.isArray(match) || !match.includes('name')) return false;
   if (typeof item?.name !== 'string' || item.name === '') return false;
-  const { textWords, digitWords } = splitCustomerNeedle(query);
-  if (textWords.length === 0 && digitWords.length === 0) return false;
-  return customerFieldShows(item.name, textWords, digitWords);
+  const { textWords } = splitCustomerNeedle(query);
+  if (textWords.length === 0) return false;
+  const words = customerTextWords(item.name);
+  return textWords.every((word) => customerWordHitIn(words, word));
 }
 
 /**
