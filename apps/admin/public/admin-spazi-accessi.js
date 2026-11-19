@@ -1295,9 +1295,22 @@ export function createSpaziAccessiView(deps) {
         state.newSpaceMenuOpen = false;
       }
       render();
-      // Same promise as the new-space toggle: closing from the toggle keeps
-      // keyboard focus on it.
-      if (wasMenuOpen) focusToggle(inviteToggleSelector);
+      // Opening paints the menu new: move keyboard focus to its first voice
+      // (backlog:5eea67c89cae — opening left focus on the page), so Esc and
+      // Tab continue from inside the menu. Closing from the toggle replaces
+      // the toggle itself: keep keyboard focus on it.
+      if (wasMenuOpen) {
+        focusToggle(inviteToggleSelector);
+      } else if (state.inviteMenuOpen) {
+        const openedMenu = mount.querySelector('div[aria-label="Invita persona"]');
+        const firstVoice = openedMenu && typeof openedMenu.querySelector === 'function'
+          ? openedMenu.querySelector('button')
+          : null;
+        if (firstVoice && typeof firstVoice.focus === 'function') firstVoice.focus();
+        else focusToggle(inviteToggleSelector);
+      } else {
+        focusToggle(inviteToggleSelector);
+      }
     });
     inviteToggle.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(inviteToggleSelector);
@@ -1326,7 +1339,11 @@ export function createSpaziAccessiView(deps) {
         state.inviteMenuOpen = false;
         state.inviteOpen = true;
         render();
-        focusToggle(inviteToggleSelector);
+        // backlog:5eea67c89cae: the inline form opens in place below — focus
+        // its first field, so keyboard entry continues there, not on the page.
+        const firstField = mount.querySelector('input[aria-label="Identificativo della persona da invitare"]');
+        if (firstField && typeof firstField.focus === 'function') firstField.focus();
+        else focusToggle(inviteToggleSelector);
       });
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);

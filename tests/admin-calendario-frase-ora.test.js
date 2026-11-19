@@ -258,6 +258,44 @@ test('a name outside the team leaves «Persona del team» empty', async () => {
   assert.equal(field(mount, 'end').value, '15:30', 'the draft hours still fill the form');
 });
 
+test('Annulla on a draft that opened the panel closes «Nuovo appuntamento» too (backlog:f0a09f1b)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount);
+  const pop = () => mount.querySelector('[data-role="manual-pop"]');
+  assert.ok(pop(), 'the manual panel paints');
+  assert.equal(pop().getAttribute('hidden'), null, 'the draft opened «Nuovo appuntamento»');
+  button(mount, 'Annulla').dispatch('click');
+  await flush();
+  assert.equal(mount.querySelector('.cal-draft'), null, 'the draft is gone');
+  assert.ok(pop(), 'the panel shell stays in the DOM');
+  assert.notEqual(pop().getAttribute('hidden'), null, '«Annulla» closed the panel: no empty panel stays open');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'giovedì alle 15 con Guido', 'the phrase stays, to fix and search again');
+});
+
+test('Annulla keeps «Nuovo appuntamento» open when it holds the operator values (backlog:f0a09f1b)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await view.render();
+  await flush();
+  for (const [name, value] of [['date', '2026-11-13'], ['start', '10:00'], ['end', '11:00']]) {
+    field(mount, name).value = value;
+    field(mount, name).dispatch('input');
+  }
+  await askPhrase(view, mount);
+  button(mount, 'Annulla').dispatch('click');
+  await flush();
+  assert.equal(mount.querySelector('.cal-draft'), null, 'the draft is gone');
+  const pop = mount.querySelector('[data-role="manual-pop"]');
+  assert.ok(pop, 'the manual panel paints');
+  assert.equal(pop.getAttribute('hidden'), null, 'the panel stays open around the operator values');
+  assert.deepEqual(['date', 'start', 'end'].map((name) => field(mount, name).value), ['2026-11-13', '10:00', '11:00']);
+});
+
 test('a name outside the team keeps the person the operator had chosen', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

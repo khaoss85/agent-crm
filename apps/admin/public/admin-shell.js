@@ -1531,7 +1531,9 @@ export function shellScreenFor(target) {
     case 'work-task': return { id: null, label: 'Attività' };
     case 'marketing': return { id: null, label: 'Proposte' };
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
-    case 'quotes': return { id: null, label: 'Preventivi' };
+    // backlog:cab8e663a7d8: la lista Preventivi vive sulla stessa board del
+    // preventivo — Pipeline resta evidenziata anche su #/quotes.
+    case 'quotes': return { id: 'pipeline', label: 'Preventivi' };
     case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
     // backlog:bfc070243427: the quote lives on the offer's board — Pipeline
     // stays highlighted on the preventivo, like on the offer.

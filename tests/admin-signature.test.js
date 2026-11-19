@@ -292,3 +292,31 @@ test('ef92f728: no English, technical id or developer note in any quote state', 
     }
   }
 });
+
+test('backlog:0550bea56168: the signature-off line never tells the titolare to ask themself', async () => {
+  const offClient = () => ({
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { commercial: SCHEMA.commercial };
+      if (path.startsWith('/api/modules/quote/records/')) return APPROVED_QUOTE;
+      if (path.startsWith('/api/modules/price-book/records')) return { items: [] };
+      return { items: [] };
+    },
+  });
+  const renderOff = async (role, navigate) => {
+    const mount = createMount();
+    await createQuoteView({ doc: createFakeDocument(), mount, client: offClient(), role, navigate }).renderQuoteDetail('q1');
+    return mount;
+  };
+  const navigated = [];
+  const owner = await renderOff(() => 'owner', (hash) => navigated.push(hash));
+  assert.ok(!owner.textContent.includes('chiedi al titolare'), owner.textContent);
+  assert.ok(owner.textContent.includes('Puoi accenderla da Spazi e accessi'), 'the titolare reads what they can do');
+  const link = owner.findAll('a').find((node) => node.getAttribute('href') === '#/spazi-accessi');
+  assert.ok(link, 'the titolare gets the way there, one click');
+  link.dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(navigated, ['#/spazi-accessi']);
+
+  const operator = await renderOff(() => 'operator');
+  assert.ok(operator.textContent.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'), 'the others still read whom to ask');
+});

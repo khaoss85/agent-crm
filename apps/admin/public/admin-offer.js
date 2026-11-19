@@ -482,6 +482,25 @@ export function createOfferDetail(deps) {
     let bookRead = Promise.resolve({ books: null, error: null });
     /** @type {Array<any>} */
     let people = [];
+    /**
+     * backlog:2afc9e94: the history panel a fresh link mint appends its row
+     * to at once — no reload to see it — while a reuse appends nothing.
+     * @type {any}
+     */
+    let historyPanelNode = null;
+    /** @type {any} */
+    let historyEmptyNode = null;
+    const appendHistoryRow = (what) => {
+      if (historyPanelNode === null || token !== renderToken) return;
+      if (historyEmptyNode !== null && historyEmptyNode.parentNode !== null) {
+        historyEmptyNode.parentNode.removeChild(historyEmptyNode);
+        historyEmptyNode = null;
+      }
+      const row = el('p', 'history-event');
+      row.appendChild(el('span', 'history-when', italianDateTime(new Date().toISOString()) ?? '—'));
+      row.appendChild(el('span', 'history-what', what));
+      historyPanelNode.appendChild(row);
+    };
     try {
       // backlog:94eabbd4762f (pilota 13/11: 1,8-4 s dal clic, 4,6-5,9 s da
       // link diretto): every read of the page leaves at once, the offer
@@ -543,6 +562,7 @@ export function createOfferDetail(deps) {
         hideOpen: Boolean(commercialBlock(schema))
           && quote?.id === latestQuote(quotes.rows)?.id,
         offerId,
+        onLinkMinted: appendHistoryRow,
       }));
       auditItems = audit.items;
       auditUnreadable = audit.unreadable;
@@ -709,7 +729,8 @@ export function createOfferDetail(deps) {
         ? `Gli ultimi ${AUDIT_LIMIT} eventi sono solo spostamenti sulla board: quelli precedenti non sono mostrati.`
         : `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     } else if (!auditUnreadable && events.length === 0) {
-      historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
+      historyEmptyNode = el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.');
+      historyPanel.appendChild(historyEmptyNode);
     }
     for (const entry of events) {
       const line = historyLine(entry, schema, record, people);
@@ -722,6 +743,8 @@ export function createOfferDetail(deps) {
     // only server audit — a minted link never lands here as «Offerta
     // inviata». The link state stays in the share box below, where the
     // operator pressed.
+    // backlog:2afc9e94: from here a fresh mint appends its row at once.
+    historyPanelNode = historyPanel;
     page.appendChild(historyPanel);
     // The page is complete when every place has filled (the shell's badges
     // wait for this, backlog:94eabbd4762f).
@@ -1159,7 +1182,8 @@ export function createOfferDetail(deps) {
    * listed (the server keeps it, the page never read it), and the public page
    * behind the URL is the pilot's own route (its own PR with a contract test).
    */
-  function paintShareBox(panel, quote, token) {
+  function paintShareBox(panel, quote, token, hooks = {}) {
+    const onLinkMinted = typeof hooks.onLinkMinted === 'function' ? hooks.onLinkMinted : () => {};
     const box = el('div', 'offer-share');
     const button = el('button', 'secondary', 'Invia offerta');
     button.setAttribute('type', 'button');
@@ -1178,8 +1202,10 @@ export function createOfferDetail(deps) {
     let linkOp = 0;
     const showLink = (url, expiresAt, reused) => {
       line.setAttribute('class', 'bo-muted offer-share-line');
-      line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
-      line.appendChild(el('span', 'bo-scheda-sep', ' '));
+      // backlog:2afc9e94: a real space after the message's period — the
+      // `bo-scheda-sep` span stays visually hidden (screen-reader only), so
+      // the line read «rifiutare.Apri il link» with no gap.
+      line.textContent = `${offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url} `;
       const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già pronto' : 'Apri il link');
       open.setAttribute('href', url);
       open.setAttribute('data-action', 'offer-share-open');
@@ -1235,6 +1261,9 @@ export function createOfferDetail(deps) {
           return;
         }
         showLink(url, expiresAt, fresh === null);
+        // backlog:2afc9e94: a fresh mint paints its cronologia row at once —
+        // no reload to see it — while a reuse paints no «Link creato» row.
+        if (fresh !== null) onLinkMinted('Link creato');
         toast(fresh === null ? 'Link già pronto: è lo stesso di prima.' : 'Link pronto: invialo dal composer della scheda.');
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
@@ -1254,7 +1283,12 @@ export function createOfferDetail(deps) {
       }
     };
     button.addEventListener('click', () => { void send(); });
-    box.appendChild(button);
+    // backlog:2afc9e94: the box buttons share one actions row — the same
+    // flex-gap row the other groups use — so «Sì, crea un nuovo link» and
+    // «Annulla» never stick together with no gap.
+    const actionsRow = el('div', 'actions');
+    actionsRow.appendChild(button);
+    box.appendChild(actionsRow);
     box.appendChild(line);
     box.appendChild(state);
     box.__share = send;
@@ -1279,7 +1313,7 @@ export function createOfferDetail(deps) {
       regenButton.textContent = 'Crea un nuovo link';
       regenButton.setAttribute('data-action', 'offer-share-regenerate');
       if (regenCancelShown) {
-        box.removeChild(regenCancel);
+        actionsRow.removeChild(regenCancel);
         regenCancelShown = false;
       }
     };
@@ -1323,6 +1357,7 @@ export function createOfferDetail(deps) {
         shareLinks.set(quote.id, { url, expiresAt });
         disarmRegen();
         showLink(url, expiresAt, false);
+        onLinkMinted('Nuovo link creato');
         state.textContent = 'Nuovo link pronto: il vecchio non funziona più. Invialo dal composer della scheda.';
         toast('Nuovo link pronto: il vecchio non funziona più.');
       } catch (error) {
@@ -1367,7 +1402,7 @@ export function createOfferDetail(deps) {
         regenButton.setAttribute('data-action', 'offer-share-regenerate-confirm');
         line.setAttribute('class', 'bo-muted offer-share-line');
         line.textContent = 'Il vecchio link smetterà di funzionare. Continuare?';
-        box.appendChild(regenCancel);
+        actionsRow.appendChild(regenCancel);
         regenCancelShown = true;
         return;
       }
@@ -1376,7 +1411,7 @@ export function createOfferDetail(deps) {
     regenCancel.addEventListener('click', () => {
       disarmRegen();
     });
-    box.appendChild(regenButton);
+    actionsRow.appendChild(regenButton);
     const known = shareLinks.get(quote.id);
     if (known) showLink(known.url, known.expiresAt, true);
     panel.appendChild(box);
@@ -1387,7 +1422,7 @@ export function createOfferDetail(deps) {
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
-   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string}} [options]
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string, onLinkMinted?: (what: string) => void}} [options]
    */
   async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
@@ -1409,7 +1444,7 @@ export function createOfferDetail(deps) {
     // backlog:7fa422415232: only an approved quote has a version to share —
     // the server refuses the action on any other state with 409.
     if (quote.status === 'approved' && typeof quote.id === 'string' && quote.id !== '') {
-      paintShareBox(panel, quote, token);
+      paintShareBox(panel, quote, token, { onLinkMinted: options.onLinkMinted });
     }
 
     let lines = [];

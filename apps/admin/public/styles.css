@@ -2648,6 +2648,9 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-profilo-name-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .bo-profilo-name-row .bo-profilo-name { flex: 1 1 auto; min-width: 0; }
 button.bo-profilo-edit-open { flex: none; align-self: center; }
+/* backlog:3ff581d8f8ce: Salva e Annulla stanno in riga con lo stesso respiro
+ * delle altre azioni (come offer-edit-actions), mai attaccati. */
+.bo-profilo-edit-actions { display: flex; align-items: center; gap: 10px; }
 .bo-profilo-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
 .bo-profilo-pill, .ui-channel-state {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px;

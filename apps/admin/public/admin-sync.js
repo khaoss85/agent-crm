@@ -26,6 +26,7 @@ import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } fr
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
+import { romeDayKey } from './admin-oggi.js';
 import {
   CHANNEL_STATE_LABELS,
   channelConnectRoute,
@@ -926,6 +927,33 @@ export function syncFeedItems(activity) {
   return items;
 }
 
+/**
+ * Empty-state text of the "in tempo reale" card (backlog:f0063dc75b7f): the
+ * feed only carries the latest events, while the channel table keeps the
+ * freshest update per channel. With a channel updated on the Rome today the
+ * card must not claim «Nessuna attività»: it points to the Canali table,
+ * like the fix banner does. Only with nothing updated today the quiet line
+ * stays.
+ * @param {any} activity the GET /api/connectors/activity payload, possibly null.
+ * @param {number} [nowMs]
+ */
+export function syncFeedEmptyText(activity, nowMs = Date.now()) {
+  const today = romeDayKey(new Date(nowMs));
+  if (today !== null && activity !== null && typeof activity === 'object') {
+    const instants = [];
+    if (typeof activity.lastActivityAt === 'string' && activity.lastActivityAt !== '') {
+      instants.push(activity.lastActivityAt);
+    }
+    for (const row of syncChannelTable(activity, nowMs)) {
+      if (typeof row.lastAt === 'string' && row.lastAt !== '') instants.push(row.lastAt);
+    }
+    if (instants.some((at) => romeDayKey(at) === today)) {
+      return 'Gli aggiornamenti di oggi sono nella tabella Canali qui sotto.';
+    }
+  }
+  return 'Nessuna attività sincronizzata oggi.';
+}
+
 import { el, uiBusy, uiChannelState, uiConnect } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /** Stato sync readings → the shared channel-state tones (backlog:8618ad3f72db). */
@@ -1421,7 +1449,7 @@ export function createSyncView(deps) {
     box.appendChild(head);
     const items = syncFeedItems(activity);
     if (items.length === 0) {
-      box.appendChild(el(doc, 'p', 'bo-sync-note', 'Nessuna attività sincronizzata oggi.'));
+      box.appendChild(el(doc, 'p', 'bo-sync-note', syncFeedEmptyText(activity, Date.now())));
       return;
     }
     const list = el(doc, 'div', 'bo-sync-feed');

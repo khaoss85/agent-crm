@@ -23,7 +23,7 @@ import {
   formatCustomValue,
   saveFieldValue,
 } from './admin-custom-fields.js';
-import { readBookingServices } from './admin-calendario.js';
+import { cancelReasonFrom, cancelRefusalText, readBookingServices } from './admin-calendario.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -3906,7 +3906,9 @@ export function createCustomerCardView(deps) {
               enriched(box, fresh, reload, null, ctx, null);
             }
             if (before === after) {
-              toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+              // backlog:612317ae1251: information, never the error colour —
+              // nothing failed, there is only nothing to extract from.
+              toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.');
             } else {
               toast('Dati aggiornati');
             }
@@ -3916,8 +3918,17 @@ export function createCustomerCardView(deps) {
           }
           return undefined;
         }
-        return uiBusy(refresh, 'Estraggo…', async () => {
+        // backlog:612317ae1251: one state while the run flies — the
+        // «Estraggo…» line with role=status below. The button stays
+        // «Aggiorna» (off, never relabelled), so the section never shows
+        // two states and two «Estraggo…» at once.
+        refresh.setAttribute('disabled', 'disabled');
+        refresh.setAttribute('aria-busy', 'true');
         busy = true;
+        const restoreRefresh = () => {
+          refresh.removeAttribute('disabled');
+          refresh.removeAttribute('aria-busy');
+        };
         // The paint this click was painted on: landing anywhere else means
         // a repaint detached this box while the run flew.
         const painted = lastShown;
@@ -4014,9 +4025,10 @@ export function createCustomerCardView(deps) {
             toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
           }
         } finally {
+          restoreRefresh();
           release();
         }
-        });
+        return undefined;
       });
       box.appendChild(refresh);
       // Backlog e5e3e886, VERIFIER_BACK 2026-11-18: only a real extract run
@@ -4503,7 +4515,7 @@ export function createCustomerCardView(deps) {
           mark.setAttribute('aria-hidden', 'true');
           row.appendChild(mark);
           const paper = el('div', 'bo-scheda-note-paper');
-          paper.appendChild(el('p', 'bo-scheda-entry-head', item.title));
+          paper.appendChild(el('p', 'bo-scheda-entry-head', appointmentRowHead(item)));
           row.appendChild(paper);
           list.appendChild(row);
           continue;
@@ -4514,7 +4526,7 @@ export function createCustomerCardView(deps) {
           mark.setAttribute('aria-hidden', 'true');
           row.appendChild(mark);
           const paper = el('div', 'bo-scheda-note-paper');
-          paper.appendChild(el('p', 'bo-scheda-entry-head', item.title));
+          paper.appendChild(el('p', 'bo-scheda-entry-head', appointmentRowHead(item)));
           if (item.reason) paper.appendChild(el('p', 'bo-scheda-note-body', `Motivo: ${item.reason}`));
           row.appendChild(paper);
           list.appendChild(row);
@@ -5757,7 +5769,7 @@ export function createCustomerCardView(deps) {
     return fromQuote ? (quotes[0] ?? null) : ((opportunities ?? [])[0] ?? null);
   };
 
-  function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null, cancelCtx = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
     if (timelineError) {
@@ -5771,7 +5783,90 @@ export function createCustomerCardView(deps) {
     if (upcoming.length === 0) return false;
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
     appointmentBody(box, upcoming[0], serviceNames, customerName);
+    // backlog:d29bc93caf92: the booking made from the scheda is cancelled
+    // from the scheda — «Annulla» under «Prossimo appuntamento».
+    appointmentCancel(box, upcoming[0], cancelCtx);
     return true;
+  }
+
+  /**
+   * backlog:d29bc93caf92: «Annulla» under «Prossimo appuntamento». The
+   * question asks with the optional reason and posts the Calendario's own
+   * POST /api/appointments/cancel (cancelReasonFrom/cancelRefusalText),
+   * then re-reads the timeline like a booking does. Without a known
+   * appointment id or customer the voice stays out, never a dead button.
+   * @param {any} box @param {any} next @param {{ resource: string, id: string } | null} cancelCtx
+   */
+  function appointmentCancel(box, next, cancelCtx) {
+    const apptId = typeof next?.id === 'string' && next.id !== '' ? next.id : null;
+    const owner = cancelCtx !== null && typeof cancelCtx === 'object'
+      && typeof cancelCtx.resource === 'string' && cancelCtx.resource !== ''
+      && typeof cancelCtx.id === 'string' && cancelCtx.id !== '' ? cancelCtx : null;
+    if (apptId === null || owner === null) return;
+    const ask = el('button', 'bo-scheda-appt-cancel', 'Annulla');
+    ask.setAttribute('type', 'button');
+    ask.setAttribute('data-action', 'cancel-appointment');
+    box.appendChild(ask);
+    /** @type {any | null} */
+    let confirmBox = null;
+    ask.addEventListener('click', () => {
+      if (confirmBox !== null && confirmBox.parentNode === box) return;
+      confirmBox = el('div', 'bo-scheda-appt-cancel-ask');
+      confirmBox.appendChild(el('p', 'bo-scheda-appt-cancel-q', 'Annullare l\u2019appuntamento?'));
+      const reason = el('input', 'bo-offer-input');
+      reason.setAttribute('name', 'appointment-cancel-reason');
+      reason.setAttribute('placeholder', 'Motivo (facoltativo)');
+      reason.setAttribute('autocomplete', 'off');
+      confirmBox.appendChild(reason);
+      const row = el('p', 'bo-scheda-appt-cancel-row');
+      const yes = el('button', 'primary', 'Sì, annulla');
+      yes.setAttribute('type', 'button');
+      yes.setAttribute('data-action', 'cancel-appointment-yes');
+      const no = el('button', undefined, 'Indietro');
+      no.setAttribute('type', 'button');
+      no.setAttribute('data-action', 'cancel-appointment-no');
+      row.appendChild(yes);
+      row.appendChild(no);
+      confirmBox.appendChild(row);
+      const failure = el('p', 'field-error', '');
+      failure.setAttribute('role', 'alert');
+      confirmBox.appendChild(failure);
+      box.appendChild(confirmBox);
+      no.addEventListener('click', () => {
+        if (confirmBox !== null && confirmBox.parentNode === box) box.removeChild(confirmBox);
+        confirmBox = null;
+        if (typeof ask.focus === 'function') ask.focus();
+      });
+      yes.addEventListener('click', () => uiBusy(yes, 'Annullo…', async () => {
+        const spaceId = activeSpaceId();
+        if (spaceId === null) {
+          failure.textContent = 'Scegli uno spazio in alto, poi annulla l\u2019appuntamento.';
+          return;
+        }
+        try {
+          const answer = await client.request('/api/appointments/cancel', {
+            method: 'POST',
+            idempotencyKey: submissions.issueKey(),
+            body: JSON.stringify({ id: apptId, reason: cancelReasonFrom(reason.value), spaceId }),
+          });
+          const pushFailed = answer?.pushError != null;
+          // backlog:27923678: like the Calendario, the Accordo cancellation
+          // stands even when Google was unreachable — the toast then names
+          // the manual removal on Google, never a silent divergence.
+          toast(pushFailed
+            ? 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.'
+            : 'Appuntamento annullato.', pushFailed);
+          if (shownKey === `${owner.resource}/${owner.id}`) void refreshParts(owner.resource, owner.id, ['timeline']);
+        } catch (error) {
+          failure.textContent = cancelRefusalText(error)
+            ?? humanWriteError(error, {
+              failed: 'Non sono riuscito ad annullare l\u2019appuntamento: è ancora in programma. Riprova.',
+              notComposed: 'Il calendario non è composto in questo spazio.',
+            });
+        }
+      }));
+      if (typeof reason.focus === 'function') reason.focus();
+    });
   }
 
   /**
@@ -5792,6 +5887,7 @@ export function createCustomerCardView(deps) {
           id: `appointment-cancelled:${String(item?.id ?? '')}`,
           entry: 'appointment-cancelled',
           occurredAt: typeof item?.decidedAt === 'string' && item.decidedAt !== '' ? item.decidedAt : item?.startsAt,
+          startsAt: item?.startsAt ?? null,
           title: ['Appuntamento annullato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: reason !== '' ? reason : null,
         };
@@ -5821,10 +5917,25 @@ export function createCustomerCardView(deps) {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
           occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
+          startsAt: item?.startsAt ?? null,
           title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: null,
         };
       });
+  }
+
+  /**
+   * backlog:612317ae1251: the appointment row head — the slot title plus
+   * the hour of the event (booking or cancellation), like the note and
+   * offer rows that always name their hour. When the event falls back to
+   * the slot itself the hour is already in the title, never twice.
+   * @param {{ title?: unknown, occurredAt?: unknown, startsAt?: unknown }} item
+   */
+  function appointmentRowHead(item) {
+    const title = typeof item?.title === 'string' ? item.title : '';
+    const eventWhen = timeParts(item?.occurredAt);
+    const slotWhen = timeParts(item?.startsAt);
+    return eventWhen !== null && eventWhen !== slotWhen ? `${title} · ${eventWhen}` : title;
   }
 
   /**
@@ -7214,7 +7325,7 @@ export function createCustomerCardView(deps) {
       if (prevHadAppt) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
     }
     // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
-    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null, { resource, id });
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
