@@ -1623,7 +1623,8 @@ export function createCustomerCardView(deps) {
     const spaceId = activeSpaceId();
     const loaded = {
       card: null, cardError: null, timeline: null, timelineError: null,
-      profile: null, profileError: null, enrichment: null, enrichmentError: null,
+      profile: null, profileError: null, companyProfile: null,
+      enrichment: null, enrichmentError: null,
       calls: null, callsError: null, fieldDefs: null, fieldDefsError: null,
       fieldValues: null, fieldValuesError: null, pipelines: [],
       services: null, servicesError: null,
@@ -1700,7 +1701,25 @@ export function createCustomerCardView(deps) {
     // catches), so this await always runs: a failed card still reads the
     // sections behind it, exactly like the single wave did before.
     const wave2 = wave2gate.then(() => Promise.all([
-      PART_READS.profile(encoded).then((read) => take('profile', read)),
+      PART_READS.profile(encoded).then((read) => {
+        take('profile', read);
+        return read;
+      }).then((read) => {
+        // Voce 4ec1fe6d (merge con main 19/11): il link alle offerte
+        // dell'azienda si dipinge solo se l'azienda ha offerte — la
+        // lettura segue il profilo e solo per una scheda persona senza
+        // offerte proprie. Fallisce chiusa (null): nessun link, mai un
+        // riquadro fantasma (voce 4cfa30c164ca).
+        const person = nullOn404(read).value;
+        const company = person?.identity?.company;
+        const companyId = typeof company?.id === 'string' && company.id !== '' ? company.id : null;
+        if (resource !== 'contact' || read.error || commercialFirst(person) !== null || companyId === null) {
+          take('companyProfile', { value: null, error: null });
+          return;
+        }
+        return settle(() => client.request(`/api/customer-data/profile/company/${encodeURIComponent(companyId)}`))
+          .then((companyRead) => take('companyProfile', companyRead));
+      }),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
@@ -5239,7 +5258,48 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
-  function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
+  /**
+   * Voce 4ec1fe6d (verifica Mac 13/11 17:49Z): il link alle offerte
+   * dell'azienda collegata per una scheda persona senza offerte proprie.
+   * Il profilo dietro la scheda persona tiene solo i record del contatto
+   * (voce 1e89d516cfc3: un'offerta dell'azienda su ogni scheda persona
+   * mostrerebbe a tre contatti la stessa riga), così l'offerta dell'azienda
+   * si apre dalla scheda dell'azienda — un click, mai una riga inventata
+   * qui. Solo persona con azienda vera (il profilo nasconde già «Senza
+   * azienda» e i segnaposto: identity.company null): id o nome vuoti,
+   * scheda azienda e profilo illeggibile non collegano niente.
+   * @param {any} profile @param {{ resource?: string } | null} offerCtx
+   */
+  /**
+   * Voce 4ec1fe6d (merge con main 19/11, restringe contro 4cfa30c164ca):
+   * l'azienda collegata conta solo se ha offerte da aprire — un link
+   * verso una scheda azienda senza offerte ricreerebbe il riquadro
+   * fantasma che 4cfa30c164ca ha tolto ad Ada Rossi.
+   * @param {any} companyProfile
+   */
+  function companyHasOffers(companyProfile) {
+    for (const section of [companyProfile?.opportunities, companyProfile?.quotes]) {
+      if (section?.available !== true) continue;
+      if (typeof section.count === 'number' && section.count > 0) return true;
+      if (Array.isArray(section.items) && section.items.length > 0) return true;
+    }
+    return false;
+  }
+
+  function companyOfferLink(profile, offerCtx, companyProfile = null) {
+    if (!offerCtx || offerCtx.resource !== 'contact') return null;
+    if (!companyHasOffers(companyProfile)) return null;
+    const company = profile?.identity?.company;
+    const id = typeof company?.id === 'string' && company.id !== '' ? company.id : null;
+    const name = typeof company?.name === 'string' && company.name.trim() !== '' ? company.name.trim() : null;
+    if (id === null || name === null) return null;
+    const link = el('a', 'bo-scheda-offer-link');
+    link.setAttribute('href', `#/customer-card/company/${encodeURIComponent(id)}`);
+    link.appendChild(el('span', 'bo-scheda-offer-company-name', `Offerte di ${name}`));
+    return link;
+  }
+
+  function offer(box, profile, offerCtx, profileError = null, pipelines = [], companyProfile = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no offer".
     if (profileError) {
@@ -5264,13 +5324,25 @@ export function createCustomerCardView(deps) {
     const fromQuote = (quotes ?? []).length > 0;
     const first = fromQuote ? quotes[0] : ((opportunities ?? [])[0] ?? null);
     if (!first) {
+      // Voce 4ec1fe6d: una persona senza offerte proprie ma con azienda
+      // collegata CHE HA offerte collega le offerte dell'azienda (un link
+      // alla scheda azienda, dove l'offerta si apre con il suo link)
+      // invece di nascondere il riquadro: prima non mostrava né collegava
+      // niente. Su azienda senza offerte (o illeggibile) il riquadro resta
+      // nascosto (voce 4cfa30c164ca: niente fantasmi).
+      const companyLink = companyOfferLink(profile, offerCtx, companyProfile);
       // No linked offer: when BOTH commercial sections were readable (even
       // empty) the customer plainly has none, and the card stays hidden —
       // the scheda reads an offer only when one exists. An empty
       // opportunities read never proves there are no quotes when the quotes
       // read itself failed — the unavailable reason reads instead, never a
       // confirmed absence.
-      if (quotes !== null && opportunities !== null) return false;
+      if (quotes !== null && opportunities !== null) {
+        if (companyLink === null) return false;
+        box.appendChild(el('h4', undefined, 'Offerta'));
+        box.appendChild(companyLink);
+        return true;
+      }
       box.appendChild(el('h4', undefined, 'Offerta'));
       // The unavailable reason stays in the API response and the logs, never
       // on screen: production reasons are English system phrases, and the
@@ -6459,6 +6531,7 @@ export function createCustomerCardView(deps) {
     void readMe();
     const {
       card, timeline, timelineError, profile, profileError,
+      companyProfile = null,
       enrichment, enrichmentError, calls, callsError,
       fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
       services,
@@ -6474,6 +6547,7 @@ export function createCustomerCardView(deps) {
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,
+        companyProfile,
         enrichment, enrichmentError, calls, callsError,
         fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
         services,
@@ -7104,6 +7178,7 @@ export function createCustomerCardView(deps) {
 
   function buildAndShow(key, resource, id, {
     card, timeline, timelineError, profile, profileError,
+    companyProfile = null,
     enrichment, enrichmentError, calls, callsError,
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
     services = null,
@@ -7125,7 +7200,8 @@ export function createCustomerCardView(deps) {
     // a first visit (another customer's read, or none, says nothing). On a
     // full settled paint (pending null) these stay unused.
     const prevLoaded = lastShown !== null && lastShown.key === key ? lastShown.loaded : null;
-    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null;
+    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null
+      || companyOfferLink(prevLoaded?.profile ?? null, { resource, id }, prevLoaded?.companyProfile ?? null) !== null;
     const prevHadAppt = upcomingOf(prevLoaded?.timeline ?? null).length > 0;
     // backlog:26afd13657c5: the appointment rows wait for the listino — a
     // row never flashes the slug words while the services read is still in
@@ -7225,7 +7301,10 @@ export function createCustomerCardView(deps) {
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     // backlog:9b28b3bc6003 (main, #992): the offer section hides itself
-    // when the customer has none. backlog:4cfa30c164ca (supervisore 18/11,
+    // when the customer has none. Voce 4ec1fe6d: a contact with no own
+    // offers still paints when the linked company has offers (a link to
+    // the company card), never on an empty company (voce 4cfa30c164ca).
+    // backlog:4cfa30c164ca (supervisore 18/11,
     // NON PASSA su Ada Rossi con #1014): the skeleton painted while the
     // profile was still in flight, then vanished — a ghost box on every
     // first visit. So the skeleton stays off until the read says whether
@@ -7238,7 +7317,7 @@ export function createCustomerCardView(deps) {
     // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js.
     if (waits('profile')) {
       if (prevHadOffer) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
-    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines, companyProfile);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — never the slug words first. backlog:4cfa30c164ca: the same
     // ghost rule as the offer card — while the timeline or the listino are

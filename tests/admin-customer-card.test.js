@@ -187,7 +187,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null, companyProfile = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -213,6 +213,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         }
         if (timelineError) throw timelineError;
         return timeline;
+      }
+      if (path.startsWith('/api/customer-data/profile/company/')) {
+        if (!companyProfile) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return companyProfile;
       }
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profileError) throw profileError;
@@ -2215,17 +2219,36 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer links the company card, never another customer offer', async () => {
+  // Voce 4ec1fe6d (supervisore 17/11, supersedes the hidden card): c1 has no
+  // own offer but is linked to co1, so the offer card links the company card
+  // instead of hiding. The anti-leak half of this test stays: no offer row
+  // from anywhere is ever shown here.
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
       opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
     },
+    companyProfile: {
+      customerProfileContract: 1,
+      subject: { resource: 'company', id: 'co1' },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
   }));
   const text = mount.textContent;
   const titles = mount.findAll('h4').map((node) => node.textContent);
-  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(titles.includes('Offerta'), 'the offer card links the company offers');
+  assert.ok(text.includes('Palestra Esempio'), 'the card names the linked company');
+  const offerSection = mount.findAll('section').find((node) => (
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-card-offer')
+  ));
+  const link = offerSection?.findAll('a')[0] ?? null;
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'the link opens the company card');
   assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
 });
