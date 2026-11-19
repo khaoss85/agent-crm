@@ -3239,16 +3239,35 @@ export function createCustomerCardView(deps) {
     offerMenu.setAttribute('role', 'menu');
     const offerMenuHidden = () => String(offerMenu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
     const syncOfferMenu = () => offer.setAttribute('aria-expanded', offerMenuHidden() ? 'false' : 'true');
-    const closeOfferMenu = () => {
+    // backlog:818092e31a15: opening the menu moves focus to its first
+    // voice; Freccia giù on the button enters that voice, Esc closes and
+    // gives focus back to the button.
+    const focusOfferFirstVoice = () => {
+      const first = offerMenu.querySelector('button');
+      if (typeof first?.focus === 'function') first.focus();
+    };
+    const openOfferMenu = () => {
+      offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu');
+      syncOfferMenu();
+      focusOfferFirstVoice();
+    };
+    const closeOfferMenu = (refocus = false) => {
       offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
       syncOfferMenu();
+      if (refocus && typeof offer.focus === 'function') offer.focus();
     };
     offer.addEventListener('click', () => {
-      offerMenu.setAttribute('class', offerMenuHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
-      syncOfferMenu();
+      if (offerMenuHidden()) openOfferMenu();
+      else closeOfferMenu();
     });
-    offer.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
-    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
+    offer.addEventListener('keydown', (event) => {
+      if (event?.key === 'ArrowDown') {
+        event.preventDefault?.();
+        if (offerMenuHidden()) openOfferMenu();
+        else focusOfferFirstVoice();
+      } else if (event?.key === 'Escape') closeOfferMenu(true);
+    });
+    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(true); });
     const offerAiName = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo cliente';
     const offerAi = uiAddOption(doc, {
       kind: 'ai', title: "Crea con l'AI", line: 'Descrivi l\u2019offerta all\u2019assistente',
@@ -5487,16 +5506,35 @@ export function createCustomerCardView(deps) {
       const syncMenu = () => {
         button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
       };
-      const close = () => {
+      // backlog:818092e31a15: opening the menu moves focus to its first
+      // voice; Freccia giù on the button enters that voice, Esc closes
+      // and gives focus back to the button.
+      const focusStageFirstVoice = () => {
+        const first = menu.querySelector('button');
+        if (typeof first?.focus === 'function') first.focus();
+      };
+      const openStageMenu = () => {
+        menu.setAttribute('class', 'bo-scheda-stage-voices');
+        syncMenu();
+        focusStageFirstVoice();
+      };
+      const close = (refocus = false) => {
         if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
         syncMenu();
+        if (refocus && typeof button.focus === 'function') button.focus();
       };
       button.addEventListener('click', () => {
-        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-        syncMenu();
+        if (isClosed()) openStageMenu();
+        else close();
       });
-      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      button.addEventListener('keydown', (event) => {
+        if (event?.key === 'ArrowDown') {
+          event.preventDefault?.();
+          if (isClosed()) openStageMenu();
+          else focusStageFirstVoice();
+        } else if (event?.key === 'Escape') close(true);
+      });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(true); });
       const stageError = el('small', 'field-error', '');
       const stageStatus = el('small', 'bo-muted', '');
       stageStatus.setAttribute('role', 'status');
