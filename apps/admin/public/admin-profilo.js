@@ -240,6 +240,17 @@ export function readCachedProfile(client, log = () => {}) {
   }
   return kept;
 }
+/**
+ * Drop the kept /api/profile answer for one client (backlog:30f7ce51c87a).
+ * Writes go through this: after a PATCH the next read asks again, so a
+ * saved name never paints stale. Reads never call it — the whole point of
+ * the kept answer is one read per app start, however many screens open it.
+ * @param {{ request: (path: string) => Promise<any> } | null} client
+ */
+export function forgetCachedProfile(client) {
+  if (client === null || typeof client !== 'object') return;
+  profileByClient.delete(client);
+}
 
 /**
  * The «Collegamenti Google» card for the Connettori screens: same rows as
@@ -409,6 +420,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
           async () => {
             // The write stays in flight until the reread lands: saving drops
             // only then, with uiBusy, so no second PATCH slips in meanwhile.
+            // The kept profile is dropped first, or the reread below would
+            // paint the name from before the save (backlog:30f7ce51c87a).
+            forgetCachedProfile(client);
             const mine = ++token;
             const fresh = await read();
             saving = false;

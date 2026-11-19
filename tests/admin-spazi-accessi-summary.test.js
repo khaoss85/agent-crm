@@ -26,29 +26,31 @@ const flush = async (rounds = 20) => {
 const SPACE = 'spazio-1';
 
 function stubClient({ calls = null } = {}) {
+  // Same shapes the server summary route answers: one payload carries the
+  // seven single reads the screen used to fly on its own. Any single read
+  // the screen still flies throws here, so the request count below proves
+  // the aggregate path, not a silent mix.
+  const summary = {
+    spaceId: SPACE,
+    context: {
+      identity: { subject: 'persona-1' },
+      actor: { type: 'user', id: 'persona-1' },
+      membership: { subject: 'persona-1', role: 'owner' },
+      roles: { owner: [], operator: [], observer: [] },
+    },
+    memberships: { items: [] },
+    agents: { items: [] },
+    switches: { spaceId: SPACE, overrides: [] },
+    connectors: { spaceId: SPACE, connectors: [] },
+    customers: { items: [], page: 1, pageSize: 10, pages: 0, total: 0, totalIsExact: true },
+    fix: { issues: [], candidates: [], needsFix: 0 },
+  };
   return {
     async request(path, options = {}) {
       if (calls && (options?.method ?? 'GET').toUpperCase() === 'GET') calls.push(path);
-      if (path.startsWith('/api/spazi-accessi/summary')) {
-        throw Object.assign(new Error('no summary yet'), { code: 'NOT_FOUND', status: 404 });
-      }
-      if (path === '/api/spine/context') {
-        return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
-      }
-      if (path === '/api/spine/memberships') return { items: [] };
-      if (path.startsWith('/api/space-permissions/effective')) {
-        return { spaceId: SPACE, overrides: [] };
-      }
-      if (path.startsWith('/api/modules/teammate-agent/records')) return { items: [] };
-      if (path.includes('/api/modules/data-quality-issue/records')) return { items: [] };
-      if (path.includes('/api/modules/duplicate-candidate/records')) return { items: [] };
-      if (path.startsWith('/api/connectors/activity')) return { spaceId: SPACE, needsFix: 0 };
-      if (path.startsWith('/api/connectors')) return { spaceId: SPACE, connectors: [] };
-      if (path.startsWith('/api/customer-data/customers')) {
-        return { items: [], page: 1, pageSize: 10, pages: 0, total: 0, totalIsExact: true };
-      }
+      if (path.startsWith('/api/spazi-accessi/summary')) return summary;
       if (path === '/api/profile') return { connections: { available: true, items: [] } };
-      throw new Error(`unexpected request ${path}`);
+      throw new Error(`unexpected single request ${path}`);
     },
   };
 }

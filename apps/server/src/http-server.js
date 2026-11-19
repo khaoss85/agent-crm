@@ -1632,7 +1632,7 @@ export function buildRouter(app) {
   // filter.spaceId); the shell slices and detects the cap with its own
   // constant, so the section returns the same raw page the single route
   // would.
-  router.add('GET', '/api/spazi-accessi/summary', async ({ searchParams, identity, organizationId }) => {
+  router.add('GET', '/api/spazi-accessi/summary', async ({ searchParams, actor, identity, organizationId }) => {
     const spaceId = searchParams?.get?.('spaceId') ?? '';
     if (typeof spaceId !== 'string' || spaceId.trim() === '') {
       throw new ValidationError('a space id names the space to summarize', { field: 'spaceId' });
@@ -1662,6 +1662,9 @@ export function buildRouter(app) {
         return {
           ...app.spine.describe(),
           identity: app.spine.identityEvidence(identity),
+          // Same actor evidence as GET /api/spine/context: without it the
+          // summary context is a poorer answer than the single route.
+          actor: actor && typeof actor.id === 'string' ? { type: actor.type, id: actor.id } : null,
           organization,
           membership,
           permissions: membership ? membership.permissions : [],
@@ -1711,6 +1714,9 @@ export function buildRouter(app) {
           page: undefined,
           pageSize: undefined,
           spaceId,
+          // Same actor as GET /api/customer-data/customers: each row's
+          // unreadCount answers for the signed-in member, never null here.
+          actor,
         });
       }),
       settledSection(async () => {

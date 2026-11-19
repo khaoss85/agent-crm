@@ -738,7 +738,7 @@ export function createSpaziAccessiView(deps) {
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
    */
-  function beginLegacyReads(space, readsClient = client) {
+  function beginLegacyReads(space, readsClient = client, sharedProfileRead = null) {
     const settle = (promise) => promise.then(
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
@@ -755,8 +755,12 @@ export function createSpaziAccessiView(deps) {
         && /** @type {{id?: unknown}} */ (entry).id !== '')
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
     // The profile describes the session's own space: its links count on
-    // that card only, never on another space's (review #782 P1).
-    const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
+    // that card only, never on another space's (review #782 P1). The
+    // summary load passes its kept per-client read so one load never asks
+    // /api/profile twice (backlog:30f7ce51c87a); the standalone single-read
+    // path keeps its own unkept read.
+    const profileRead = sharedProfileRead
+      ?? (ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null));
     // The statistic counts what the team list shows: rendered rows only, so a
     // malformed membership never leaks into the card number.
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
@@ -793,8 +797,13 @@ export function createSpaziAccessiView(deps) {
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
     );
+    // The profile is the pilot's answer and the summary cannot carry it:
+    // the shell keeps it once per client (readCachedProfile), so the second
+    // open of any screen reads nothing new. Built before the fallback so
+    // the legacy path reuses the same kept read instead of asking twice.
+    const profileRead = readCachedProfile(client);
     let legacyReads = null;
-    const legacy = () => (legacyReads ??= beginLegacyReads(space, readsClient));
+    const legacy = () => (legacyReads ??= beginLegacyReads(space, readsClient, profileRead));
     const fullSection = (summary, name) => {
       if (summary === null || typeof summary !== 'object') return null;
       const section = summary[name];
@@ -814,6 +823,11 @@ export function createSpaziAccessiView(deps) {
           : null,
       };
     };
+    // The summary sections are named after their payload; the single-read
+    // fallbacks are named after their promise (`contextRead`, `membersRead`,
+    // `switchesRead`). A missing entry here reads `undefined` and crashes
+    // the paint with «cannot read ok of undefined» instead of falling back.
+    const LEGACY_KEYS = { context: 'contextRead', memberships: 'membersRead', switches: 'switchesRead' };
     const settledFromSummary = async (name) => {
       const summary = await summarySettled;
       if (summary.ok) {
@@ -823,7 +837,7 @@ export function createSpaziAccessiView(deps) {
           return { ok: false, value: null, error: sectionError(summary.value, name) };
         }
       }
-      return legacy()[name];
+      return legacy()[LEGACY_KEYS[name] ?? name];
     };
     const contextRead = settledFromSummary('context');
     const membersRead = settledFromSummary('memberships');
@@ -831,8 +845,10 @@ export function createSpaziAccessiView(deps) {
       if (summary.ok) {
         const section = fullSection(summary.value, 'agents');
         if (section !== null) {
+          // Same shape as loadSpaceAgents (rows array, null when the read
+          // failed): renderTeamAgentRows takes an array, never {rows, capped}.
           const items = Array.isArray(section.items) ? section.items : [];
-          return { rows: items.slice(0, AGENTI_READ_LIMIT), capped: items.length > AGENTI_READ_LIMIT };
+          return items.slice(0, AGENTI_READ_LIMIT);
         }
         if (summary.value !== null && typeof summary.value === 'object' && summary.value.agents !== undefined) {
           return null;
@@ -841,10 +857,6 @@ export function createSpaziAccessiView(deps) {
       return legacy().agentsRead;
     });
     const switchesRead = settledFromSummary('switches');
-    // The profile is the pilot's answer and the summary cannot carry it:
-    // the shell keeps it once per client (readCachedProfile), so the second
-    // open of any screen reads nothing new.
-    const profileRead = readCachedProfile(client);
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
       ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));

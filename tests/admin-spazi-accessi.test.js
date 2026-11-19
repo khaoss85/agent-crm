@@ -378,15 +378,34 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
 // the data replaces the skeleton when the reads land.
 test('1a96094db71d: the page paints a skeleton at once and starts every read together', async () => {
   const pending = [];
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }];
   const base = stubClient({
-    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    members,
     connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
     customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
   });
+  // backlog:30f7ce51c87a: the page starts the one aggregate plus the kept
+  // profile, never the seven single reads it used to fly on its own.
+  const summary = {
+    spaceId: SPACE,
+    context: { identity: { subject: 'owner-1' }, membership: { subject: 'owner-1', role: 'owner' }, roles: { owner: [], operator: [], observer: [] } },
+    memberships: { items: members },
+    agents: { items: [] },
+    switches: { spaceId: SPACE, overrides: [] },
+    connectors: { spaceId: SPACE, connectors: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customers: { items: [], page: 1, pageSize: 10, pages: 0, total: 3, totalIsExact: true },
+    fix: { issues: [], candidates: [], needsFix: 0 },
+  };
+  const withSummary = {
+    request(path, options = {}) {
+      if (path.startsWith('/api/spazi-accessi/summary')) return Promise.resolve(summary);
+      return base.request(path, options);
+    },
+  };
   const client = {
     request(path, options = {}) {
       return new Promise((resolve, reject) => {
-        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+        pending.push({ path, release: () => withSummary.request(path, options).then(resolve, reject) });
       });
     },
   };
@@ -402,8 +421,11 @@ test('1a96094db71d: the page paints a skeleton at once and starts every read tog
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
     'no switch to flip before its value is known');
   const started = pending.map((entry) => entry.path);
-  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers']) {
+  for (const expected of ['/api/spazi-accessi/summary', '/api/profile']) {
     assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
+  }
+  for (const single of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers', '/api/modules/']) {
+    assert.ok(!started.some((path) => path.startsWith(single)), `${single} never flies beside the summary`);
   }
   // Release everything (and whatever the answers start), then the data replaces the skeleton.
   for (let round = 0; round < 6 && pending.length > 0; round += 1) {
@@ -1970,7 +1992,9 @@ test('2de01913d276: a 429 on context and members is an error with Riprova, read 
   assert.doesNotMatch(text(mount), /non leggibile/, 'the error lifts after the retry');
   assert.equal(count('/api/spine/context'), 2, 'the retry reads once more');
   assert.equal(count('/api/spine/memberships'), 2, 'the retry reads members once more');
-  assert.equal(count('/api/profile'), 2, 'the retry reads the profile once more');
+  // backlog:30f7ce51c87a: the profile is kept once per client, so the
+  // retry reuses it instead of asking again.
+  assert.equal(count('/api/profile'), 1, 'the retry reuses the kept profile');
 });
 
 test('2de01913d276: concurrent identical GETs share one request; writes and later loads do not', async () => {
