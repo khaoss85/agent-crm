@@ -64,7 +64,7 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], components = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -88,6 +88,7 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       if (path.startsWith('/api/modules/quote/records/')) return quoteRecord;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
       if (path.startsWith('/api/modules/offer/records')) return { items: entries };
+      if (path.startsWith('/api/modules/price-component/records')) return { items: components };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
       if (path.startsWith('/api/modules/quote/records')) return { items: [quoteRecord] };
       if (path.startsWith('/api/modules/price-book/records')) return { items: [{ id: 'pb1', name: 'Standard EUR', currency: 'EUR', active: true }] };
@@ -813,6 +814,43 @@ test('b9b7912320f8: a flat-fee line reads «Quota fissa» with its quantity lock
   assert.ok(!flat.textContent.includes('Quantità 2'), 'never a quantity that changes nothing');
   assert.equal(flat.__quantity.disabled, true, 'the flat quantity is locked');
   assert.ok(flat.textContent.includes('la quantità non cambia il prezzo'), 'the lock explains itself');
+});
+
+test('b9b7912320f8: the add-line panel locks quantity at 1 for a flat-fee offer', async () => {
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const trialComponents = [
+    { id: 'pc9', offerId: 'o9', componentKey: 'trial', label: 'Lezione di prova', pricingModel: 'flat_fee', chargeType: 'one_time', tierCount: 0 },
+  ];
+  const client = stubClient({ lines: [], entries: [trialEntry, ENTRY], components: trialComponents });
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  await addPanel.__flatSync;
+  assert.equal(addPanel.__entry.value, 'o9', 'the flat-fee offer is selected');
+  assert.equal(addPanel.__quantity.disabled, true, '«Aggiungi riga» offers no quantity for a flat fee');
+  assert.equal(addPanel.__quantity.value, '1', 'a flat fee stays at 1');
+  assert.ok(addPanel.textContent.includes('Quota fissa'), 'the lock explains itself');
+  // A hostile quantity typed into the locked field never leaves the panel.
+  addPanel.__quantity.value = '2';
+  await addPanel.__add();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(JSON.parse(posts[posts.length - 1].body).quantity, 1, 'the write keeps quantity 1');
+  // Back to a mixed offer: the quantity is editable again (the write above
+  // re-rendered the page, so the fresh panel is queried again).
+  const fresh = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  fresh.__entry.value = 'o1';
+  fresh.__entry.dispatch('change');
+  await fresh.__flatSync;
+  assert.equal(fresh.__quantity.disabled, false, 'a mixed offer keeps its quantity');
 });
 
 test('d56122ee2844: the detail paints a skeleton at once and reads in parallel', async () => {

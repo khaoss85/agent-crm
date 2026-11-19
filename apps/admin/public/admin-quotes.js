@@ -824,11 +824,45 @@ export function createQuoteView(deps) {
       quantityInput.value = '1';
       const discountInput = percentInput('0');
       const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Lo sconto è in percentuale, es. 10 o 7,5.');
+      const flatNote = el('small', 'muted', 'Quota fissa: la quantità non cambia il prezzo.');
+      flatNote.setAttribute('hidden', '');
+      // backlog:b9b7912320f8 (seguito): anche l'«Aggiungi riga» conosce il
+      // modello dell'offerta scelta — per una di sole quote fisse la quantità
+      // resta 1, bloccata con la stessa spiegazione delle righe salvate.
+      let addFlatOnly = false;
+      const syncAddQuantity = async () => {
+        const selectedId = entrySelect.value;
+        let flat = false;
+        if (typeof selectedId === 'string' && selectedId !== '') {
+          try {
+            const answer = await fetchLinked('price-component', 'offerId', selectedId);
+            const rows = (answer.rows ?? []).filter((component) => component.offerId === selectedId);
+            flat = rows.length > 0
+              && rows.every((component) => component?.pricingModel === 'flat_fee' && Number(component?.tierCount ?? 0) === 0);
+          } catch {
+            flat = false;
+          }
+        }
+        if (token !== renderToken || entrySelect.value !== selectedId) return;
+        addFlatOnly = flat;
+        quantityInput.disabled = flat;
+        if (flat) {
+          quantityInput.value = '1';
+          quantityInput.setAttribute('title', 'Quota fissa: la quantità non cambia il prezzo');
+          flatNote.removeAttribute('hidden');
+        } else {
+          quantityInput.removeAttribute('title');
+          flatNote.setAttribute('hidden', '');
+        }
+      };
+      entrySelect.addEventListener('change', () => {
+        addPanel.__flatSync = syncAddQuantity();
+      });
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
       addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
-        quantity: Number(quantityInput.value),
+        quantity: addFlatOnly ? 1 : Number(quantityInput.value),
         discountBps: discountFrom(discountInput),
         expectedRevision: quote.draftRevision,
       }))));
@@ -836,11 +870,13 @@ export function createQuoteView(deps) {
       addPanel.appendChild(labelled('Quantità', quantityInput));
       addPanel.appendChild(labelled('Sconto (%)', discountInput));
       addPanel.appendChild(hint);
+      addPanel.appendChild(flatNote);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
+      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: addFlatOnly ? 1 : Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
       addPanel.__discount = discountInput;
+      addPanel.__flatSync = syncAddQuantity();
       side.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
