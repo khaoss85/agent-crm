@@ -137,6 +137,9 @@ export function toEngineEvent(wire) {
     end: wire.end ?? null,
     status: wire.status === 'cancelled' ? 'cancelled' : 'confirmed',
     updated: typeof wire.updated === 'string' ? wire.updated : new Date().toISOString(),
+    // Team visibility (backlog:9aa5c073): carried only when Google names
+    // it, so reads of events without one keep their old shape.
+    ...(typeof wire.visibility === 'string' && wire.visibility !== '' ? { visibility: wire.visibility } : {}),
     extendedProperties: Object.freeze({ ...flat }),
     organizer: toEnginePerson(wire.organizer),
     attendees: Object.freeze(attendees),
@@ -343,14 +346,22 @@ export function createHttpGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, visibility } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
+      // Team visibility (backlog:9aa5c073): a private booking exports with
+      // Google visibility private. The closed Google set, refused otherwise —
+      // absent forwards nothing, so the calendar default applies.
+      const visibilities = ['default', 'public', 'private', 'confidential'];
+      if (visibility !== undefined && visibility !== null && !visibilities.includes(visibility)) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent visibility must be one of default, public, private, confidential');
+      }
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
         ...(typeof description === 'string' && description !== '' ? { description } : {}),
         ...(start === undefined || start === null ? {} : { start }),
         ...(end === undefined || end === null ? {} : { end }),
+        ...(visibility === undefined || visibility === null ? {} : { visibility }),
         extendedProperties: { private: { ...extendedProperties } },
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
       });

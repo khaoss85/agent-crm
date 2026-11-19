@@ -1173,6 +1173,10 @@ export function customerMatchReason(item, match) {
  * @param {any} row
  */
 export function isMovableAppointment(row) {
+  // A masked «Occupato» row (backlog:9aa5c073) is someone else's private
+  // booking: it never moves, opens no edit form and offers no cancellation
+  // to this viewer — the server masked it, the grid keeps it still.
+  if (row?.masked === true) return false;
   const status = String(row?.status ?? 'booked');
   return status === 'booked' || status === 'confirmed';
 }
@@ -3626,6 +3630,9 @@ export function createCalendarioView(deps) {
    * name; the free notes move to the detail card.
    */
   function titleOf(row) {
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the grid reads only «Occupato» — never the service, never the customer.
+    if (row?.masked === true) return 'Occupato';
     const service = serviceLabel(row?.serviceKey, state.services);
     const customer = displayNameOf(row, subjectKeyOf(row));
     return customer ? `${service} · ${customer}` : service;
@@ -3795,6 +3802,20 @@ export function createCalendarioView(deps) {
       className: 'cal-pop-when',
       text: `${day} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`,
     }));
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the card reads «Occupato», the time and the team person — never the
+    // customer, the service, the note or the origin. No edit, no
+    // cancellation: isMovableAppointment already shut those tools above.
+    if (row?.masked === true) {
+      const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
+      if (typeof member === 'string' && member !== '') {
+        const person = el(doc, 'p', { className: 'cal-pop-row cal-pop-person', attrs: { 'data-role': 'event-member' } });
+        person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
+        person.appendChild(el(doc, 'span', { text: member }));
+        pop.appendChild(person);
+      }
+      return pop;
+    }
     // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
     // refusal, beside the event it belongs to. It clears on the next
     // selection change (the click handler above).
@@ -4856,6 +4877,9 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // Team visibility (backlog:9aa5c073): the slot Conferma books the claim
+    // the operator sees — the live select value, like the manual Conferma.
+    const slotVisibility = manualValue('visibility');
     const claim = bookingClaim({
       spaceId: readSpace(),
       customer: pickedCustomer(),
@@ -4865,6 +4889,7 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
+      visibility: slotVisibility === '' ? undefined : slotVisibility,
     });
     state.confirmed = null;
     state.serviceError = '';
@@ -5394,6 +5419,32 @@ export function createCalendarioView(deps) {
       // no date ever gets cut on the 340 px popover.
       form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
+    // Team visibility (backlog:9aa5c073), like Google Calendar: «Predefinita
+    // / Pubblico / Privato». Predefinita is the team default (everyone
+    // reads everything); Privato reads as «Occupato» for everyone but the
+    // creator and the administrators. The select owns the claim value, like
+    // the service menu: the claim reads the live node, never a copy.
+    const visibilityWrap = uiSelect(doc, {
+      name: 'visibility',
+      value: 'default',
+      options: [
+        { value: 'default', label: 'Predefinita' },
+        { value: 'public', label: 'Pubblico' },
+        { value: 'private', label: 'Privato' },
+      ],
+    });
+    const visibilitySelect = visibilityWrap.querySelector('select') ?? visibilityWrap;
+    if (typeof state.manual?.visibility === 'string' && state.manual.visibility !== '') {
+      visibilitySelect.value = state.manual.visibility;
+    }
+    const trackVisibility = () => {
+      state.manual = { ...(state.manual ?? {}), visibility: String(visibilitySelect.value ?? '') };
+      state.manualTyped.add('visibility');
+    };
+    visibilitySelect.addEventListener('input', trackVisibility);
+    visibilitySelect.addEventListener('change', trackVisibility);
+    form.appendChild(fieldBox('Visibilità', visibilityWrap, { wide: true }));
+    inputs.visibility = visibilitySelect;
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
@@ -5534,6 +5585,7 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        visibility: read('visibility'),
       }),
     };
   }
@@ -5874,6 +5926,10 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    // Team visibility (backlog:9aa5c073): the live select value, or absent
+    // when the form never painted one — the server reads absent as the team
+    // default and refuses anything outside default/public/private.
+    visibility: input.visibility === '' || input.visibility == null ? undefined : input.visibility,
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,

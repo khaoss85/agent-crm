@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
-  "revision": 3,
+  "revision": 4,
   "name": "appointment",
   "table": "appointments",
-  "description": "One booked appointment between a customer and one team member: the service from the commercial listino (key plus the price snapshot taken at booking time), the start and end instants, notes, the meeting place (free text, with an optional link for online meetings), and the booking lifecycle (booked -> confirmed -> done, with no-show and cancelled as the other terminal states). Every field is managed: an appointment exists only through the appointments package's book capability, moves only through its advance path, and no client can create, forge or rewrite one. The customer is an opaque subject envelope pointing at the host contact or company record — no customer table is created here. The team member is an opaque team identity string, the same convention as the interactions package's teamAuthorId — no staff table is created here. The service price is a snapshot: the booking path resolves the service and its amount from the commercial listino and stores what was agreed, so a later listino change never rewrites a booked price.",
+  "description": "One booked appointment between a customer and one team member: the service from the commercial listino (key plus the price snapshot taken at booking time), the start and end instants, notes, the meeting place (free text, with an optional link for online meetings), the team visibility (default, public or private, like Google Calendar: a private booking reads as Occupato for everyone but its creator and the administrators), and the booking lifecycle (booked -> confirmed -> done, with no-show and cancelled as the other terminal states). Every field is managed: an appointment exists only through the appointments package's book capability, moves only through its advance path, and no client can create, forge or rewrite one. The customer is an opaque subject envelope pointing at the host contact or company record — no customer table is created here. The team member is an opaque team identity string, the same convention as the interactions package's teamAuthorId — no staff table is created here. The service price is a snapshot: the booking path resolves the service and its amount from the commercial listino and stores what was agreed, so a later listino change never rewrites a booked price.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
@@ -20,6 +20,7 @@
     { "name": "notes", "type": "string", "writable": "managed" },
     { "name": "location", "type": "string", "writable": "managed" },
     { "name": "locationUrl", "type": "string", "writable": "managed" },
+    { "name": "visibility", "type": "enum", "values": ["default", "public", "private"], "writable": "managed" },
     { "name": "status", "type": "enum", "values": ["booked", "confirmed", "done", "no-show", "cancelled"], "index": true, "writable": "managed" },
     { "name": "reminderSourceKey", "type": "string", "writable": "managed" },
     { "name": "reminderDueAt", "type": "timestamp", "writable": "managed" },
