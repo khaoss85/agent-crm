@@ -41,12 +41,12 @@
 // inert text, never markup.
 
 import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
-import { readProfile } from './admin-profilo.js';
+import { readCachedProfile, readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
-import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
-import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
+import { countFixes, loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
+import { AGENTI_READ_LIMIT, loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import {
   SPACE_ROLE_LABELS,
   accessLabel,
@@ -622,8 +622,22 @@ export function createSpaziAccessiView(deps) {
     ]);
     const [memberCount, profile] = await Promise.all([memberCountRead, profileRead]);
     if (memberCount === null) return null;
+    return finishSpaceStat(spaceId, memberCount, profile, await reads);
+  }
+
+  /**
+   * Paint the space statistic from two settled reads — the connectors and
+   * the customers answers — whether they flew as single requests or arrived
+   * inside the summary. Same honest states both ways: an unreadable count
+   * is a missing enhancement, never a page error.
+   * @param {string} spaceId
+   * @param {number} memberCount the rendered team size
+   * @param {unknown} profile the /api/profile answer, null when unread
+   * @param {[PromiseSettledResult<any>, PromiseSettledResult<any>]} settled
+   */
+  async function finishSpaceStat(spaceId, memberCount, profile, settled) {
     try {
-      const [channelsSettled, customersSettled] = await reads;
+      const [channelsSettled, customersSettled] = settled;
       // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
       // the team rows tile this space's calendar and channels from the same
       // answer — no second request. A failed customer count never hides the
@@ -718,12 +732,13 @@ export function createSpaziAccessiView(deps) {
    * used to run one after the other — context, team, agents, permissions,
    * profile, then the space cards — eight round trips of 2,5–4 s each in
    * production). The data reads paint first; the statistic reads resolve in
-   * the second phase.
+   * the second phase. Only the fallback path uses these single reads now:
+   * the summary-first {@link beginReads} tries one aggregate first.
    * @param {string} space
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
    */
-  function beginReads(space, readsClient = client) {
+  function beginLegacyReads(space, readsClient = client) {
     const settle = (promise) => promise.then(
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
@@ -757,6 +772,142 @@ export function createSpaziAccessiView(deps) {
       if (stat !== null) state.stats.set(id, stat);
     }));
     return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+  }
+
+  /**
+   * One load through the summary (backlog:30f7ce51c87a): a single
+   * GET /api/spazi-accessi/summary carries context, team, agents, switches,
+   * connectors, customers and the fix-count inputs, instead of ten single
+   * reads. Each section maps to the exact state the single reads would set —
+   * an unavailable section becomes the same {code, status} refusal the
+   * single route would answer, so the honest notes never change. When the
+   * summary itself is missing or fails as a whole, the load falls back to
+   * the single reads above: same page, same notes, more round trips.
+   * @param {string} space
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   */
+  function beginReads(space, readsClient = client) {
+    const summarySettled = Promise.resolve().then(() => readsClient.request(
+      `/api/spazi-accessi/summary?spaceId=${encodeURIComponent(space)}`,
+    )).then(
+      (value) => ({ ok: true, value, error: null }),
+      (error) => ({ ok: false, value: null, error }),
+    );
+    let legacyReads = null;
+    const legacy = () => (legacyReads ??= beginLegacyReads(space, readsClient));
+    const fullSection = (summary, name) => {
+      if (summary === null || typeof summary !== 'object') return null;
+      const section = summary[name];
+      if (section === undefined) return null;
+      if (section !== null && typeof section === 'object' && 'unavailable' in section) return null;
+      return section;
+    };
+    const sectionError = (summary, name) => {
+      const section = summary !== null && typeof summary === 'object' ? summary[name] : null;
+      const reason = section !== null && typeof section === 'object' ? section.unavailable : null;
+      return {
+        code: reason !== null && typeof reason === 'object' && typeof reason.code === 'string' && reason.code !== ''
+          ? reason.code
+          : 'UNKNOWN',
+        status: reason !== null && typeof reason === 'object' && typeof reason.status === 'number'
+          ? reason.status
+          : null,
+      };
+    };
+    const settledFromSummary = async (name) => {
+      const summary = await summarySettled;
+      if (summary.ok) {
+        const section = fullSection(summary.value, name);
+        if (section !== null) return { ok: true, value: section, error: null };
+        if (summary.value !== null && typeof summary.value === 'object' && summary.value[name] !== undefined) {
+          return { ok: false, value: null, error: sectionError(summary.value, name) };
+        }
+      }
+      return legacy()[name];
+    };
+    const contextRead = settledFromSummary('context');
+    const membersRead = settledFromSummary('memberships');
+    const agentsRead = summarySettled.then((summary) => {
+      if (summary.ok) {
+        const section = fullSection(summary.value, 'agents');
+        if (section !== null) {
+          const items = Array.isArray(section.items) ? section.items : [];
+          return { rows: items.slice(0, AGENTI_READ_LIMIT), capped: items.length > AGENTI_READ_LIMIT };
+        }
+        if (summary.value !== null && typeof summary.value === 'object' && summary.value.agents !== undefined) {
+          return null;
+        }
+      }
+      return legacy().agentsRead;
+    });
+    const switchesRead = settledFromSummary('switches');
+    // The profile is the pilot's answer and the summary cannot carry it:
+    // the shell keeps it once per client (readCachedProfile), so the second
+    // open of any screen reads nothing new.
+    const profileRead = readCachedProfile(client);
+    const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
+      ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
+      : null));
+    const statsRead = (async () => {
+      const summary = await summarySettled;
+      const memberCount = await memberCountRead;
+      if (memberCount === null) return;
+      if (summary.ok) {
+        const connectors = fullSection(summary.value, 'connectors');
+        const customers = fullSection(summary.value, 'customers');
+        if (connectors !== null && customers !== null) {
+          const profile = await profileRead;
+          const stat = await finishSpaceStat(space, memberCount, profile, [
+            { status: 'fulfilled', value: connectors },
+            { status: 'fulfilled', value: customers },
+          ]);
+          if (stat !== null) state.stats.set(space, stat);
+          return;
+        }
+        if (summary.value !== null && typeof summary.value === 'object'
+          && (summary.value.connectors !== undefined || summary.value.customers !== undefined)) {
+          // A refused half is the same missing enhancement the single
+          // reads would paint: run the same finish with the refusal.
+          const toSettled = (section) => (section === null
+            ? { status: 'rejected', reason: sectionError(summary.value, section === connectors ? 'connectors' : 'customers') }
+            : { status: 'fulfilled', value: section });
+          const profile = await profileRead;
+          const stat = await finishSpaceStat(space, memberCount, profile, [
+            toSettled(connectors),
+            toSettled(customers),
+          ]);
+          if (stat !== null) state.stats.set(space, stat);
+          return;
+        }
+      }
+      await legacy().statsRead;
+    })();
+    // The tab badge from the same summary: open issues plus unresolved
+    // duplicate candidates plus the team duplicates the screen paints,
+    // plus the sync extra — the same addends loadFixCount reads singly.
+    // A summary without the fix section (or a failed one) keeps the
+    // single-read badge: degraded, never silent.
+    const fixRead = summarySettled.then(async (summary) => {
+      if (summary.ok) {
+        const fix = fullSection(summary.value, 'fix');
+        const members = fullSection(summary.value, 'memberships');
+        if (fix !== null && members !== null && Array.isArray(fix.issues) && Array.isArray(fix.candidates)
+          && Array.isArray(members.items)) {
+          const extra = typeof fix.needsFix === 'number' && Number.isInteger(fix.needsFix) && fix.needsFix > 0
+            ? fix.needsFix
+            : 0;
+          try {
+            return countFixes({ issues: fix.issues, candidates: fix.candidates })
+              + duplicateTeamHints(buildTeamRows(members.items)).length + extra;
+          } catch {
+            return null;
+          }
+        }
+      }
+      return loadFixCount(readsClient, { spaceId: space });
+    });
+    const reads = { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+    return { ...reads, fixRead };
   }
 
   /**
@@ -1563,9 +1714,14 @@ export function createSpaziAccessiView(deps) {
     // shares one coalescing wrapper, so profile and members leave exactly
     // once per load (verifica 17/11: 11 caricamenti in 60 s dopo un 429).
     const readsClient = coalesceSpaceReads(client);
-    const countRead = space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
     const reads = hasSpace ? beginReads(space, readsClient) : null;
+    // backlog:30f7ce51c87a: the badge counts from the same summary the page
+    // reads — no extra round trips. Without a summary (or a failed one) the
+    // load falls back to the single reads, badge included.
+    const countRead = reads !== null && reads.fixRead !== undefined
+      ? reads.fixRead
+      : (space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null));
     // A statistic that already landed paints as data, never as pending:
     // the flag flips in the settlement turn, before the data paint below.
     let statsDone = false;

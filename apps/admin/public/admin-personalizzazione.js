@@ -32,7 +32,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
 import { plural } from './admin-labels.js';
-import { readProfile } from './admin-profilo.js';
+import { readCachedProfile } from './admin-profilo.js';
 import { loadFixCount, paintSettingsHead, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
@@ -598,7 +598,7 @@ export function createPersonalizzazioneView(deps) {
     if (space === '') return;
     // The profile links merge like the shared count (review #782 P1);
     // readProfile never throws — an unreadable profile adds nothing.
-    state.profile = await readProfile(deps.client);
+    state.profile = await readCachedProfile(deps.client);
     // The card Collega follows the shared channel state, like Stato sync
     // and #/connettori: it needs the schema's composed adapters (a card
     // nothing serves offers no Collega). A failed schema read keeps the

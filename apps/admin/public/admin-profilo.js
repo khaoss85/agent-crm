@@ -220,6 +220,28 @@ export async function readProfile(client, log = () => {}) {
 }
 
 /**
+ * The same /api/profile answer, read once per client (backlog:30f7ce51c87a:
+ * the heaviest pages asked it on every open even though the answer only
+ * changes on the next app start). Concurrent opens share the one in-flight
+ * read; the settled answer — payload or null — is kept for the client, so a
+ * page that opens later reads nothing new. Display only: anything that
+ * decides access keeps reading its own fresh source (spine context, the
+ * injected session), never this kept answer.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {(...args: any[]) => void} [log]
+ */
+const profileByClient = new WeakMap();
+export function readCachedProfile(client, log = () => {}) {
+  if (client === null || typeof client !== 'object') return readProfile(client, log);
+  let kept = profileByClient.get(client);
+  if (kept === undefined) {
+    kept = readProfile(client, log);
+    profileByClient.set(client, kept);
+  }
+  return kept;
+}
+
+/**
  * The «Collegamenti Google» card for the Connettori screens: same rows as
  * Profilo, painted first as «Leggo…» and again with the answer. `entries`
  * narrows it (the Email detail shows only Gmail).
@@ -237,7 +259,7 @@ export function googleConnectionsCard({ doc, client, entries = PROFILO_CONNECTOR
     paintGoogleConnections(doc, card, answer, entries);
   };
   paint(undefined);
-  const answer = readProfile(client, log);
+  const answer = readCachedProfile(client, log);
   const ready = answer.then(paint);
   return { node: card, ready, answer };
 }
@@ -302,7 +324,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
-  const read = () => readProfile(client, log);
+  const read = () => readCachedProfile(client, log);
 
   function header(page, person, session) {
     const head = el(doc, 'header', 'bo-profilo-head');
