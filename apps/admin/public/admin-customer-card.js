@@ -5087,6 +5087,11 @@ export function createCustomerCardView(deps) {
         composer.appendChild(voiceBar);
         voicePanel.appendChild(composer);
         const voiceError = el('small', 'field-error', '');
+        // Verifica Mac 19/11: «Detta o scrivi prima…» goes as soon as the
+        // operator writes, like the note form's own error.
+        voiceInput.addEventListener('input', () => {
+          if (voiceError.textContent === 'Detta o scrivi prima com’è andata la chiamata.') voiceError.textContent = '';
+        });
         const structureButton = el('button', 'ui-btn ui-btn-secondary bo-voice-ai', 'Ordina con l’AI');
         structureButton.setAttribute('type', 'button');
         structureButton.setAttribute('data-action', 'structure-voice-note');
@@ -5099,6 +5104,8 @@ export function createCustomerCardView(deps) {
         manualButton.setAttribute('data-action', 'voice-draft-manual');
         const showDraft = (on) => {
           draftShownCarried = on;
+          if (on) voicePanel.setAttribute('data-step', 'draft');
+          else voicePanel.removeAttribute('data-step');
           if (on) {
             draftWrap.removeAttribute('hidden');
             manualButton.setAttribute('hidden', '');
@@ -5133,7 +5140,10 @@ export function createCustomerCardView(deps) {
           showDraft(true);
           riassuntoField.focus?.();
         });
-        const saveButton = el('button', 'ui-btn ui-btn-primary bo-voice-save', 'Salva in cronologia');
+        // Verifica Mac 19/11 (lente AI-native): before a draft the AI is the
+        // main action and «Salva» stays secondary; once a draft is on screen
+        // «Salva» takes the lead (data-step on the panel, CSS only).
+        const saveButton = el('button', 'ui-btn ui-btn-secondary bo-voice-save', 'Salva in cronologia');
         saveButton.setAttribute('type', 'button');
         saveButton.setAttribute('data-action', 'save-voice-note');
         structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
@@ -5165,6 +5175,11 @@ export function createCustomerCardView(deps) {
             if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
               voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
               showDraft(true);
+            } else if (Number(error?.status) === 400 || code === 'VALIDATION_ERROR') {
+              // Verifica Mac 19/11 14:57Z: a refused dictation is not a silent
+              // AI — say what the operator can do now, and open the draft.
+              voiceError.textContent = 'L’AI non è riuscita a ordinare questo testo: salvalo così com’è, oppure dividilo tu qui sotto.';
+              showDraft(true);
             } else {
               voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
             }
@@ -5178,9 +5193,12 @@ export function createCustomerCardView(deps) {
           const dictated = String(voiceInput.value ?? '').trim();
           // Without an AI draft the dictated text itself is the note, so the
           // AI-off path still saves — the option said why, it never blocks.
-          const body = riassunto !== '' || decisioni !== '' || passi !== ''
-            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
-            : dictated;
+          // Verifica Mac 19/11: only the parts written land — no empty
+          // «Decisioni:» in the cronologia.
+          const parts = [['Riassunto', riassunto], ['Decisioni', decisioni], ['Prossimi passi', passi]]
+            .filter(([, value]) => value !== '')
+            .map(([label, value]) => `${label}: ${value}`);
+          const body = parts.length > 0 ? parts.join('\n') : dictated;
           if (body === '') {
             voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
             return;

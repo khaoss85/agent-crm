@@ -389,3 +389,29 @@ test('review #1065 P2: with the AI off the opened draft stays open through a rep
   await flush();
   assert.equal(draftWrapOf(mount).getAttribute('hidden'), null);
 });
+
+test('verifica Mac 19/11: a refused dictation (400) says what to do and opens the draft, never «L’AI non ha risposto»', async () => {
+  const { mount } = await open({
+    voiceRefusal: Object.assign(new Error('il dettato non è valido'), { status: 400, code: 'VALIDATION_ERROR' }),
+  });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'Prova Accordo: il cliente richiama lunedì';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('L’AI non è riuscita a ordinare questo testo'));
+  assert.ok(!mount.textContent.includes('L’AI non ha risposto'));
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null, 'the draft opens to split it by hand');
+});
+
+test('verifica Mac 19/11: only the written parts of the draft land in the note', async () => {
+  const { mount, client } = await open();
+  await openPanel(mount);
+  byAction(mount, 'voice-draft-manual').listeners.click[0]();
+  await flush();
+  field(mount, 'voiceRiassunto').value = 'Vuole provare prima di Natale.';
+  byAction(mount, 'save-voice-note').listeners.click[0]();
+  await flush();
+  const saved = client.writes.find((write) => write.path === '/api/customer-hub/notes');
+  assert.ok(saved, 'the note is written');
+  assert.equal(saved.body.body, 'Riassunto: Vuole provare prima di Natale.', 'no empty «Decisioni:» or «Prossimi passi:»');
+});
