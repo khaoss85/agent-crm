@@ -14,7 +14,6 @@ import {
   AGENT_NAME_TAKEN_NOTE,
   AGENT_NO_ENGINE_LABEL,
   AGENT_NO_ENGINE_NOTE,
-  AGENT_PAUSED_DONE,
   AGENT_WAIT_ENGINE_DONE,
   agentMentionPlaceholder,
   buildAgentCards,
@@ -355,12 +354,19 @@ test('7d169a3b1dd2: Affida dice che l’incarico aspetta il motore, o che è spe
   assert.equal(posts(first.client, '/api/agents/assign').length, 1);
   assert.ok(first.mount.textContent.includes(AGENT_WAIT_ENGINE_DONE), 'aspetta il motore e parte da solo');
 
+  // backlog:02d29866d395: in pausa niente «Affida» — al suo posto
+  // «Riprendi», che apre lo stesso passo Conferma di «Riattiva».
   const second = await paintedView({ agents: [{ ...plain, status: 'paused' }] });
   const paused = second.mount.querySelector(`article[data-agent="${MANO.sourceKey}"]`);
-  paused.querySelector(`input[name="talk-${MANO.sourceKey}"]`).value = 'ogni lunedì fai gli auguri';
-  paused.querySelector('form').dispatch('submit', {});
+  assert.equal(paused.querySelector('button[data-action="talk"]'), null, 'niente Affida in pausa');
+  assert.ok(!paused.textContent.includes('Affida'), 'la parola «Affida» non compare');
+  const resume = paused.querySelector('button[data-action="resume-agent"]');
+  assert.ok(resume, 'c’è «Riprendi» al posto di «Affida»');
+  assert.equal(resume.textContent, 'Riprendi');
+  resume.dispatch('click', {});
   await flush();
-  assert.ok(second.mount.textContent.includes(AGENT_PAUSED_DONE), 'in pausa: l’incarico resta fermo');
+  const live = second.mount.querySelector(`article[data-agent="${MANO.sourceKey}"]`);
+  assert.ok(live.querySelector('button[data-action="confirm-retire-agent"]'), '«Riprendi» apre Conferma');
 });
 
 test('7d169a3b1dd2: al rientro la lista è subito quella buona, poi si rilegge', async () => {

@@ -1340,6 +1340,17 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-noassign', 'Nessun incarico per ora.'));
     }
 
+    // backlog:02d29866d395: a paused agent takes no incarichi — the talk
+    // line («Affida») would only fail server-side, so the card shows
+    // «Riprendi» instead, opening the same Conferma step as «Riattiva».
+    if (card.status === 'paused') {
+      const resume = uiButton(documentNode, { variant: 'primary', label: 'Riprendi', attrs: { type: 'button', 'data-action': 'resume-agent' } });
+      resume.addEventListener('click', () => {
+        const release = uiHold(resume, 'Riattivo…');
+        void retireAgent(card, false).finally(() => release());
+      });
+      box.appendChild(resume);
+    } else {
     // Talk to the agent like to a colleague: one line, one button.
     const draft = draftOf(card.sourceKey);
     const form = el(documentNode, 'form', 'bo-agent-talk');
@@ -1391,6 +1402,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
     if (draft.done !== '') box.appendChild(el(documentNode, 'p', 'bo-agent-done', draft.done));
+    }
     // Backlog 7d169a3b1dd2: a hand-written agent is edited and retired
     // from its own card. Backlog 8605b6f520c0: a catalogue agent is
     // retired and resumed from its own card too — the catalogue owns its
