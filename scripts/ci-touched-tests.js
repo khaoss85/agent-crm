@@ -322,6 +322,13 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // fast stayed green while the nightly full suite failed on three of its
   // five tests (main run 43665590178, cure in agent-crm backlog:d6402b8f).
   'tests/tour-claim.test.js',
+  // Reads apps/admin/public/app.js with readFileSync, never importing it:
+  // an app.js-only change selects nothing through the import mapping, so
+  // the fast stayed green while the scheduled full suite failed on
+  // «a stale failure stays diagnosable» (main run 44453039304, #1009
+  // added a silent early return to the router catch, cure in
+  // agent-crm backlog:f268787b).
+  'tests/admin-navigation-loading.test.js',
 ]);
 
 /**

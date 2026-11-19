@@ -756,6 +756,10 @@ test('the declared list holds the acceptance guards', () => {
     REPO_WIDE_GUARDS.includes('tests/admin-client-noslash-regex.test.js'),
     'an admin-client-only PR must run tests/admin-client-noslash-regex.test.js',
   );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only PR must run tests/admin-navigation-loading.test.js (main run 44453039304)',
+  );
 });
 
 test('a payments-only change runs the guards on top of its selection', () => {
@@ -820,6 +824,29 @@ test('an admin-client-only change runs the noslash regex guard on top of its sel
   assert.ok(
     guarded.includes('tests/admin-client-noslash-regex.test.js'),
     'an admin-calendario.js-only change must run tests/admin-client-noslash-regex.test.js',
+  );
+});
+
+test('an app.js-only change runs the navigation-loading guard on top of its selection', () => {
+  // apps/admin/public/app.js is a browser script no test relatively
+  // imports: tests/admin-navigation-loading.test.js reads it with
+  // readFileSync instead — so without the guard list an app.js-only PR
+  // would run nothing of it while the scheduled full suite fails on the
+  // router catch (main run 44453039304, #1009).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/admin-navigation-loading.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/app.js']);
+  assert.ok(
+    guarded.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only change must run tests/admin-navigation-loading.test.js',
   );
 });
 
