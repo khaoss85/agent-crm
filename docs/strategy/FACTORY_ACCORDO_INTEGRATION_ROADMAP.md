@@ -1,18 +1,18 @@
-# Factory × Accordo — Integration Roadmap
+# Orchestro × Accordo — Integration Roadmap
 
 **Status:** strategy and architecture planning only.  
-**Target repository:** `agent-crm/docs/strategy/FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`  
-**Principle:** finish and freeze Factory Core v1 first; integrate it into Accordo through one narrow, versioned seam; do not build a second orchestrator.
+**Engine decision (Dan, 2026-11-12, ADR-046):** agent teams in Accordo run on the Orchestro loop. Accordo owns interface, data and approvals; Orchestro executes. Earlier revisions of this document named Northstar Factory as the engine and gated integration on a "Factory Core v1 — Integration Freeze" with "FA1 Builder Pack" first: that premise is superseded and dropped. There is no freeze gate and no FA-first sequence.  
+**File name:** kept as `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` so existing references stay valid.  
+**Principle:** run agent teams on the Orchestro loop through one narrow, versioned seam; do not build a second orchestrator.
 
 ---
 
 ## 1. Decision
 
-Northstar Factory remains an independent, local-first, open-source governed execution loop.
+Orchestro is the governed execution loop for Accordo agent teams.
 
-Accordo does not absorb or reimplement Factory.
-
-Accordo becomes a first-class consumer of Factory after Factory Core v1 is proven and frozen.
+Accordo does not absorb or reimplement the loop.
+Orchestro does not absorb Accordo's business truth.
 
 The initial integration is deliberately narrow:
 
@@ -21,9 +21,9 @@ Accordo business goal / SolutionPlan
         ↓
 bounded CLI + JSON
         ↓
-Factory Project Pack
+Orchestro governed loop
         ↓
-Factory selector / checkpoint / ledger
+Orchestro work selection / checkpoint
         ↓
 local coding-agent CLI
         ↓
@@ -36,19 +36,19 @@ independent verification
 receipt / measured outcome
 ```
 
-Later, the same seam may support operational business initiatives such as marketing, content, SEO, customer success or service. Those are downstream proofs, not requirements for Factory Core v1.
+Later, the same seam may support operational business initiatives such as marketing, content, SEO, customer success or service. Those are downstream proofs, not requirements for the first integration.
 
 ---
 
 ## 2. Invariants
 
-### 2.1 Factory stays local-first
+### 2.1 Orchestro executes through installed coding-agent CLIs
 
-Factory execution continues to use installed coding-agent CLIs and their native authenticated sessions.
+Orchestro execution continues to use installed coding-agent CLIs and their native authenticated sessions.
 
 No mandatory model API.
 No automatic fallback to token-billed APIs.
-No provider-specific business semantics in the kernel.
+No provider-specific business semantics in the loop.
 
 The executor is an adapter behind one contract. Provider differences stay inside adapters.
 
@@ -64,18 +64,18 @@ Accordo owns:
 - external business actions;
 - business audit and operational evidence.
 
-Factory must not become a CRM database, campaign system, secret store or provider integration layer.
+Orchestro must not become a CRM database, campaign system, secret store or provider integration layer.
 
-### 2.3 Factory owns loop truth
+### 2.3 Orchestro owns loop truth
 
-Factory owns:
+Orchestro owns:
 
 - signals admitted to the loop;
 - deterministic work selection;
 - checkpoint and stop semantics;
 - executor session lifecycle;
 - evidence plans;
-- Factory lifecycle receipts;
+- Orchestro lifecycle receipts;
 - independent technical verification;
 - recurrence / durable loop state where applicable.
 
@@ -101,7 +101,7 @@ Native CLI or MCP access is never a shortcut around Accordo policy, approval, id
 
 ### 2.5 Bounded context only
 
-Factory consumes bounded, machine-readable Accordo views.
+Orchestro consumes bounded, machine-readable Accordo views.
 
 No full CRM database dump into an agent context.
 No arbitrary SQL seam.
@@ -124,13 +124,13 @@ This is the same architectural shape already used by both projects.
 
 ### Finding A — premature generalization
 
-**Risk:** turning Factory immediately into a universal `Goal → Action → Outcome` engine would abstract before a second real domain proves the abstraction.
+**Risk:** turning the loop immediately into a universal `Goal → Action → Outcome` engine would abstract before a second real domain proves the abstraction.
 
-**Decision:** do not redesign the kernel for Accordo.
+**Decision:** do not design a new generic engine for Accordo.
 
-Use the current Factory model and add only the minimum adapter / Project Pack required by the pilot.
+Use the Orchestro loop and add only the minimum adapter needed by the pilot.
 
-**Rule of two:** a primitive moves toward generic Factory core only after it is independently required by:
+**Rule of two:** a primitive moves toward generic loop core only after it is independently required by:
 
 1. the existing engineering/reliability use case; and
 2. a real Accordo use case.
@@ -141,7 +141,7 @@ No abstraction based only on anticipated reuse.
 
 ### Finding B — two orchestrators
 
-Accordo already has durable jobs, operations, policies and managed-runtime work. Factory already has selector, supervisor, checkpoint and ledger semantics.
+Accordo already has durable jobs, operations, policies and managed-runtime work. Orchestro already has work selection, checkpoint and receipt semantics.
 
 If both systems select work, retry work and declare completion, integration becomes ambiguous.
 
@@ -154,13 +154,13 @@ If both systems select work, retry work and declare completion, integration beco
 | Approval and policy | Accordo |
 | External side effect | Accordo |
 | When infrastructure wakes a worker | Accordo / deployment |
-| What Factory should work on next | Factory |
-| Coding-agent executor session | Factory |
-| Factory lifecycle / receipt | Factory |
-| Technical verifier | Factory |
-| Business result / business metric | Accordo source, referenced by Factory |
+| What the loop should work on next | Orchestro |
+| Coding-agent executor session | Orchestro |
+| Orchestro lifecycle / receipt | Orchestro |
+| Technical verifier | Orchestro |
+| Business result / business metric | Accordo source, referenced by Orchestro |
 
-A scheduler may wake Factory. It must not replace Factory's selector.
+A scheduler may wake Orchestro. It must not replace Orchestro's selection.
 
 ---
 
@@ -168,7 +168,7 @@ A scheduler may wake Factory. It must not replace Factory's selector.
 
 A fully managed cloud agent and a local subscription CLI are different products.
 
-Trying to hide this would either break the local-first promise or force Accordo to become a model reseller.
+Trying to hide this would either break the installed-CLI execution model or force Accordo to become a model reseller.
 
 **Decision:** first integration uses a user-owned runner.
 
@@ -179,7 +179,7 @@ Accordo / repository
       ↓
 work available
       ↓
-Factory Runner
+Orchestro runner
 (user machine or user-owned always-on host)
       ↓
 installed provider CLI
@@ -187,7 +187,7 @@ installed provider CLI
 
 The execution host may evolve later, but the contract does not change.
 
-A future managed runner is a deployment option, not a new Factory architecture, and only exists where the selected provider runtime and terms permit it.
+A future managed runner is a deployment option, not a new loop architecture, and only exists where the selected provider runtime and terms permit it.
 
 ---
 
@@ -209,7 +209,7 @@ Do not create a universal `Initiative` runtime before one real use case needs it
 
 Accordo deliberately exposes deterministic CLI/JSON surfaces and currently does not ship a generic orchestrator or plan executor.
 
-Factory should fill that missing execution role.
+Orchestro fills that execution role.
 
 Do not build an Accordo-specific autonomous-loop engine.
 
@@ -219,88 +219,35 @@ Do not build an Accordo-specific autonomous-loop engine.
 
 Provider neutrality is not achieved by adding provider names everywhere.
 
-Factory keeps one `CodingAgentAdapter` contract.
+Orchestro keeps one `CodingAgentAdapter` contract.
 
-Current executor support may evolve, but every new provider must pass the same adapter/conformance tests.
-
-Adding Muse, Gemini or another provider is an adapter change only if the provider can satisfy the existing execution contract. It does not justify a kernel branch.
+Current executor support may evolve, but every new provider must pass the same adapter/conformance tests. Adding a provider is an adapter change only if the provider can satisfy the existing execution contract. It does not justify a loop branch.
 
 ---
 
-## 4. Factory closure gate
+## 4. Engine readiness — no freeze gate
 
-The correct integration gate is **Factory Core v1**, not completion of every future Factory product phase.
+The earlier gate ("Factory Core v1 — Integration Freeze" after closing roadmap phases on a real product) is superseded by the 2026-11-12 decision and dropped. Integration does not wait for any freeze.
 
-Current roadmap shape:
+Orchestro is the execution loop now. An integration is ready when its own seam is ready:
 
-```text
-Phase 1  Capability Map + Engineering Memory             CLOSED
-Phase 2  Product-Aware Advisor V1                        CLOSED
-Phase 3  Owner Decision Loop V1                          CLOSED
-Phase 4  Capability Success + Benefit Verification       CLOSED
-Phase 5  Owner Decision → Governed Work Bridge           CLOSED
-Phase 6  End-to-End Product Outcome Pilot                NEXT / gating
-Phase 7  Opportunity Discovery / Advisor Perspectives    post-v1 evolution
-Phase 8  Operational Living Map / Live Work Inbox        post-v1 evolution
-Phase 9  Policy Learning / Gold Rules                    post-v1 evolution
-```
+1. The bounded CLI/JSON inputs the loop consumes have explicit stable versions or a documented compatibility rule.
+2. The checked plans, policies and approval boundaries the loop must respect are explicit.
+3. The authoritative verification commands for the loop's output are explicit.
+4. Independent verification remains impossible for the executor to self-certify.
+5. No managed business side effect bypasses an Accordo managed action / operation boundary.
 
-### Factory Core v1 is integration-ready when
-
-1. **Phase 6 closes on a real product**, not the demo.
-2. The product-success metric is distinct from technical verification.
-3. The loop crosses:
-   `evidence → recommendation → owner decision → governed work → implementation → live → technical verification → post-release measurement → honest benefit verdict`.
-4. The Project Pack contract used by the pilot is versioned and frozen.
-5. CLI/JSON outputs consumed by external integrations have explicit stable versions or a documented compatibility rule.
-6. Independent verification remains impossible for the executor to self-certify.
-7. The local subscription-CLI execution model remains the default.
-8. Any kernel-hardening item proven load-bearing by the Phase-6 pilot is closed.
-9. No Phase-7/8/9 feature is pulled forward merely to make the integration look complete.
-
-### Important roadmap refinement
-
-Closing Phase 6 should create a named milestone:
-
-> **Factory Core v1 — Integration Freeze**
-
-That milestone freezes the seam Accordo is allowed to depend on.
-
-Phases 7–9 continue afterward, but they do not block the first Accordo integration.
+No future loop phase may be pulled forward merely to make an integration look complete.
 
 ---
 
 ## 5. Integration sequence
 
-### FA0 — Factory Core v1 closure
-
-**Repository:** `agentic-factory`
-
-Goal: close the existing Factory roadmap gate before Accordo depends on it.
-
-No Accordo feature work belongs here.
-
-Deliverables:
-
-- real Phase-6 product pilot;
-- stable Project Pack / CLI seam;
-- conformance fixtures for the integration surface;
-- provider-adapter contract confirmed;
-- explicit compatibility / versioning policy.
-
-Exit criterion:
-
-> A second repository can consume Factory without importing Factory internals or depending on undocumented output.
-
----
-
-### FA1 — Accordo Builder Pack
-
-**Repositories:** `agent-crm` + a thin Factory pack/adapter.
+### S1 — Builder execution on the Orchestro loop
 
 This is the first integration because it reuses what both projects already prove.
 
-The Accordo side already exposes deterministic inspection and plan contracts. Factory supplies the missing execution loop.
+The Accordo side already exposes deterministic inspection and plan contracts. Orchestro supplies the missing execution loop.
 
 Target flow:
 
@@ -309,20 +256,20 @@ business goal
 → Accordo app inspection
 → checked SolutionPlan
 → owner approval where required
-→ Factory intake
-→ Factory selects governed implementation work
+→ Orchestro intake
+→ Orchestro selects governed implementation work
 → local coding-agent CLI changes source
 → Accordo checks / tests / JTBD evidence
 → merge / deploy where allowed
-→ Factory independent verification
+→ Orchestro independent verification
 → receipt
 ```
 
 Constraints:
 
 - no new Accordo orchestrator;
-- no Factory kernel fork;
-- no direct database access added for Factory;
+- no Orchestro loop fork;
+- no direct database access added for the loop;
 - no provider-specific branch in Accordo;
 - no business-operation runtime yet.
 
@@ -332,15 +279,15 @@ Acceptance:
 - resume works after coding-agent session interruption;
 - switching between at least two conforming executor adapters does not change durable semantics;
 - Accordo's deterministic checks are authoritative for Accordo-specific validity;
-- Factory remains authoritative for its own work lifecycle.
+- Orchestro remains authoritative for its own work lifecycle.
 
 ---
 
-### FA2 — Supervised Business Initiative Pilot
+### S2 — Supervised business initiative pilot
 
-Only after FA1 is stable.
+Only after the builder seam is stable.
 
-Goal: prove Factory can drive one non-engineering business loop without changing its kernel.
+Goal: prove Orchestro can drive one non-engineering business loop without changing its core.
 
 Choose **one** bounded initiative.
 
@@ -362,27 +309,27 @@ The integration should look like:
 
 ```text
 Accordo goal + metric + constraints
-→ bounded Pack sources
-→ Factory work selection
+→ bounded loop inputs
+→ Orchestro work selection
 → local coding-agent CLI
 → proposal / asset / checked source
 → Accordo approval
 → Accordo managed action
 → Accordo measurement
-→ Factory receipt / next checkpoint
+→ Orchestro receipt / next checkpoint
 ```
 
 Exit criterion:
 
-> The same Factory kernel completes one operational loop whose business truth lives in Accordo.
+> The same Orchestro loop completes one operational loop whose business truth lives in Accordo.
 
 Only now is there evidence for any generic business-loop abstraction.
 
 ---
 
-### FA3 — Operational initiative packs
+### S3 — Operational initiative packs
 
-After the supervised pilot, expand through Accordo domain packages, not Factory kernel changes.
+After the supervised pilot, expand through Accordo domain packages, not loop-core changes.
 
 Possible future packs:
 
@@ -402,13 +349,13 @@ Each pack owns its domain-specific:
 - approval boundaries;
 - evidence.
 
-Factory continues to see the same small contracts.
+Orchestro continues to see the same small contracts.
 
 ---
 
-### FA4 — Optional Accordo Cloud control plane
+### S4 — Optional Accordo Cloud control plane
 
-Cloud monetization sits around the integration, not inside Factory core.
+Cloud monetization sits around the integration, not inside the loop core.
 
 Accordo Cloud may add:
 
@@ -416,7 +363,7 @@ Accordo Cloud may add:
 - remote queue visibility;
 - managed business credentials;
 - approvals;
-- centralized projections of Factory status;
+- centralized projections of Orchestro status;
 - integrations;
 - retention;
 - team access;
@@ -425,9 +372,9 @@ Accordo Cloud may add:
 
 The first version does **not** need to host the model.
 
-A local/user-owned Factory runner can remain the execution worker.
+A local/user-owned Orchestro runner can remain the execution worker.
 
-Factory's local ledger remains authoritative for Factory lifecycle unless a future explicit protocol changes that rule. Cloud projections must not silently become a second ledger.
+Orchestro's local lifecycle record remains authoritative for loop lifecycle unless a future explicit protocol changes that rule. Cloud projections must not silently become a second ledger.
 
 ---
 
@@ -441,7 +388,7 @@ Keep:
 GOAL → DISCOVER → ASSESS → DESIGN → PLAN → APPROVE
 ```
 
-Factory begins where durable execution starts.
+Orchestro begins where durable execution starts.
 
 Refined model:
 
@@ -449,16 +396,16 @@ Refined model:
 Accordo:
 GOAL → DISCOVER → ASSESS → DESIGN → PLAN → APPROVE
                                          ↓
-Factory:
+Orchestro:
                                   SELECT → EXECUTE
                                          ↓
-Accordo + Factory:
+Accordo + Orchestro:
                                   VERIFY → OBSERVE
                                          ↓
 Accordo:
                                     RECOMMEND
                                          ↓
-Factory:
+Orchestro:
                                       ITERATE
 ```
 
@@ -468,53 +415,53 @@ No second planner is introduced.
 
 Keep `role-agent packs` as Accordo domain compositions.
 
-Do not turn Factory into the role-pack model.
+Do not turn Orchestro into the role-pack model.
 
 A role pack declares business capabilities and limits.
-Factory runs the governed work loop.
+Orchestro runs the governed work loop.
 Accordo executes governed business actions.
 
 This preserves:
 
 - business-domain modularity in Accordo;
-- provider-neutral agent execution in Factory;
+- provider-neutral agent execution in Orchestro;
 - one source of policy truth;
 - one source of loop truth.
 
 ### Marketing & Growth Operations
 
-Do not rewrite MK0–MK7 around Factory.
+Do not rewrite MK0–MK7 around Orchestro.
 
-Factory becomes the execution mechanism available to the workstream when needed.
+Orchestro becomes the execution mechanism available to the workstream when needed.
 
 For example:
 
 ```text
 MK1 Funnel Insight + Campaign Proposal
-    → may produce governed work for Factory
+    → may produce governed work for Orchestro
 
 MK3 Content + Landing + Tracking
-    → Factory may build checked assets
+    → Orchestro may build checked assets
     → Accordo still owns publish approval and provider action
 
 MK4+ durable journeys
     → Accordo jobs/outbox remain the durable business runtime
-    → Factory does not become the journey scheduler
+    → Orchestro does not become the journey scheduler
 ```
 
 ### Accordo Cloud
 
 Cloud stays the managed business/control-plane layer.
 
-Factory stays the agent execution loop.
+Orchestro stays the agent execution loop.
 
-A cloud worker and a Factory executor are not the same responsibility.
+A cloud worker and an Orchestro executor are not the same responsibility.
 
 ---
 
 ## 7. Provider strategy
 
-Factory currently follows the correct pattern: subscription-CLI execution behind adapters.
+Orchestro execution follows the installed-CLI pattern: provider CLIs run behind adapters.
 
 The durable rule is:
 
@@ -545,7 +492,7 @@ Do not design a large SDK first.
 
 Prefer a small seam:
 
-### Accordo → Factory
+### Accordo → Orchestro
 
 Bounded CLI/JSON answers for:
 
@@ -555,7 +502,7 @@ Bounded CLI/JSON answers for:
 - approved action boundaries;
 - authoritative verification commands.
 
-### Factory → Accordo
+### Orchestro → Accordo
 
 References / receipts for:
 
@@ -570,7 +517,7 @@ References / receipts for:
 
 All business mutations remain existing or future Accordo managed actions.
 
-No new “Factory can execute arbitrary CRM command” endpoint.
+No new “Orchestro can execute arbitrary CRM command” endpoint.
 
 ---
 
@@ -580,17 +527,17 @@ Until a real integration proves the need:
 
 - universal `Initiative` database model;
 - universal business-agent ontology;
-- generic tool registry in Factory;
+- generic tool registry in the loop;
 - duplicate Accordo scheduler;
 - duplicate Accordo approval engine;
 - duplicate business audit log;
-- Factory-side credential vault;
-- Factory-side customer data store;
+- loop-side credential vault;
+- loop-side customer data store;
 - hosted model billing;
 - universal MCP gateway;
 - autonomous policy learning;
 - cross-domain memory engine;
-- a special Factory branch for each agent provider.
+- a special loop branch for each agent provider.
 
 ---
 
@@ -599,24 +546,18 @@ Until a real integration proves the need:
 ```text
 NOW
 │
-├─ 1. Close Factory Phase 6 on a real product
+├─ 1. Run builder execution on the Orchestro loop
+│      goal / SolutionPlan → Orchestro loop → verified code change
 │
-├─ 2. Declare "Factory Core v1 — Integration Freeze"
+├─ 2. Freeze/version only the external seams the loop needs
 │
-├─ 3. Freeze/version only the external seams Accordo needs
+├─ 3. Dogfood until the seam is boring
 │
-├─ 4. Build FA1 Accordo Builder Pack
-│      goal / SolutionPlan → local Factory loop → verified code change
-│
-├─ 5. Dogfood until the seam is boring
-│
-└─ 6. Select ONE supervised business initiative for FA2
+└─ 4. Select ONE supervised business initiative
        only then test non-engineering generality
 ```
 
-Do not start Cloud-specific execution work before step 4 proves the seam.
-
-Do not wait for Factory Phases 7–9 before step 4.
+Do not start Cloud-specific execution work before step 1 proves the seam.
 
 ---
 
@@ -625,16 +566,16 @@ Do not wait for Factory Phases 7–9 before step 4.
 The product architecture becomes:
 
 ```text
-                    FACTORY
-             open-source execution kernel
-       local-first / provider-neutral coding CLI
+                   ORCHESTRO
+              governed execution loop
+       installed coding-agent CLIs behind adapters
                          │
-             stable Project Pack seam
+              stable bounded seam
                          │
                          ▼
                      ACCORDO
          customer & revenue business system
-       data / policy / approvals / operations
+       interface / data / policy / approvals
                          │
                          ▼
                   ACCORDO CLOUD
@@ -643,8 +584,8 @@ The product architecture becomes:
 
 This gives each product one clear job:
 
-**Factory**
-> Govern autonomous coding-agent work and prove what happened.
+**Orchestro**
+> Run governed agent-team work and prove what happened.
 
 **Accordo**
 > Define what the business is, what it wants, what agents may do, and whether the result mattered.
@@ -652,19 +593,19 @@ This gives each product one clear job:
 **Accordo Cloud**
 > Operate that business system as a managed product.
 
-The architecture remains open, local-first, provider-agnostic and scalable without turning either repository into a universal agent platform.
+The architecture remains provider-neutral and scalable without turning either repository into a universal agent platform.
 
 ---
 
 ## 12. Roadmap simplification consequences
 
 Now that the seam above is defined, Accordo roadmaps simplify by rule, not by
-taste. The question for any planned Accordo work is: *does Factory already own
+taste. The question for any planned Accordo work is: *does Orchestro already own
 the generic mechanism?* If yes, Accordo keeps the business outcome and takes a
 dependency — it does not build the mechanism twice.
 
 Business retry is not coding-agent retry. The business scheduler is not the
-Factory selector. The CRM audit is not the Factory lifecycle ledger. The pairs
+Orchestro selector. The CRM audit is not the Orchestro lifecycle receipt. The pairs
 share nouns, not ownership.
 
 ### KEEP IN ACCORDO
@@ -674,34 +615,34 @@ contracts; business policies; approvals; tenant/auth/business identity;
 provider credentials; managed business actions; jobs/outbox/business
 scheduler; business-side retries/idempotency/reconciliation; CRM/business audit
 and trace; domain-specific verification commands (AX1/AX2, DX5 Project
-Verify, DX6 Scenario Runner, DX10 Implementation Evidence — Factory may invoke
+Verify, DX6 Scenario Runner, DX10 Implementation Evidence — Orchestro may invoke
 and sequence them, never duplicate their domain logic); business outcomes and
 measurement.
 
-### OWNED BY FACTORY
+### OWNED BY ORCHESTRO
 
 Generic work selection; selector/checkpoint/stop semantics; coding-agent
 execution lifecycle; coding-agent resume/retry; coding-agent provider
 adapters; Claude Code / Codex / Muse / future CLI differences; engineering
-execution context; Factory lifecycle ledger; evidence orchestration;
+execution context; Orchestro lifecycle ledger; evidence orchestration;
 independent technical verification; recurrence of the governed implementation
 loop.
 
 ### CONSUMED THROUGH THE SEAM
 
-Accordo authorities that Factory invokes (inspection, checked plans,
-verification commands, JTBD evidence); bounded Project Pack inputs (DX9-style
-context, when built); projections of Factory status in Cloud; role-agent
+Accordo authorities that Orchestro invokes (inspection, checked plans,
+verification commands, JTBD evidence); bounded pack inputs (DX9-style
+context, when built); projections of Orchestro status in Cloud; role-agent
 packs as business capability compositions executed through the loop.
 
-### NOT REQUIRED FOR FA1
+### NOT REQUIRED FIRST
 
 Project MCP parity (DX13 — CLI/JSON suffices); skill portability beyond
-Accordo's own source hygiene (DX2 — Factory adapters own execution
-differences); hosted model or mandatory model API; duplicate Factory queue or
+Accordo's own source hygiene (DX2 — adapters own execution
+differences); hosted model or mandatory model API; duplicate loop queue or
 ledger; Cloud-side selector or supervisor; universal `Initiative` runtime.
 
-The following must NOT become new Accordo primitives for the Factory
+The following must NOT become new Accordo primitives for the Orchestro
 integration: generic agent orchestrator, generic plan executor, coding-agent
 supervisor, coding-agent checkpoint/resume engine, generic coding-model
 router, generic engineering-memory runtime, universal Initiative
@@ -713,22 +654,22 @@ provider-specific execution branches.
 
 ## 13. Roadmap impact summary
 
-| AREA | CURRENT ACCORDO ROADMAP | AFTER FACTORY | ACTION |
+| AREA | CURRENT ACCORDO ROADMAP | WITH ORCHESTRO | ACTION |
 |---|---|---|---|
-| JTBD | 600 assigned jobs incl. 8 with generic execution mechanisms | 8 keep outcome, take Factory implementation dependency; catalogue unchanged | DEPENDENCY |
-| Objective-driven AX | GOAL → … → APPROVE, execution unspecified | APPROVE → Factory SELECT → EXECUTE; VERIFY/OBSERVE shared | NARROW |
-| Coder DX | Authorities + context/MCP/skill portability | Authorities stay; DX9 reusable seam input; DX13/DX2 not FA1 gates | KEEP |
-| Role-agent packs | Domain compositions incl. orchestration vocabulary | Same slices AW0–AW4; packs compose, Factory loops | KEEP |
-| Marketing | MK0–MK7 with own scheduler/runtime | Unchanged; Factory available as execution mechanism | KEEP |
+| JTBD | 600 assigned jobs incl. 8 with generic execution mechanisms | 8 keep outcome, take Orchestro implementation dependency; catalogue unchanged | DEPENDENCY |
+| Objective-driven AX | GOAL → … → APPROVE, execution unspecified | APPROVE → Orchestro SELECT → EXECUTE; VERIFY/OBSERVE shared | NARROW |
+| Coder DX | Authorities + context/MCP/skill portability | Authorities stay; DX9 reusable seam input; DX13/DX2 not first-integration gates | KEEP |
+| Role-agent packs | Domain compositions incl. orchestration vocabulary | Same slices AW0–AW4; packs compose, Orchestro loops | KEEP |
+| Marketing | MK0–MK7 with own scheduler/runtime | Unchanged; Orchestro available as execution mechanism | KEEP |
 | Cloud | Managed control plane + Agent Operations surface | Explicit infra-operation surface; no model/queue/ledger/selector | NARROW |
 | MCP/tool surface | CLI-first, MCP mirrors | Unchanged; mirrors follow CLI, never lead | KEEP |
-| Context/memory | DX9 context pack; memory in agent-eng JTBDs | DX9 bounded seam input; generic memory is Factory-owned | DEPENDENCY |
-| Model/provider routing | AGENT-ENG-014, provider rows in DX | Outcome stays; routing owned by Factory adapters | DEPENDENCY |
-| Retries/checkpoints | Business retries + agent retry JTBDs | Business side Accordo; coding-agent side Factory | NARROW |
-| Schedulers | Spine jobs/outbox + journey scheduler | Unchanged; never the Factory selector | KEEP |
-| Ledgers/evidence | CRM audit + Factory lifecycle receipts | Separate by rule; Cloud shows projections only | KEEP |
+| Context/memory | DX9 context pack; memory in agent-eng JTBDs | DX9 bounded seam input; generic memory is Orchestro-owned | DEPENDENCY |
+| Model/provider routing | AGENT-ENG-014, provider rows in DX | Outcome stays; routing owned by Orchestro adapters | DEPENDENCY |
+| Retries/checkpoints | Business retries + agent retry JTBDs | Business side Accordo; coding-agent side Orchestro | NARROW |
+| Schedulers | Spine jobs/outbox + journey scheduler | Unchanged; never the Orchestro selector | KEEP |
+| Ledgers/evidence | CRM audit + Orchestro lifecycle receipts | Separate by rule; Cloud shows projections only | KEEP |
 | Generic orchestrator/supervisor/SDK | Refused in three docs | Refused a fourth time here; REMOVE DUPLICATION if proposed | REMOVE DUPLICATION |
 
-No Accordo roadmap is renumbered by this table. DEFER applies to FA2+ packs
-(marketing/content/SEO/prospecting/success/service), which expand only after
-FA1 proves the seam.
+No Accordo roadmap is renumbered by this table. DEFER applies to operational
+packs (marketing/content/SEO/prospecting/success/service), which expand only
+after the builder seam proves itself.

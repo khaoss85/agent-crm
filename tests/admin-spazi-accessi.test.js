@@ -23,6 +23,7 @@ import {
   SPAZI_AI_SWITCHES,
   buildSpaziCards,
   buildTeamRows,
+  coalesceSpaceReads,
   countSpaceChannels,
   countSpaceCustomers,
   createSpaziAccessiView,
@@ -39,6 +40,7 @@ import {
   SPACE_AI_PERMISSION_DEFAULTS,
 } from '../packages/space-permissions/src/index.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { spaceMenuItems } from '../apps/admin/public/admin-shell.js';
 
 const flush = async (rounds = 12) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
@@ -184,6 +186,31 @@ test('space cards name the operator role, hostile names stay text', () => {
   assert.equal(spaceRoleLabel('observer'), 'Osservatore');
   assert.equal(spaceRoleLabel('sconosciuto'), 'sconosciuto');
   assert.equal(spaceRoleLabel(null), 'non disponibile');
+});
+
+test('space cards wear the menu badge: one function decides sigla and color', () => {
+  // backlog:56c9ec170eaa: stessa sigla e stesso colore del menu «Cambia spazio».
+  const spaces = [
+    { id: 'spazio-1', name: 'Presti Group' },
+    { id: 'spazio-2', name: 'Prova Validazione B1' },
+  ];
+  const cards = buildSpaziCards({ spaces, activeSpaceId: 'spazio-1', role: 'owner' });
+  const menu = spaceMenuItems(spaces, 'spazio-1');
+  assert.deepEqual(cards.map((card) => card.initials), menu.map((row) => row.initials));
+  assert.deepEqual(cards.map((card) => card.badgeClass), menu.map((row) => row.badgeClass));
+  assert.ok(cards.every((card) => /^bo-space-badge--p\d+$/.test(card.badgeClass)), 'every card carries a palette class');
+});
+
+test('space cards paint the palette badge, never the black initials', async () => {
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const { mount, view: v } = view({ client: stubClient({ members: [] }), spaces });
+  await v.render();
+  await flush();
+  const badge = mount.findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+  assert.ok(badge, 'the card wears the menu badge');
+  assert.equal(badge.textContent, 'NE');
+  assert.match(badge.getAttribute('class') ?? '', /bo-space-badge--p\d+/, 'the badge carries the palette color');
 });
 
 test('effective switches default on except send-without-approval, other spaces never leak in', () => {
@@ -1022,7 +1049,7 @@ test('Apri on another space picks it and goes back to Oggi; the active card neve
 test('the dashed new-space box stays last and opens the verbatim C20 menu', async () => {
   // specs/account.md C11 + C20 (fetta 5): riquadro after the cards, menu with
   // the two verbatim voices and subtitles. Picking a voice invents nothing:
-  // creation lives in the control plane, the page only says so.
+  // creation lives in the management console, the page only says so.
   const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
   const calls = [];
   const { mount, seen, view: v } = view({ client: stubClient({ members, calls }) });
@@ -1048,9 +1075,27 @@ test('the dashed new-space box stays last and opens the verbatim C20 menu', asyn
   assert.ok(manual, 'the manual voice is a menu item');
   await manual.listeners.click[0]();
   await flush();
-  assert.match(text(mount), /control plane/, 'manual is honest: no space is invented here');
+  assert.match(text(mount), /console di gestione/, 'manual is honest: no space is invented here');
+  assert.ok(!/control plane/i.test(text(mount)), 'no technical words on screen');
   assert.ok(!calls.some((call) => String(call.path).includes('space') && call.method === 'POST'), 'no space creation call exists');
   assert.ok(seen.toast.length >= 0, 'toast channel stays available');
+});
+
+test('new-space voices name the console, never technical words', async () => {
+  // backlog:67a1cb8d609b: nessuna parola tecnica a schermo.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, seen, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const adderToggle = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  await adderToggle.listeners.click[0]();
+  await flush();
+  const ai = mount.findAll('button').find((node) => String(node.textContent).includes('Crea con l\u2019AI'));
+  assert.ok(ai, 'the AI voice is a menu item');
+  await ai.listeners.click[0]();
+  await flush();
+  assert.ok(seen.toast.some((row) => /console di gestione/.test(row.message)), 'AI voice points to the console');
+  assert.ok(!seen.toast.some((row) => /control plane/i.test(row.message)), 'AI toast has no technical words');
 });
 
 test('the invite menu shows the verbatim C21 voices; manual opens the spine form', async () => {
@@ -1514,7 +1559,10 @@ test('dd570f6d501e: Escape on the new-space button closes the menu too', async (
   assert.equal(newSpaceToggle(mount).__focused, true, 'focus stays on the button');
 });
 
-test('dd570f6d501e: an outside click closes the new-space menu without stealing focus', async () => {
+test('dd570f6d501e: an outside click closes the new-space menu and returns focus to the opener', async () => {
+  // Corrected acceptance (verifier BACK on 66476a0, supervisor note): an
+  // outside click used to leave focus where the user put it (BODY in the
+  // Mac check) — it must return to the element that opened the panel.
   const docClicks = [];
   const doc = {
     ...createFakeDocument(),
@@ -1531,7 +1579,7 @@ test('dd570f6d501e: an outside click closes the new-space menu without stealing 
   for (const handler of docClicks) handler({ target: mount });
   await flush();
   assert.equal(newSpaceMenus(mount).length, 0, 'an outside click closes the menu');
-  assert.notEqual(newSpaceToggle(mount).__focused, true, 'an outside click leaves focus where the user put it');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the element that opened the panel');
 });
 
 test('dd570f6d501e: the opening click stops propagation so the document closer never sees it', async () => {
@@ -1593,7 +1641,7 @@ test('dd570f6d501e: picking a voice closes the menu and focus returns to the but
   await manual.listeners.click[0]();
   await flush();
   assert.equal(newSpaceMenus(mount).length, 0, 'picking a voice closes the menu');
-  assert.match(text(mount), /control plane/, 'manual stays honest: no space is invented here');
+  assert.match(text(mount), /console di gestione/, 'manual stays honest: no space is invented here');
   assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the button');
 });
 
@@ -1873,12 +1921,84 @@ test('9d06eb1e174b: the card role is a skeleton while the context read is out, t
   assert.match(text(mount), /Tu: Titolare/);
 });
 
-test('9d06eb1e174b: a failed context read still says the role is not recognized', async () => {
+test('9d06eb1e174b: a failed context read is an error with Riprova, never «ruolo non riconosciuto» (backlog:2de01913d276)', async () => {
   const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
   const { mount, view: v } = view({ client: stubClient({ fail: { context: failed } }) });
   await v.render();
   await flush();
-  assert.match(text(mount), /ruolo non riconosciuto/);
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'a failed read is never an unknown role');
+  assert.match(text(mount), /non leggibile/, 'the cards say the role could not be read');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Riprova'), 'the operator retries');
+});
+
+// backlog:2de01913d276 (verifica 17/11: dopo un 429 su profilo e membri le
+// schede scrivevano «Tu: ruolo non riconosciuto», 11 caricamenti in 60 s).
+// Repro: un errore di rete non è mai un ruolo sconosciuto — serve un errore
+// con «Riprova» — e un caricamento legge profilo/membri una sola volta.
+test('2de01913d276: a 429 on context and members is an error with Riprova, read once per load', async () => {
+  const limited = Object.assign(new Error('too many requests'), { code: 'TOO_MANY_REQUESTS', status: 429 });
+  const failures = { context: limited, members: limited };
+  const calls = [];
+  const base = stubClient({ fail: failures, calls });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        calls.push({ path, method: 'GET', body: null });
+        return { connections: { available: true, items: [] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  await v.render();
+  await flush();
+  const count = (path) => calls.filter((call) => call.path === path).length;
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'a 429 is never an unknown role');
+  assert.match(text(mount), /non leggibile/, 'the cards say the role could not be read');
+  assert.match(text(mount), /Il team non si è potuto leggere/, 'the team says why it is missing');
+  const retries = mount.findAll('button').filter((node) => node.textContent === 'Riprova');
+  assert.ok(retries.length >= 2, 'cards and team both offer «Riprova»');
+  assert.equal(count('/api/spine/context'), 1, 'one context read per load, no retry storm');
+  assert.equal(count('/api/spine/memberships'), 1, 'one members read per load, no retry storm');
+  assert.equal(count('/api/profile'), 1, 'one profile read per load');
+  // The operator's «Riprova» reads again, once: the role paints.
+  failures.context = null;
+  failures.members = null;
+  await retries[0].listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Tu: Titolare/, 'the role paints after the retry');
+  assert.doesNotMatch(text(mount), /non leggibile/, 'the error lifts after the retry');
+  assert.equal(count('/api/spine/context'), 2, 'the retry reads once more');
+  assert.equal(count('/api/spine/memberships'), 2, 'the retry reads members once more');
+  assert.equal(count('/api/profile'), 2, 'the retry reads the profile once more');
+});
+
+test('2de01913d276: concurrent identical GETs share one request; writes and later loads do not', async () => {
+  let n = 0;
+  const base = {
+    async request(path) {
+      n += 1;
+      await new Promise((resolve) => { setImmediate(resolve); });
+      return { path, n };
+    },
+  };
+  const shared = coalesceSpaceReads(base);
+  const [a, b] = await Promise.all([
+    shared.request('/api/spine/memberships'),
+    shared.request('/api/spine/memberships'),
+  ]);
+  assert.equal(n, 1, 'one load reads once');
+  assert.equal(a, b, 'both callers share the answer');
+  await shared.request('/api/profile');
+  assert.equal(n, 2, 'a distinct path reads again');
+  await Promise.all([
+    shared.request('/api/invites', { method: 'POST', body: {} }),
+    shared.request('/api/invites', { method: 'POST', body: {} }),
+  ]);
+  assert.equal(n, 4, 'writes are never shared');
+  const next = coalesceSpaceReads(base);
+  await next.request('/api/spine/memberships');
+  assert.equal(n, 5, 'nothing is cached across loads: «Riprova» always reads again');
 });
 
 // backlog:9d06eb1e174b (verifica 13-14/11, roster di produzione): one owner
@@ -2016,4 +2136,44 @@ test('backlog:3136d15d only a paused child switch reads not-allowed, a busy one 
   const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
   assert.doesNotMatch(css, /\.bo-spazi-toggle:disabled\s*,/);
+});
+
+// backlog:dd570f6d501e (seguito, prova del Mac): an outside click sent focus
+// to BODY — focus must return to the element that opened the panel. And the
+// review P2: the outside-click closer must not full-render and destroy the
+// just-clicked control.
+test('dd570f6d501e: an outside click closes the menu, keeps the clicked control and returns focus to the opener', async () => {
+  const doc = createFakeDocument();
+  const docListeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (docListeners[type] ??= []).push(handler); };
+  const fireDoc = (type, event) => { for (const handler of docListeners[type] ?? []) handler(event); };
+  const { mount, view: v } = view({ doc });
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  const opener = newSpaceToggle(mount);
+  const outside = mount.findAll('button').find((node) => node !== opener);
+  assert.ok(outside, 'there is an outside control to click');
+  fireDoc('click', { target: outside });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'an outside click closes the menu');
+  assert.ok(mount.contains(opener), 'the opener survives: no full repaint destroys the clicked control');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the element that opened the panel');
+});
+
+// backlog:dd570f6d501e (review P2): opening the menu moves focus to the
+// first voice — the claimed cure a test could never fail for.
+test('dd570f6d501e: opening the new-space menu moves focus to its first voice', async () => {
+  const { mount, view: v } = view({});
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  const menu = mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  assert.ok(menu, 'the menu opens');
+  const firstVoice = menu.querySelector('button');
+  assert.ok(firstVoice, 'the menu has a first voice');
+  assert.equal(firstVoice.__focused, true, 'opening the menu moves focus to the first voice');
 });

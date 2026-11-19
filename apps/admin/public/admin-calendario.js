@@ -632,6 +632,36 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/**
+ * backlog:8f10bea47ac8 — the manual form's opening proposal as a Rome day
+ * plus HH:MM: today at its first half-hour slot strictly after now when one
+ * still fits the 09:00–18:00 grid, else tomorrow 09:30–10:00. A real
+ * free-slot read needs the person, still unnamed at this point, so the
+ * default stays a proposal the operator confirms or moves — never an empty
+ * form that books a midnight. Pure so tests pin it without a clock.
+ * @param {number} [nowMs]
+ */
+export function defaultManualSlot(nowMs = Date.now()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const label = (minutes) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+  const now = new Date(nowMs);
+  const todayKey = romeDayKey(now);
+  const nowMin = romeMinutes(now);
+  if (todayKey !== null && nowMin !== null) {
+    // 10:17 Roma proposes today 10:30–11:00: the first grid step after now,
+    // never tomorrow 09:30 with today still free.
+    let start = Math.floor(nowMin / GRID_SLOT_MINUTES) * GRID_SLOT_MINUTES;
+    if (start <= nowMin) start += GRID_SLOT_MINUTES;
+    if (start < GRID_START_MINUTES) start = GRID_START_MINUTES;
+    if (start + GRID_SLOT_MINUTES <= GRID_END_MINUTES) {
+      return { date: todayKey, start: label(start), end: label(start + GRID_SLOT_MINUTES) };
+    }
+  }
+  const tomorrow = romeDayKey(new Date(nowMs + 24 * 3600 * 1000).toISOString());
+  if (!tomorrow) return null;
+  return { date: tomorrow, start: '09:30', end: '10:00' };
+}
+
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -1141,20 +1171,66 @@ export function aiBlockOf(error) {
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
+ * An exact identity wins; then the visible person name (case-insensitive,
+ * without the painted homonym ordinal).
+ * backlog:a16726b5ea76 (follow-up, live 18/11: «daniele pelleri»,
+ * «Daniele Pelleri» and «daniele pelleri (2)» all answered «… non è nel
+ * team» while «khaoss85» worked) — the person holds several identities
+ * the roster does not join into one row (same cause as the
+ * persona-identificativi family): the match is by visible name, without
+ * case and without the « (N)» suffix, and rows showing the same name are
+ * searched together. The search stays fail-closed (personFreeSlots offers
+ * only steps free under EVERY identity), so a stranger or a homonym never
+ * books as the wrong human: proposals spanning several distinct rows are
+ * never directly bookable — the operator picks the person in the
+ * «Nuovo appuntamento» form (review accordo-muse-review #1047 P1).
+ * Strangers stay out — the caller sends them down the «non capisco»
+ * path. Only the painted shape is stripped (« (2)»: one space, digits,
+ * end); «Marco(2)» or «Marco  (2)» stay part of the searched name.
+ * A literal roster name wins before any stripping, so a real
+ * «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * round 1, P2 regression) — but the generic «Membro del team» fallback
+ * names nobody (review #1017 round 1, P2).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ * @returns {Array<object>} the matched person rows, in painted order
  */
-export function resolveDraftMemberIds(draftMember, named, members) {
+export function matchDraftMemberRows(draftMember, named, members) {
   if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
-  if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
-  if (byName.length === 1) return [...byName[0].ids];
+  if (exact) return [exact];
+  const fold = (text) => String(text).trim().toLowerCase();
+  const stripOrdinal = (text) => fold(text).replace(/ \(\d+\)$/, '');
+  // A row without a person name only lends its painted label when the
+  // label is a real signal (slug words like «Marco Rossi»); the generic
+  // fallback (with or without a painted ordinal) matches nothing.
+  const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
+  const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
+  const wanted = fold(draftMember);
+  // The raw step reads person names only, never painted labels: a literal
+  // roster name («Marco Rossi (2)») still finds its own row before any
+  // stripping (review #1017 giro 1, P2 regression).
+  const raw = rows.filter((row) => matchable(row)
+    && typeof row.name === 'string' && fold(row.name) === wanted);
+  if (raw.length >= 1) return raw;
+  const stripped = stripOrdinal(draftMember);
+  if (stripped === '') return [];
+  const byName = rows.filter((row) => matchable(row)
+    && namesOf(row).some((name) => stripOrdinal(name) === stripped));
+  if (byName.length >= 1) return byName;
   return [];
+}
+
+/**
+ * backlog:a16726b5ea76 — the booking identities of the rows
+ * matchDraftMemberRows finds, without doubles: one human split over
+ * several identities searches them all together. The union is for the
+ * search only — booking as one of them stays with the operator whenever
+ * the rows are several (see the phrase flow and confirmSlot).
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  return [...new Set(matchDraftMemberRows(draftMember, named, members).flatMap((row) => row.ids))];
 }
 
 /**
@@ -1550,6 +1626,8 @@ export function createCalendarioView(deps) {
     pendingEventId: null,
     /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
     pendingEventMember: null,
+    /** Booked start the highlight falls back to when the confirm answer carries no id (production bridge). @type {string|null} */
+    pendingEventStart: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1752,6 +1830,14 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
+      // backlog:134f3ed7 (review Muse #1001 P1) — the confirmed row rides
+      // the fresh week only while the booking handshake is still open
+      // (pendingEventId set): a reload that does not carry the just-booked
+      // id yet (read lag) still paints its block, and the handshake below
+      // selects it. Once the post-booking reload settles, the server week
+      // is authoritative: carrying state.confirmed on every loadWeek would
+      // resurrect a cancelled or moved booking as a highlighted phantom.
+      if (state.pendingEventId !== null) carryBookedRow();
       state.weekError = null;
       state.unavailable = false;
       // backlog:bd5e84545021: the event Oggi asked for opens its detail
@@ -1760,11 +1846,38 @@ export function createCalendarioView(deps) {
         state.selectedId = state.pendingEventId;
         state.pendingEventId = null;
         state.pendingEventMember = null;
+        // backlog:134f3ed7 (review Muse #1001 P1) — the first reload after
+        // the booking reconciles the optimistic row: the server week owns
+        // the id from here, so the confirmed copy retires instead of riding
+        // every later reload as a phantom.
+        state.confirmed = null;
         const asked = selectedRow();
         if (asked === null) state.selectedId = null;
         // The explicit request beats a retained «hide this person»
         // (review Muse #792): the asked event's member shows again.
         else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
+      }
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carried no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person. The local copy rides until the server week carries a row
+      // with the same time, which the highlight then adopts by id. A
+      // cancelled server row with the same time retires everything: the
+      // server stays authoritative, like the id handshake above.
+      else if (state.pendingEventStart !== null && state.pendingEventMember !== null) {
+        carryBookedRow();
+        const match = pendingTimeRow();
+        if (match !== null && typeof match.id === 'string' && match.id !== '') {
+          state.selectedId = match.id;
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(match.teamMemberId ?? ''));
+        } else if (match === null && cancelledTimeRow()) {
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.selectedId = null;
+        }
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
@@ -2025,6 +2138,39 @@ export function createCalendarioView(deps) {
       }
     }
     return null;
+  }
+
+  /**
+   * backlog:134f3ed7 (seguito 18/11) — the non-cancelled row with the
+   * just-booked time and person, for confirms whose answer carries no id
+   * (production bridge). Only the grid highlight and the reload handshake
+   * read it — never the detail selection, so no popover opens uninvited.
+   */
+  function pendingTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A cancelled server row with the just-booked time and person: the booking is gone, so the fallback retires. */
+  function cancelledTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return false;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (!isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -2618,18 +2764,19 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:134f3ed7 — every opening of the manual form proposes a day and
-   * a time: the picked slot where one was clicked, else tomorrow 09:30–10:00
-   * Rome. A real free-slot read needs the person, still unnamed at this
-   * point, so the default is a proposal the operator confirms or moves —
-   * never an empty form that books a midnight.
+   * backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening of the manual
+   * form proposes a day and a time: the picked slot where one was clicked,
+   * else today at its first slot after now, else tomorrow 09:30–10:00 Rome
+   * (defaultManualSlot). A real free-slot read needs the person, still
+   * unnamed at this point, so the default is a proposal the operator
+   * confirms or moves — never an empty form that books a midnight.
    */
   function ensureManualDefaults() {
     const manual = { ...(state.manual ?? {}) };
     if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return;
-    const tomorrow = romeDayKey(new Date(clock().getTime() + 86400000).toISOString());
-    if (!tomorrow) return;
-    state.manual = { ...manual, date: tomorrow, start: '09:30', end: '10:00' };
+    const slot = defaultManualSlot(clock().getTime());
+    if (!slot) return;
+    state.manual = { ...manual, ...slot };
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2673,7 +2820,8 @@ export function createCalendarioView(deps) {
    * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
    * appuntamento» form: it closes AND drops the typed values — never the
    * old slot, customer or price left behind. The next opening proposes a
-   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
+   * day and a time (today when a slot is still ahead, else tomorrow
+   * 09:30–10:00) instead of an empty form. Focus
    * goes back to the «Nuovo appuntamento» button.
    */
   function closeManual() {
@@ -3234,13 +3382,21 @@ export function createCalendarioView(deps) {
       for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
-        const ghost = el(doc, 'button', {
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows paints as a marker, never as a
+        // booking button — the click would book the wrong human.
+        const choiceOnly = slot?.personChoiceRequired === true;
+        const ghost = el(doc, choiceOnly ? 'div' : 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
+          attrs: choiceOnly
+            ? { style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`, 'aria-disabled': 'true' }
+            : { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
-        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        if (!choiceOnly) {
+          holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+          ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        }
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3292,9 +3448,14 @@ export function createCalendarioView(deps) {
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
       const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+      // spanning several rows is never confirmed from the card — the
+      // operator picks the person in the form.
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
+        text: slot?.personChoiceRequired === true
+          ? `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dal modulo «Nuovo appuntamento» dopo aver scelto la persona.`
+          : `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
       }));
     }
     return panel;
@@ -3341,7 +3502,11 @@ export function createCalendarioView(deps) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
+    const timeFallback = state.selectedId === null && state.pendingEventStart !== null
+      && state.pendingEventMember !== null
+      && String(row?.teamMemberId ?? '') === state.pendingEventMember
+      && String(row?.startsAt ?? '') === state.pendingEventStart;
+    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
@@ -3364,46 +3529,42 @@ export function createCalendarioView(deps) {
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     const origin = originOf(row);
-    if (durationMin < 45) {
-      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
-      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
-      // The origin badge stays readable on the single line when the foot
-      // below stays hidden (15-min blocks), so nothing paints half-cut.
-      // At 30+ min the foot carries avatar and badges.
-      if (durationMin < 30) {
-        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
-      }
-    } else {
-      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    }
-    const foot = el(doc, 'span', { className: 'cal-day-foot' });
-    // Initials decorate (the tint already encodes the member); the WA badge
-    // stays readable because it names the booking origin.
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+    // backlog:667f1f1c: below 60 min no row paints under the title rows —
+    // the verifier saw the initials dot half-cut in a 43px block. Badges
+    // (origin, cancelled) ride the line that already paints; the foot with
+    // the initials dot paints only where it fits whole (60+ min).
+    const badgeNodes = [];
     // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    if (origin === 'whatsapp') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-    } else if (origin === 'google') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-    } else if (origin === 'link') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-    }
+    if (origin === 'whatsapp') badgeNodes.push(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    else if (origin === 'google') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    else if (origin === 'link') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
-    if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    if (cancelled) badgeNodes.push(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    const lineBadges = () => {
+      const wrap = el(doc, 'span', { className: 'cal-line-badges' });
+      for (const badge of badgeNodes) wrap.appendChild(badge);
+      return wrap;
+    };
+    if (durationMin < 45) {
+      // A short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      if (badgeNodes.length > 0) item.appendChild(lineBadges());
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      if (durationMin < 60 && badgeNodes.length > 0) item.appendChild(lineBadges());
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
     }
-    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
-    // block has room — 15-min blocks already carry origin and status on
-    // their single line, so the foot never paints half-cut.
-    if (durationMin >= 30) item.appendChild(foot);
+    if (durationMin >= 60) {
+      const foot = el(doc, 'span', { className: 'cal-day-foot' });
+      // Initials decorate (the tint already encodes the member).
+      foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+      if (badgeNodes.length > 0) foot.appendChild(lineBadges());
+      item.appendChild(foot);
+    }
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
@@ -3703,10 +3864,13 @@ export function createCalendarioView(deps) {
    * never the browser's confirm(). «No» takes the focus (Enter never cancels
    * by accident); the optional reason rides the cancellation, else «Annullato
    * dal calendario». An event imported from Google Calendar says plainly
-   * that the event stays on Google: the backoffice cancel names no calendar
-   * and nothing in this application runs the two-way sync that would carry
-   * the cancellation there (calendar-sync's push/sync operations are not
-   * wired to any route or job), so «cancellalo anche lì» is the truth.
+   * what happens there (backlog:27923678): with the calendar connected the
+   * question promises only the attempt on Google — a connected profile
+   * never proves the appointment itself pushes, so the popover no longer
+   * says the event stays there; without a connected calendar the honest
+   * line stays — «cancellalo anche lì» — because nothing would carry the
+   * cancellation there. The real outcome speaks after the write, through
+   * the toast.
    * @param {any} row
    */
   function renderCancelAsk(row) {
@@ -3716,10 +3880,19 @@ export function createCalendarioView(deps) {
     });
     box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
     if (originOf(row) === 'google') {
+      // backlog:27923678 — a connected calendar in /api/profile never proves
+      // the appointment itself pushes to Google (the sync link can be missing
+      // and the answer can carry push: null), so the question promises only
+      // the attempt: the real outcome speaks after the write, through the
+      // toast. Without a connected calendar nothing would carry the
+      // cancellation there, so the honest manual-removal line stays.
+      const connected = state.calendar?.connected === true;
       box.appendChild(el(doc, 'p', {
         className: 'cal-pop-hint',
         attrs: { 'data-role': 'cancel-google' },
-        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
+        text: connected
+          ? 'Arriva da Google Calendar: lo annullo qui in Accordo e provo ad annullarlo anche su Google Calendar; se non riesco, ti avviso di toglierlo a mano.'
+          : 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
     const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
@@ -3762,9 +3935,14 @@ export function createCalendarioView(deps) {
 
   /**
    * Cancels the booking through POST /api/appointments/cancel
-   * (backlog:5346ab531538). On success the row reads cancelled at once — it
-   * leaves the grid and the popover closes — and the week reloads; a refusal
-   * stays in the popover in Italian and the booking stays where it was.
+   * (backlog:5346ab531538, backlog:27923678). On success the row reads
+   * cancelled at once — it leaves the grid and the popover closes — and the
+   * week reloads; a refusal stays in the popover in Italian and the booking
+   * stays where it was. The space rides the write so the server-side
+   * auto-push converges the linked Google event under the owning space's
+   * grant; when Google was unreachable the cancellation still stands and
+   * the answer carries `pushError`, which the toast names as the manual
+   * removal on Google.
    * @param {any} row
    */
   async function submitCancel(row) {
@@ -3778,10 +3956,19 @@ export function createCalendarioView(deps) {
     renderAll();
     let ok = false;
     let failure = '';
+    let pushFailed = false;
+    let pushedToGoogle = false;
     try {
       const reason = cancelReasonFrom(state.cancelReason);
-      const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
-      await client.request('/api/appointments/cancel', { method: 'POST', body });
+      const spaceId = readSpace();
+      const body = id !== ''
+        ? { id: row.id, reason, spaceId }
+        : { sourceKey: row.sourceKey, reason, spaceId };
+      const answer = await client.request('/api/appointments/cancel', { method: 'POST', body });
+      pushFailed = answer?.pushError != null;
+      // backlog:27923678 — Google is named only on the real outcome: the
+      // answer carried a push. A push: null (no sync link) stays silent.
+      pushedToGoogle = !pushFailed && answer?.push != null;
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
           if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
@@ -3811,7 +3998,20 @@ export function createCalendarioView(deps) {
         state.moveNote = '';
       }
       renderAll();
-      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      // backlog:27923678 — the Accordo cancellation stands even when Google
+      // was unreachable: the toast then names the manual removal on Google,
+      // never a silent divergence. Google is named on success only when the
+      // answer proves the push landed there.
+      if (typeof deps.toast === 'function') {
+        deps.toast(
+          pushFailed
+            ? 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.'
+            : pushedToGoogle && originOf(row) === 'google'
+              ? 'Appuntamento annullato qui e su Google Calendar.'
+              : 'Appuntamento annullato.',
+          pushFailed,
+        );
+      }
       const members = parseMemberFilter(state.memberFilter);
       if (members.length > 0) void loadWeek(members);
       return;
@@ -3996,10 +4196,15 @@ export function createCalendarioView(deps) {
       for (const slot of state.proposals.slice(0, 24)) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
-        const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
-        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
-        item.appendChild(confirm);
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows offers no direct Conferma — booking
+        // as the first identity could hit the wrong human.
+        if (slot?.personChoiceRequired !== true) {
+          const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
+          holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+          confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+          item.appendChild(confirm);
+        }
         list.appendChild(item);
       }
       panel.appendChild(list);
@@ -4187,7 +4392,10 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
-        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
+        // known team does not hold was never «in the team» — the phrase did
+        // not name a person we know, so it says so instead of refusing them.
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it. The outsider name never fills
         // «Persona del team» (production after #735): the field stays empty,
@@ -4206,6 +4414,15 @@ export function createCalendarioView(deps) {
       // person: offer a step only when every identity reports it free, so a
       // booking under one identity never double-books their other one.
       const kept = personFreeSlots(groups, searchIds, member);
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // visible name can span several distinct rows — one human over split
+      // identities, or true homonyms the roster cannot tell apart. The
+      // proposals are real steps free under every identity, but no slot
+      // may book directly as the wrong human: the operator picks the
+      // person in the «Nuovo appuntamento» form.
+      const needsPersonChoice = matchDraftMemberRows(
+        member, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      if (needsPersonChoice) for (const slot of kept) slot.personChoiceRequired = true;
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
@@ -4248,7 +4465,13 @@ export function createCalendarioView(deps) {
       // a free 30-minute step stays 20, never the search size).
       const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
-      state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
+      // several rows the recognition stands (the draft and its free steps),
+      // but the booking waits for the operator's pick — never a direct
+      // Conferma as the first identity.
+      state.draftNote = needsPersonChoice
+        ? 'Bozza pronta: con questo nome ci sono più persone, scegli nel modulo «Nuovo appuntamento» e conferma da lì.'
+        : 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
       if (Number.isFinite(timedAt) && !exact) {
         const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
@@ -4304,12 +4527,37 @@ export function createCalendarioView(deps) {
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
-      const ids = resolveDraftMemberIds(
-        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
-        parseMemberFilter(state.memberFilter),
-        state.members,
-      );
-      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+      const memberText = typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '';
+      const ids = resolveDraftMemberIds(memberText, parseMemberFilter(state.memberFilter), state.members);
+      const multiRow = matchDraftMemberRows(memberText, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // raw drafted name is nobody's identity — with several rows it must
+      // not land in the person field (it would book the name itself). The
+      // operator picks the person on the menu instead.
+      const fillFor = (base) => {
+        if (ids.length === 1) return { ...base, teamMemberId: ids[0] };
+        if (!multiRow) return base;
+        const rest = { ...base };
+        delete rest.teamMemberId;
+        return rest;
+      };
+      let fill = fillFor(state.draft);
+      // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
+      // every opening proposes a time, so the first free step of the drafted
+      // day rides into the form — a real free slot, never an invented
+      // midnight. Without a free step the hours stay empty and the note says
+      // why («Nessuno slot libero quel giorno»).
+      if (draftDayOnly(fill)) {
+        const key = draftDayKey(fill);
+        const first = key
+          ? state.proposals.find((slot) => romeDayKey(slot?.startsAt) === key && romeTime(slot?.startsAt) && romeTime(slot?.endsAt))
+          : null;
+        if (first) {
+          state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
+          fill = fillFor(state.draft);
+        }
+      }
+      fillManual(fill);
     }
   }
 
@@ -4555,6 +4803,14 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+    // spanning several rows never books here — even a crafted call lands
+    // on this refusal, and the operator picks the person in the form.
+    if (slot?.personChoiceRequired === true) {
+      state.aiNote = 'Con questo nome ci sono più persone: scegli nel modulo «Nuovo appuntamento» e conferma da lì.';
+      renderAll();
+      return;
+    }
     const claim = bookingClaim({
       spaceId: readSpace(),
       customer: pickedCustomer(),
@@ -4631,6 +4887,55 @@ export function createCalendarioView(deps) {
    * the new event once it paints.
    * @param {any} appointment
    */
+  /**
+   * backlog:134f3ed7 — the just-booked row rides the painted week: the new
+   * block shows on the next paint, even before the reload lands or when the
+   * reloaded week does not carry the id yet. Only the booked day inside the
+   * painted week and its existing member group, added only when the id is
+   * missing — never an invented row, never another member's lane, and never
+   * replacing the authoritative server row when the id is already there.
+   */
+  function carryBookedRow() {
+    const booked = state.confirmed;
+    const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
+    const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
+    if (member === null) return;
+    if (!state.week || !Array.isArray(state.week.members)) return;
+    const day = romeDayKey(booked?.startsAt);
+    if (!day || !state.weekKeys.includes(day)) return;
+    const group = state.week.members.find((entry) => entry?.teamMemberId === member);
+    if (!group || !Array.isArray(group.appointments)) return;
+    if (id === null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the booked time rides instead. A server row
+      // with the same time already there wins, booked or cancelled — never
+      // a duplicate, never a phantom over a cancellation.
+      const start = typeof booked?.startsAt === 'string' && booked.startsAt !== '' ? booked.startsAt : null;
+      if (start === null) return;
+      if (group.appointments.some((row) => String(row?.startsAt ?? '') === start)) return;
+      const appointments = [...group.appointments, booked];
+      state.week = {
+        ...state.week,
+        members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+      };
+      return;
+    }
+    const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
+    // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
+    // reloaded server week is authoritative: when the id is already there
+    // the server row wins and this function changes nothing (a row cancelled
+    // elsewhere must never paint booked again). The local copy rides only
+    // when the id is still missing (read lag).
+    if (at >= 0) return;
+    // Never mutate the loaded week in place (tests share the stub object):
+    // rebuild the group, so only the painted state changes.
+    const appointments = [...group.appointments, booked];
+    state.week = {
+      ...state.week,
+      members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+    };
+  }
+
   function markBooked(appointment) {
     state.confirmed = appointment ?? null;
     state.selection = null;
@@ -4657,17 +4962,40 @@ export function createCalendarioView(deps) {
     const member = typeof appointment?.teamMemberId === 'string' && appointment.teamMemberId !== '' ? appointment.teamMemberId : null;
     state.pendingEventId = id;
     state.pendingEventMember = member;
+    state.pendingEventStart = typeof appointment?.startsAt === 'string' && appointment.startsAt !== '' ? appointment.startsAt : null;
     const day = romeDayKey(appointment?.startsAt);
     if (day && !state.weekKeys.includes(day)) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
       state.week = null;
     }
+    // backlog:134f3ed7 — the new block reads highlighted on the next paint:
+    // the selection names it now and its row rides the painted week, so the
+    // grid shows it before the reload lands. The reload reconciles.
+    if (id !== null) {
+      state.selectedId = id;
+      carryBookedRow();
+    } else if (member !== null && state.pendingEventStart !== null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person until the reload adopts the server row with the same time.
+      state.selectedId = null;
+      carryBookedRow();
+    }
   }
 
   /** Reload the week after a booking, so the new event paints on the grid. */
-  function reloadAfterBooking() {
+  async function reloadAfterBooking() {
+    if (!state.confirmed) return;
     const members = parseMemberFilter(state.memberFilter);
-    if (members.length > 0 && state.confirmed) void loadWeek(members);
+    if (members.length > 0) {
+      void loadWeek(members);
+      return;
+    }
+    // backlog:134f3ed7 — the filter may read empty (roster unreadable, the
+    // operator cleared it): the booked member still scopes the reload, so
+    // the new block paints and highlights instead of never reloading.
+    if (state.pendingEventMember !== null) void loadWeek([state.pendingEventMember]);
+    else renderAll();
   }
 
   /**
@@ -5424,6 +5752,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = null;
       state.pendingEventMember = null;
+      state.pendingEventStart = null;
       resetPopSteps();
       state.moveNote = '';
       cancelCustomerSearch();
@@ -5443,6 +5772,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = askedEvent.id;
       state.pendingEventMember = askedEvent.member ?? null;
+      state.pendingEventStart = null;
     }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {

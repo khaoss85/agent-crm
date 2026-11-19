@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView, eventPopoverPlacement } from '../apps/admin/public/admin-calendario.js';
+import { createCalendarioView, eventPopoverPlacement, memberInitials } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -216,8 +216,10 @@ test('popover: actions on top, big title with the colour square, full date, cust
   assert.deepEqual(navigated, ['#/customer-card/contact/c1'], 'the link opens the scheda');
   const person = pop.findAll('p').find((node) => node.getAttribute('data-role') === 'event-member');
   assert.ok(person, 'the team person paints');
-  const gridAvatar = eventButton(mount, 'p1').findAll('span').find((node) => hasClass(node, 'cal-avatar'))?.textContent;
-  assert.equal(person.findAll('span').find((node) => hasClass(node, 'cal-avatar'))?.textContent, gridAvatar, 'with the same avatar as the grid block');
+  // backlog:667f1f1c: p1 is 45 min, so the grid block carries no initials
+  // dot (it would paint half-cut) — the tint alone names the member there.
+  assert.equal(eventButton(mount, 'p1').findAll('span').filter((node) => hasClass(node, 'cal-avatar')).length, 0, 'no avatar dot on a 45-min grid block');
+  assert.equal(person.findAll('span').find((node) => hasClass(node, 'cal-avatar'))?.textContent, memberInitials('Daniele Pelleri'), 'the popover keeps the avatar');
   assert.ok(person.textContent.includes('Daniele Pelleri'), 'and the person name');
   assert.ok(pop.textContent.includes('Nota: Portare le scarpe'));
   assert.ok(pop.textContent.includes('Fissato dal calendario'), 'the origin');

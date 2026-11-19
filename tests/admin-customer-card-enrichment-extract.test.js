@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
   extractionSourcesFromTimeline,
+  withExtractionTimeout,
 } from '../apps/admin/public/admin-customer-card.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -146,13 +147,14 @@ const flush = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
 };
 
-async function open(client) {
+async function open(client, deps = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const toasts = [];
   const view = createCustomerCardView({
     doc, mount, client, spaceId: 'presti',
     toast: (text) => { toasts.push(text); },
+    ...deps,
   });
   await view.renderCard('contact', 'c1');
   await flush();
@@ -222,8 +224,9 @@ test('e5e3e886: with no messages the button sends nothing and says where the AI 
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
   assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
     'the facts are still re-read, like main (arbitrato #853 P1)');
-  assert.ok(toasts.includes('Nessun dato nuovo'), 'unchanged facts read as nothing new, like main');
-  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')), 'the button says the AI starts from messages');
+  assert.equal(toasts.length, 1, 'one outcome per click, never covered by a second toast');
+  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')), 'the single outcome says the AI starts from messages');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'unchanged facts with no messages never read «Nessun dato nuovo»');
 });
 
 test('e5e3e886 arbitrato #853 P1: with no messages and changed facts the button says «Dati aggiornati»', async () => {
@@ -237,7 +240,7 @@ test('e5e3e886 arbitrato #853 P1: with no messages and changed facts the button 
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
   assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
     'the GET leaves even with no messages');
-  assert.ok(toasts.includes('Dati aggiornati'), 'changed facts read as updated, like main');
+  assert.deepEqual(toasts, ['Dati aggiornati'], 'changed facts read as one updated outcome, like main');
   assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the changed facts are on screen');
 });
 
@@ -294,6 +297,330 @@ test('e5e3e886 review #853 P2: a repaint while the run flies starts no second ru
   assert.ok(mount.textContent.includes('fonte: messaggio'), 'the proposal cites its source');
 });
 
+test('e5e3e886 seguito 17/11: with no messages the button never reads «Estraggo…» and lands one outcome', async () => {
+  const client = fakeClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } },
+  });
+  const { mount, toasts } = await open(client);
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  const clicked = refresh.listeners.click[0]();
+  await flush();
+  assert.ok(!String(refresh.textContent).includes('Estraggo'),
+    'the button never promises an extraction it does not start (live: stuck on «Estraggo…» with no request)');
+  assert.equal(refresh.textContent, 'Aggiorna', 'the button is never held while the re-read flies');
+  await clicked;
+  await flush();
+  assert.equal(client.writes.length, 0, 'no run starts with no source to read');
+  assert.equal(toasts.length, 1, 'one outcome per click');
+  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')),
+    'the single outcome says there is nothing to extract');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'no second toast covers the warning');
+});
+
+test('e5e3e886 seguito 17/11: a run that answers nothing refuses in time instead of spinning forever', async () => {
+  await assert.rejects(
+    withExtractionTimeout(new Promise(() => {}), 5),
+    (error) => error?.code === 'ENRICHMENT_EXTRACT_TIMEOUT',
+    'silence refuses with the timeout code instead of spinning forever',
+  );
+  assert.equal(await withExtractionTimeout(Promise.resolve('ok'), 1000), 'ok', 'an answer in time still lands');
+});
+
+test('e5e3e886 review #989 P2: a timeout with a repaint in flight clears the visible «Estraggo…»', async () => {
+  const waits = [];
+  const client = fakeClient();
+  const { mount, view, toasts } = await open(client, {
+    wait: (ms) => new Promise((resolve) => { waits.push({ ms, resolve }); }),
+  });
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  client.hold();
+  const running = refresh.listeners.click[0]();
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the run in flight reads «Estraggo…»');
+  // A repaint while the run flies (a note save repaints the card): the old
+  // box is detached and the new one shows the flying state.
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the repaint keeps the flying «Estraggo…»');
+  assert.equal(waits.length, 1, 'the run waits on the injectable clock, not real time');
+  waits.forEach(({ resolve }) => resolve());
+  await running;
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no visible «Estraggo…» survives the timeout');
+  assert.ok(toasts.some((text) => text.includes('Non ha risposto in tempo')), 'the timeout names the retry line');
+  client.release();
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'the late answer never resurrects the wait');
+  assert.equal(client.writes.length, 1, 'exactly one run left');
+});
+
+test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 main reload hangs frees flight with retry', async () => {
+  // VERIFIER_BACK 2026-11-17 (returns: 1, sha 973555cf0720): live NON PASSA —
+  // «Aggiorna» POSTs extract and shows «Estraggo…» but the run never frees
+  // the button when the follow-up GET hangs. Red before the cure (the reload
+  // had no deadline, the flight stayed held, the retry line never came);
+  // green after (the reload flies under the same 60s clock).
+  let enrichedReads = 0;
+  const reads = [];
+  const writes = [];
+  const waits = [];
+  const wait = (ms) => new Promise((resolve) => { waits.push({ ms, resolve }); });
+  const stub = (path, fail) => {
+    if (path.startsWith('/api/customer-hub/card/')) return CARD;
+    if (path.startsWith('/api/customer-hub/timeline/')) return TIMELINE;
+    if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+    if (path === '/api/schema') return { pipelines: [] };
+    if (path === '/api/spine/memberships') return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    if (path === '/api/catalog/products?active=true') return { products: [] };
+    if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+    throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+  };
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        const body = options.body ? JSON.parse(String(options.body)) : null;
+        writes.push({ path, method, body });
+        return { status: 'done', subject: { resource: 'contact', id: 'c1' }, runId: 'run-hang', proposals: [PROPOSAL] };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        return new Promise(() => {});
+      }
+      return stub(path);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+    wait,
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  client.reads.length = 0;
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  const running = refresh.listeners.click[0]();
+  await flush();
+  assert.equal(writes.length, 1, 'the extract run left');
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(writes.length, 1, 'a second click starts no run while the re-read hangs');
+  waits.forEach(({ resolve }) => resolve());
+  const landed = await Promise.race([
+    running.then(() => true, () => true),
+    new Promise((resolve) => setTimeout(() => resolve(false), 500)),
+  ]);
+  assert.equal(landed, true, 'the hanging re-read refuses in time instead of holding the flight forever');
+  await flush();
+  assert.ok(toasts.some((text) => text.includes('Non ha risposto in tempo')), 'the hanging re-read toasts the retry line');
+  const second = byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(writes.length, 2, 'the flight is free: a new run can start after the timeout');
+  waits.forEach(({ resolve }) => resolve());
+  await Promise.race([second, new Promise((resolve) => setTimeout(resolve, 500))]);
+  await flush();
+});
+
+test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 no-messages re-read flies single-flight and lands on screen', async () => {
+  const emptyTimeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } };
+  let enrichedReads = 0;
+  let releaseFirst = () => {};
+  const pending = [];
+  const reads = [];
+  const writes = [];
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        writes.push({ path, method });
+        return { ok: true };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return emptyTimeline;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        // Only the first re-read hangs (a deferred the test releases); the
+        // repaint's own read answers at once so the repaint itself lands.
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED_AFTER;
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const first = byAction(mount, 'refresh-enrichment');
+  assert.ok(first, 'the «Aggiorna» button exists');
+  const running = first.listeners.click[0]();
+  await flush();
+  assert.equal(enrichedReads, 2, 'the first «Aggiorna» starts the re-read');
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(enrichedReads, 3, 'the repaint re-reads once for its own paint');
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(enrichedReads, 3, 'the repaint starts no second re-read: still the in-flight one');
+  pending.forEach((resolve) => resolve(ENRICHED_AFTER));
+  releaseFirst();
+  await running;
+  await flush();
+  assert.ok(toasts.includes('Dati aggiornati') || toasts.includes('Nessun dato nuovo'), 'the landed re-read toasts its outcome');
+  assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the re-read lands on the screen, not in a detached box');
+  assert.equal(writes.length, 0, 'no run starts with no source to read');
+});
+
+test('e5e3e886 VERIFIER_BACK 2026-11-18: no-message reload with a repaint never shows Estraggo', async () => {
+  // VERIFIER_BACK 2026-11-18 (returns: 2, sha 5f5472b73d80): live NON PASSA —
+  // «senza messaggi mai Estraggo NO»: with no messages the button says at
+  // once there is nothing to extract, yet a repaint while its re-read flies
+  // paints «Estraggo…» and the stuck state survives the landing. Red before
+  // the cure (the no-message re-read holds the shared extract flight, so the
+  // flying indicator reads «Estraggo…» and the landing paints under it);
+  // green after (the flight is tagged and released before the landing
+  // paints, and only a real extract run ever reads «Estraggo…»).
+  const emptyTimeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } };
+  let enrichedReads = 0;
+  const pending = [];
+  const reads = [];
+  const writes = [];
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        writes.push({ path, method });
+        return { ok: true };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return emptyTimeline;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        // Only the Aggiorna re-read hangs; the repaint's own read answers at
+        // once so the repaint itself lands.
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED_AFTER;
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const first = byAction(mount, 'refresh-enrichment');
+  assert.ok(first, 'the «Aggiorna» button exists');
+  const running = first.listeners.click[0]();
+  await flush();
+  assert.equal(enrichedReads, 2, 'the first «Aggiorna» starts the re-read');
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no-message click never promises an extraction run');
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'the repaint while the no-message re-read flies shows no «Estraggo…»');
+  pending.forEach((resolve) => resolve(ENRICHED_AFTER));
+  await running;
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no «Estraggo…» survives the no-message landing');
+  assert.deepEqual(toasts, ['Dati aggiornati'], 'the landed re-read toasts its single outcome');
+  assert.equal(writes.length, 0, 'no run starts with no source to read');
+});
+
+test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 fast run clears its default 60s timer', async () => {
+  const created = [];
+  const cleared = [];
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn, ms, ...rest) => {
+    const handle = realSetTimeout(fn, ms, ...rest);
+    created.push({ handle, ms });
+    return handle;
+  };
+  globalThis.clearTimeout = (handle) => {
+    cleared.push(handle);
+    return realClearTimeout(handle);
+  };
+  try {
+    const answer = await withExtractionTimeout(Promise.resolve('ok'), 60000);
+    assert.equal(answer, 'ok', 'an answer in time still lands');
+    await flush();
+    const leaked = created.filter(({ handle, ms }) => ms === 60000 && !cleared.includes(handle));
+    assert.equal(leaked.length, 0, 'the losing 60s timer is cleared when the run wins first');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 a fast run on the default clock holds no 60s timer', async () => {
+  const created = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...rest) => {
+    const handle = realSetTimeout(fn, ms, ...rest);
+    created.push({ handle, ms });
+    return handle;
+  };
+  try {
+    // No wait injector: the view runs on its default clock.
+    const client = fakeClient();
+    const { mount } = await open(client);
+    await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+    await flush();
+    assert.equal(client.writes.length, 1, 'the run happened on the default clock too');
+    // The view's default wait fires through the injectable clock: its
+    // leftover 60s waits are unref'd and never hold the loop (the direct
+    // withExtractionTimeout clock above is the one that clears).
+    const holding = created.filter(({ handle, ms }) => ms === 60000
+      && (handle === null || typeof handle !== 'object' || typeof handle.hasRef !== 'function' || handle.hasRef()));
+    assert.equal(holding.length, 0, 'no ref’d 60s timer survives a fast run');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
 test('e5e3e886: the run sources are messages only, capped, with channel and handle as detail', () => {
   const timeline = {
     entries: {
@@ -315,4 +642,70 @@ test('e5e3e886: the run sources are messages only, capped, with channel and hand
     detail: 'instagram:guido.presti',
   }, 'the first usable message names its channel and handle');
   assert.ok(Object.isFrozen(sources) && sources.every((source) => Object.isFrozen(source)), 'sources are frozen');
+});
+
+test('e5e3e886 seguito 18/11: no-message click shows one outcome and never holds the button', async () => {
+  // VERIFIER_BACK 2026-11-18 (returns: 3, sha e094ad01449d): live 18/11
+  // 21:1xZ NON PASSA — senza messaggi l'avviso giusto («Non ci sono
+  // messaggi…») viene coperto dopo 0,2 s da «Nessun dato nuovo» e il bottone
+  // resta su «Aggiorno…» per 3,4 s. Red before the cure (the warning leaves
+  // at once and a second «Nessun dato nuovo» covers it while the button
+  // stays «Aggiorno…» under uiBusy); green after (the button stays
+  // «Aggiorna» and a single outcome lands with the re-read).
+  const emptyTimeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } };
+  let enrichedReads = 0;
+  const pending = [];
+  const reads = [];
+  const writes = [];
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        writes.push({ path, method });
+        return { ok: true };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return emptyTimeline;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED;
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  const clicked = refresh.listeners.click[0]();
+  await flush();
+  assert.equal(refresh.textContent, 'Aggiorna', 'the button is back at once, never held «Aggiorno…» while the re-read flies');
+  assert.equal(toasts.length, 0, 'no outcome yet while the re-read flies: a single outcome lands with it');
+  pending.forEach((resolve) => resolve(ENRICHED));
+  await clicked;
+  await flush();
+  assert.equal(writes.length, 0, 'no run starts with no source to read');
+  assert.equal(toasts.length, 1, 'one outcome per click, never covered by a second toast');
+  assert.ok(toasts[0].includes('Non ci sono messaggi'), 'the single outcome says the AI starts from messages');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'unchanged facts with no messages never read «Nessun dato nuovo»');
+  assert.equal(byAction(mount, 'refresh-enrichment').textContent, 'Aggiorna', 'the repainted button reads «Aggiorna»');
 });

@@ -45,7 +45,7 @@ import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
-import { loadFixCount, settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import { subjectText, teamPeople } from './admin-labels.js';
 
@@ -255,13 +255,21 @@ export function teamChannelTiles(connectors) {
 /**
  * One space card: identity from the shell space, the operator's role beside
  * it, and whether this is the space being worked in.
+ *
+ * backlog:56c9ec170eaa: the badge sigla and color are the menu's own —
+ * `spaceMenuItems` (admin-shell.js) decides them for both views, so the
+ * card can never read «PR» black while the menu reads another sigla.
  * @param {{spaces?: Array<{id?: unknown, name?: unknown, initials?: unknown}>, activeSpaceId?: unknown, role?: unknown}} input
  */
 export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null } = {}) {
   const list = Array.isArray(spaces) ? spaces : [];
-  return list
-    .filter((space) => space && typeof space === 'object' && typeof space.id === 'string' && space.id !== '')
-    .map((space) => ({
+  const valid = list
+    .filter((space) => space && typeof space === 'object' && typeof space.id === 'string' && space.id !== '');
+  const shared = new Map(spaceMenuItems(valid, activeSpaceId).map((entry) => [entry.id, entry]));
+  return valid
+    .map((space) => {
+      const badge = shared.get(space.id) ?? { initials: '·', badgeClass: '' };
+      return {
       id: space.id,
       name: typeof space.name === 'string' && space.name !== '' ? space.name : space.id,
       // Prototype 08 prints a line under the name («Interior design ·
@@ -271,11 +279,13 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
         && /** @type {any} */ (space).description.trim() !== ''
         ? /** @type {any} */ (space).description.trim()
         : null,
-      initials: typeof space.initials === 'string' && space.initials !== '' ? space.initials : '·',
+      initials: badge.initials,
+      badgeClass: badge.badgeClass,
       role: spaceRoleLabel(role),
       roleKnown: typeof role === 'string' && role !== '',
       active: space.id === activeSpaceId,
-    }));
+      };
+    });
 }
 
 /**
@@ -436,41 +446,74 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
 
 /**
  * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
- * rows that paint the same name with the same mailbox and access line are
- * indistinguishable on screen («Daniele Pelleri» vs «daniele pelleri», both
- * with the same avatar). One entry per colliding painted name, in team
- * order; rows told apart by mailbox or access kind stay silent, like the
- * homonyms the access line already separates. A name alone never proves one
- * person (backlog:9d06eb1e174b), so the hint names the cause and the cure —
- * it never merges or removes anything itself.
+ * rows that paint the same REAL name are indistinguishable on screen
+ * («Daniele Pelleri» vs «daniele pelleri», both with the same avatar),
+ * even when the mailbox or the access line tells them apart («Accesso
+ * Google» vs «Accesso di servizio»). One entry per colliding painted name,
+ * in team order; mailbox and access kind never silence the hint — the same
+ * person resolution covers different accesses, and two homonyms stay
+ * candidates the operator keeps. The generic placeholder («Membro del
+ * team», review #1043 P2) is not a name: rows without a real name fall back
+ * to the mailbox, then to their subjects, so two unenriched rows never
+ * collide. A name alone never proves one person (backlog:9d06eb1e174b), so
+ * the hint explains the two access lines and warns that removing suspends
+ * the person in the whole organisation — it never merges or removes
+ * anything itself.
  * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
  */
+const PLACEHOLDER_TEAM_NAME = 'membro del team';
+
+/** A painted name the hint may key on: never empty, never the generic placeholder. @param {string} name */
+function teamHintHasName(name) {
+  return name !== '' && name.toLowerCase() !== PLACEHOLDER_TEAM_NAME;
+}
+
+/** @param {unknown} row */
+function teamHintSubjects(row) {
+  if (!row || typeof row !== 'object') return [];
+  const fromList = Array.isArray(row.subjects) ? row.subjects : [];
+  const single = typeof row.subject === 'string' ? [row.subject] : [];
+  return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
+}
+
 export function duplicateTeamHints(rows = []) {
   const list = Array.isArray(rows) ? rows : [];
   const byPaint = new Map();
-  for (const row of list) {
-    if (!row || typeof row !== 'object') continue;
-    const name = typeof row.name === 'string' ? row.name : '';
-    const email = typeof row.email === 'string' ? row.email : '';
-    const access = typeof row.access === 'string' ? row.access : '';
-    if (name === '' && email === '') continue;
-    const key = [name.toLowerCase(), email.toLowerCase(), access.toLowerCase()].join(' ');
+  list.forEach((row, index) => {
+    if (!row || typeof row !== 'object') return;
+    const name = typeof row.name === 'string' ? row.name.trim().replace(/\s+/g, ' ') : '';
+    const email = typeof row.email === 'string' ? row.email.trim() : '';
+    const subjects = [...new Set(teamHintSubjects(row))].sort();
+    // Same person resolution, access included: a real painted name alone
+    // keys the hint (case-insensitive), so a Google row and a servizio row
+    // with the same name collide; the placeholder never keys it (review
+    // #1043 P2: it would invite removing a live member), falling back to
+    // the mailbox and then to the subjects.
+    const key = teamHintHasName(name)
+      ? `name:${name.toLowerCase()}`
+      : email !== ''
+        ? `mail:${email.toLowerCase()}`
+        : subjects.length > 0 ? `subject:${subjects.join('+')}` : `row:${index}`;
     byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
-  }
+  });
   const hints = [];
   for (const group of byPaint.values()) {
     if (group.length < 2) continue;
-    const variants = [...new Set(group.flatMap((row) => {
-      const fromList = Array.isArray(row.subjects) ? row.subjects : [];
-      const single = typeof row.subject === 'string' ? [row.subject] : [];
-      return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
-    }))];
+    const variants = [...new Set(group.flatMap((row) => teamHintSubjects(row)))];
     if (variants.length < 2) continue;
-    const painted = group[0].name !== '' ? group[0].name : group[0].email;
+    const first = group[0];
+    const firstName = typeof first.name === 'string' ? first.name.trim().replace(/\s+/g, ' ') : '';
+    const firstEmail = typeof first.email === 'string' ? first.email.trim() : '';
+    const painted = teamHintHasName(firstName) ? firstName : firstEmail;
+    const accesses = [...new Set(group.map((row) => (
+      typeof row.access === 'string' && row.access.trim() !== '' ? row.access.trim() : null
+    )).filter((access) => access !== null))];
+    const cause = accesses.length > 0 ? ` ma con accessi diversi (${accesses.join(', ')})` : '';
     hints.push({
       name: painted,
       count: group.length,
-      text: `«${painted}» compare ${group.length} volte con lo stesso nome: se è la stessa persona con due voci, rimuovi quella vecchia con Rimuovi; se sono due persone diverse, ignoralo.`,
+      accesses,
+      text: `«${painted}» compare ${group.length} volte con lo stesso nome${cause}: è quasi sempre la stessa persona che entra in due modi. Non rimuovere nessuna delle due righe per sistemare: la rimozione sospende la persona in tutta l'organizzazione.`,
     });
   }
   return hints;
@@ -512,6 +555,29 @@ export function masterEnabled(spaceId, overrideRows = []) {
     (row) => row && typeof row === 'object' && row.spaceId === spaceId && row.permission === SPAZI_AI_MASTER.key,
   );
   return flipped ? flipped.enabled === true : SPAZI_AI_MASTER_DEFAULT === true;
+}
+
+/**
+ * backlog:2de01913d276 (verifica 17/11: 11 caricamenti di profilo e membri
+ * in 60 s dopo un 429): one load reads once. Concurrent identical GETs in
+ * the same load share one in-flight request — profile and members leave
+ * exactly once per load no matter how many code paths ask for them. Writes
+ * and distinct paths are never shared, and nothing is cached across loads:
+ * a «Riprova» always reads again. A new wrapper per load bounds the sharing
+ * to that load.
+ * @param {{ request: (path: string, options?: any) => Promise<any> }} base
+ */
+export function coalesceSpaceReads(base) {
+  const flying = new Map();
+  return {
+    request(path, options = {}) {
+      const method = String(options?.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') return base.request(path, options);
+      const key = `${method} ${String(path)}`;
+      if (!flying.has(key)) flying.set(key, base.request(path, options));
+      return flying.get(key);
+    },
+  };
 }
 
 /**
@@ -567,6 +633,11 @@ export function createSpaziAccessiView(deps) {
     // whether the context read that names the role is still out.
     selfSubject: null,
     contextPending: false,
+    // backlog:2de01913d276: why the role is not shown after the context read
+    // failed (a 429, a refused connection, a 5xx). A failed read is never an
+    // unknown role: the cards say the read failed and offer «Riprova».
+    /** @type {string|null} */
+    contextUnavailable: null,
     /** @type {Array<string>|null} roles the server advertises, or null */
     roles: null,
     /** @type {Array<any>|null} team rows, or null when unread */
@@ -624,11 +695,13 @@ export function createSpaziAccessiView(deps) {
   // unit tests) skip the outside closer; the toggles, the voices and Escape
   // still work there.
   // Toggling a menu repaints the whole view, so the node that had keyboard
-  // focus is gone after render(): closing with Escape returns focus to the
-  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
-  // click leaves focus where the user put it.
+  // focus is gone after render(): closing returns focus to the toggle that
+  // opened the menu (backlog:dd570f6d501e) — Escape and an outside click
+  // alike, so focus never falls back to the body.
   /** Currently rendered menu nodes, rebuilt on every render. */
   const liveMenuWraps = [];
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   function focusToggle(selector) {
     if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
     const target = mount.querySelector(selector);
@@ -641,14 +714,35 @@ export function createSpaziAccessiView(deps) {
     render();
     focusToggle(refocusSelector);
   }
+  // An outside click must not repaint the whole view: render() replaces
+  // every node, including the control the user just clicked, so its focus
+  // and form state would be lost (review P2 on #753). Dismissing only
+  // removes the open menu wraps, marks both toggles collapsed and returns
+  // focus to the opener; every other node survives untouched.
+  function dismissMenus(refocusSelector = null) {
+    if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
+    state.newSpaceMenuOpen = false;
+    state.inviteMenuOpen = false;
+    for (const wrap of liveMenuWraps.splice(0)) {
+      if (wrap && wrap.parentNode && typeof wrap.parentNode.removeChild === 'function') {
+        wrap.parentNode.removeChild(wrap);
+      }
+    }
+    if (mount && typeof mount.querySelector === 'function') {
+      for (const selector of [newSpaceToggleSelector, inviteToggleSelector]) {
+        const toggle = mount.querySelector(selector);
+        if (toggle && typeof toggle.setAttribute === 'function') toggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+    lastPaint = childrenOf();
+    focusToggle(refocusSelector);
+  }
   function trackMenuWrap(node, toggleSelector = null) {
     liveMenuWraps.push(node);
     node.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
     });
   }
-  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
-  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   if (doc && typeof doc.addEventListener === 'function') {
     doc.addEventListener('click', (event) => {
       let node = event?.target ?? null;
@@ -656,7 +750,7 @@ export function createSpaziAccessiView(deps) {
         if (liveMenuWraps.includes(node)) return;
         node = node.parentNode ?? null;
       }
-      closeMenus();
+      dismissMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : state.inviteMenuOpen ? inviteToggleSelector : null);
     });
     // Codex P2 on #763: render() removes the focused toggle, so in a real
     // browser focus falls back to the body and Escape never reaches the
@@ -734,13 +828,13 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<number|null>} memberCountRead the rendered team size, once read
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null)) {
+  async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
     // backlog:1a96094db71d: the two reads start at once, beside the team
     // and permission reads; only the statistic waits for the member count
     // and the profile it formats with.
     const reads = Promise.allSettled([
-      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
-      client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
+      readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
+      readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
     ]);
     const [memberCount, profile] = await Promise.all([memberCountRead, profileRead]);
     if (memberCount === null) return null;
@@ -807,6 +901,7 @@ export function createSpaziAccessiView(deps) {
   function resetLoadState(space) {
     state.myRole = null;
     state.contextPending = true;
+    state.contextUnavailable = null;
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
@@ -841,16 +936,18 @@ export function createSpaziAccessiView(deps) {
    * production). The data reads paint first; the statistic reads resolve in
    * the second phase.
    * @param {string} space
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   * (backlog:2de01913d276): concurrent identical GETs share one request.
    */
-  function beginReads(space) {
+  function beginReads(space, readsClient = client) {
     const settle = (promise) => promise.then(
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
     );
-    const contextRead = settle(Promise.resolve().then(() => client.request('/api/spine/context')));
-    const membersRead = settle(Promise.resolve().then(() => client.request('/api/spine/memberships')));
-    const agentsRead = loadSpaceAgents(client, space);
-    const switchesRead = settle(Promise.resolve().then(() => client.request(
+    const contextRead = settle(Promise.resolve().then(() => readsClient.request('/api/spine/context')));
+    const membersRead = settle(Promise.resolve().then(() => readsClient.request('/api/spine/memberships')));
+    const agentsRead = loadSpaceAgents(readsClient, space);
+    const switchesRead = settle(Promise.resolve().then(() => readsClient.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
     )));
     const ids = readSpaces()
@@ -860,7 +957,7 @@ export function createSpaziAccessiView(deps) {
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
     // The profile describes the session's own space: its links count on
     // that card only, never on another space's (review #782 P1).
-    const profileRead = ids.length > 0 ? readProfile(client) : Promise.resolve(null);
+    const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
     // The statistic counts what the team list shows: rendered rows only, so a
     // malformed membership never leaks into the card number.
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
@@ -872,7 +969,7 @@ export function createSpaziAccessiView(deps) {
     // to this session (verifica 13-14/11): its card shows no statistic
     // instead of a refused read.
     const statsRead = Promise.all(ids.filter((id) => id === current).map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
+      const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
       if (stat !== null) state.stats.set(id, stat);
     }));
     return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
@@ -892,9 +989,17 @@ export function createSpaziAccessiView(deps) {
       state.roles = context.value?.roles && typeof context.value.roles === 'object'
         ? Object.keys(context.value.roles).filter((name) => name !== '')
         : null;
+      state.contextUnavailable = null;
     } else {
       state.myRole = null;
       state.roles = null;
+      // backlog:2de01913d276: a failed context read (verifica 17/11: a 429
+      // on context and members painted «ruolo non riconosciuto») is a read
+      // error with «Riprova», never an unknown role. No automatic re-read:
+      // one load reads once, the next read is the operator's «Riprova».
+      state.contextUnavailable = humanReadError(context.error, {
+        failed: 'Non sono riuscito a leggere il tuo ruolo. Riprova con il pulsante qui sotto.',
+      });
     }
     const members = await reads.membersRead;
     if (members.ok) {
@@ -943,7 +1048,9 @@ export function createSpaziAccessiView(deps) {
   async function reload() {
     const space = readActiveSpace().trim();
     if (!resetLoadState(space)) return;
-    const reads = beginReads(space);
+    // backlog:2de01913d276: one load reads once — the post-write reread
+    // shares one coalescing wrapper like the entry load above.
+    const reads = beginReads(space, coalesceSpaceReads(client));
     await loadCore(reads);
     await loadStats(reads);
     state.statsPending = false;
@@ -989,7 +1096,7 @@ export function createSpaziAccessiView(deps) {
     for (const card of cards) {
       const cell = el(doc, 'div', { cls: 'bo-spazi-card' });
       const head = el(doc, 'div', { cls: 'bo-spazi-head' });
-      head.appendChild(el(doc, 'span', { text: card.initials, cls: 'bo-spazi-initials' }));
+      head.appendChild(el(doc, 'span', { text: card.initials, cls: `bo-space-badge ${card.badgeClass}` }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
       names.appendChild(el(doc, 'div', { text: card.name, cls: 'bo-spazi-name' }));
       if (card.description !== null) {
@@ -1013,12 +1120,30 @@ export function createSpaziAccessiView(deps) {
       const you = el(doc, 'span', { text: 'Tu: ', cls: 'bo-muted bo-spazi-you' });
       // backlog:9d06eb1e174b: while the context read is out the role is a
       // skeleton, never «ruolo non riconosciuto» for the 2-7 s of the read.
-      if (card.roleKnown) you.appendChild(el(doc, 'strong', { text: card.role }));
-      else if (state.contextPending) {
-        you.setAttribute('aria-busy', 'true');
-        you.appendChild(uiSkeleton(doc, { width: '64px' }));
-      } else you.appendChild(el(doc, 'strong', { text: 'ruolo non riconosciuto' }));
-      foot.appendChild(you);
+      // backlog:2de01913d276: a failed context read (a 429, a refused
+      // connection, a 5xx) is a read error with «Riprova», never
+      // «ruolo non riconosciuto»: a network error is not an unknown role.
+      // «ruolo non riconosciuto» stays only for a context that answered
+      // without a role. The retry is the operator's: no automatic re-read.
+      if (state.contextUnavailable !== null && !card.roleKnown && !state.contextPending) {
+        you.appendChild(el(doc, 'strong', { text: 'non leggibile' }));
+        you.appendChild(el(doc, 'span', { text: ` — ${state.contextUnavailable}`, cls: 'bo-muted' }));
+        foot.appendChild(you);
+        const retry = el(doc, 'button', {
+          text: 'Riprova',
+          cls: 'ui-btn ui-btn-secondary ui-btn-small bo-spazi-retry',
+          attrs: { type: 'button' },
+        });
+        retry.addEventListener('click', () => { void refresh({ skeleton: true }); });
+        foot.appendChild(retry);
+      } else {
+        if (card.roleKnown) you.appendChild(el(doc, 'strong', { text: card.role }));
+        else if (state.contextPending) {
+          you.setAttribute('aria-busy', 'true');
+          you.appendChild(uiSkeleton(doc, { width: '64px' }));
+        } else you.appendChild(el(doc, 'strong', { text: 'ruolo non riconosciuto' }));
+        foot.appendChild(you);
+      }
       if (card.active) {
         foot.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
       } else if (typeof deps.onPickSpace === 'function') {
@@ -1035,7 +1160,7 @@ export function createSpaziAccessiView(deps) {
       grid.appendChild(cell);
     }
     // C11: the dashed box stays last; its menu carries the verbatim C20
-    // voices. Creation itself lives in the control plane (no capability
+    // voices. Creation itself lives in the management console (no capability
     // here), so picking a voice never invents a space.
     // The new-space menu opens as a popover over the page (absolute on this
     // relative anchor), like the clienti and personalizzazione add menus:
@@ -1061,9 +1186,15 @@ export function createSpaziAccessiView(deps) {
       if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
-      // Closing from the toggle replaces the toggle itself: keep keyboard
-      // focus on it, so Tab continues from the button that closed the menu.
-      if (!willOpen) focusToggle(newSpaceToggleSelector);
+      // Opening paints the menu new: move keyboard focus to its first voice
+      // (review P2 on #753 — the claimed cure), so Esc and Tab continue from
+      // inside the menu. Closing from the toggle replaces the toggle itself:
+      // keep keyboard focus on it, so Tab continues from the button.
+      if (willOpen) {
+        const menuNode = mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+        const firstVoice = menuNode && typeof menuNode.querySelector === 'function' ? menuNode.querySelector('button') : null;
+        if (firstVoice && typeof firstVoice.focus === 'function') firstVoice.focus();
+      } else focusToggle(newSpaceToggleSelector);
     });
     adderToggle.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
@@ -1082,14 +1213,14 @@ export function createSpaziAccessiView(deps) {
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = null;
-        say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
+        say('La creazione con l\u2019AI non \u00E8 ancora pronta: crea lo spazio dalla console di gestione, poi invita qui il team.');
         render();
         focusToggle(newSpaceToggleSelector);
       });
       const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
-        state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
+        state.newSpaceNote = 'I nuovi spazi si creano nella console di gestione: qui non \u00E8 stato creato nessuno spazio.';
         render();
         focusToggle(newSpaceToggleSelector);
       });
@@ -1208,6 +1339,18 @@ export function createSpaziAccessiView(deps) {
     }));
     if (state.members === null) {
       section.appendChild(el(doc, 'p', { text: state.membersUnavailable ?? 'Team non disponibile.', cls: 'bo-muted' }));
+      // backlog:2de01913d276: a team the server refused (verifica 17/11: a
+      // 429) offers «Riprova» beside the honest note — the retry is the
+      // operator's, never an automatic re-read.
+      if (state.membersUnavailable !== null) {
+        const retry = el(doc, 'button', {
+          text: 'Riprova',
+          cls: 'ui-btn ui-btn-secondary ui-btn-small bo-spazi-retry',
+          attrs: { type: 'button' },
+        });
+        retry.addEventListener('click', () => { void refresh({ skeleton: true }); });
+        section.appendChild(retry);
+      }
       box.appendChild(section);
       return;
     }
@@ -1230,10 +1373,10 @@ export function createSpaziAccessiView(deps) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
     // backlog:6563edf41aab: possible duplicates read like the customer
-    // cards — one muted line per colliding name, never a merge: the operator
-    // decides with Rimuovi on the stale row.
+    // cards — one spaced line per colliding name, never a merge and never a
+    // removal advice: Rimuovi suspends the person in the whole organisation.
     for (const hint of duplicateTeamHints(rows)) {
-      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted' }));
+      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted bo-spazi-duplicate' }));
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });
@@ -1632,9 +1775,13 @@ export function createSpaziAccessiView(deps) {
     // after it. Voce 19c2e22a64a1 (1): it counts this space live, and a
     // space move mid-read keeps the unknown state instead of painting
     // another space's late count.
-    const countRead = space !== '' ? loadFixCount(client, { spaceId: space }) : Promise.resolve(null);
+    // backlog:2de01913d276: one load reads once — every read of this load
+    // shares one coalescing wrapper, so profile and members leave exactly
+    // once per load (verifica 17/11: 11 caricamenti in 60 s dopo un 429).
+    const readsClient = coalesceSpaceReads(client);
+    const countRead = space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
-    const reads = hasSpace ? beginReads(space) : null;
+    const reads = hasSpace ? beginReads(space, readsClient) : null;
     // A statistic that already landed paints as data, never as pending:
     // the flag flips in the settlement turn, before the data paint below.
     let statsDone = false;

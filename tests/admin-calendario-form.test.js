@@ -191,11 +191,12 @@ test('form: Esc closes it and drops the typed values — the next opening propos
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30–10:00 here, now is 2026-10-21); the typed values never survive.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
-  assert.equal(byName(mount, 'end').value, '10:00', 'the next opening proposes 10:00');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00–09:30 here: now is 2026-10-21T06:00Z, 08:00 in
+  // Rome, before the grid opens); the typed values never survive.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
+  assert.equal(byName(mount, 'end').value, '09:30', 'the next opening proposes 09:30');
   for (const name of ['price', 'notes']) {
     assert.equal(byName(mount, name).value, '', `${name} starts empty`);
   }
@@ -213,10 +214,10 @@ test('form: × closes it and drops the typed day too, and focus goes back to «N
   const toggle = mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento'));
   assert.equal(toggle.__focused, true, 'focus back on the button that opened it');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30 here); the typed 2026-10-23 never survives.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00 here); the typed 2026-10-23 never survives.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
 });
 
 test('form: a slot picked on the grid seats the same form beside it; Esc drops the slot too', async () => {
@@ -234,10 +235,11 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   pop.dispatch('keydown', { key: 'Escape' });
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick'), undefined, 'the pick leaves the grid');
   openManual(mount);
-  // backlog:134f3ed7 — the old 11:00 slot never comes back; the manual
-  // opening proposes tomorrow 09:30 instead of an empty form.
-  assert.equal(byName(mount, 'start').value, '09:30', 'the old slot never comes back');
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — the old 11:00 slot never
+  // comes back; the manual opening proposes today 09:00 instead of an
+  // empty form.
+  assert.equal(byName(mount, 'start').value, '09:00', 'the old slot never comes back');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
 });
 
 // backlog:3582d91635cb: homonyms in the customer suggestions read apart.
@@ -280,7 +282,7 @@ test('form: customerHint prefers a partial email, then the phone, then the compa
 
 // backlog:134f3ed7 (review giro 1 P2): closeManual() dropped the typed
 // values but kept the typed marks, so the reopened form read its proposed
-// date (tomorrow) as «written» and raised «Hai del testo non salvato».
+// date (today 2026-10-21 now) as «written» and raised «Hai del testo non salvato».
 test('form: a date typed then dropped by Esc is not unsaved text on reopen', async () => {
   const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
   resetVersionWatchState();
@@ -293,7 +295,7 @@ test('form: a date typed then dropped by Esc is not unsaved text on reopen', asy
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
   assert.equal(hasUnsavedWork(emptyPage), false, 'the proposed date is nobody’s unsaved text');
   resetVersionWatchState();
 });

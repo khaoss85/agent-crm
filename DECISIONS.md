@@ -4577,3 +4577,30 @@ app-owned because no package Admin extension seam exists. No new runtime
 capability, provider, CLI namespace or MCP tool is added. Audiences, sending,
 scheduling, publishing and spending remain outside MK1.
  (fix(marketing): prove the public proposal journey and preserve approval evidence)
+
+## ADR-046 — Accordo agent teams run on the Orchestro loop
+
+**Status:** accepted (owner decision, 2026-11-12).
+
+Agent teams in Accordo use the Orchestro loop: Accordo owns interface, data
+and approvals; Orchestro executes.
+
+Consequences:
+
+- `docs/strategy/FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` and
+  `docs/strategy/AGENTIC_WORKFORCE_ROADMAP.md` name Orchestro as the engine
+  of agent teams and no longer gate integration on a freeze or a first pack.
+- The earlier "Factory Core v1 — Integration Freeze" gate is dropped: no
+  integration waits for it.
+- There is no "FA1 Builder Pack first" sequence: builder execution runs on
+  the Orchestro loop directly, and supervised business loops follow only
+  after the builder seam proves itself.
+- Accordo does not grow a duplicate agent executor (selector, checkpoint,
+  coding-agent lifecycle, ledger); role-agent packs compose Accordo managed
+  capabilities only.
+- Other documents that still name Northstar Factory, the freeze gate or FA1
+  (`docs/CODER_TOOLING_ROADMAP.md`, `docs/AGENT_HARNESS_COMPATIBILITY.md`,
+  `docs/strategy/AGENT_CRM_CLOUD.md`,
+  `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`,
+  `docs/strategy/OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`, `ROADMAP.md`) are
+  stale relative to this decision and are updated as follow-ups, not here.

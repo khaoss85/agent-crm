@@ -183,10 +183,10 @@ test('uscendo e tornando nel Calendario non resta un pannello vecchio', async ()
   assert.ok(!mount.textContent.includes('Prenotato:'), 'no stale done line on return');
   openManual(mount);
   assert.ok(isOpen(formPops(mount)[0]), 'the form still opens');
-  assert.equal(byName(mount).date.value, '2026-10-22', 'a clean opening proposes the day, never the old one');
+  assert.equal(byName(mount).date.value, '2026-10-21', 'a clean opening proposes the day, never the old one');
 });
 
-test('ogni apertura propone giorno e ora: domani 09:30–10:00 senza slot cliccato', async () => {
+test('ogni apertura propone giorno e ora: oggi 09:00–09:30 senza slot cliccato (backlog:8f10bea47ac8)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
@@ -194,10 +194,11 @@ test('ogni apertura propone giorno e ora: domani 09:30–10:00 senza slot clicca
   await view.render();
   await settle();
   openManual(mount);
-  // 2026-10-21 06:00Z is 08:00 in Rome: tomorrow is 2026-10-22.
-  assert.equal(byName(mount).date.value, '2026-10-22');
-  assert.equal(byName(mount).start.value, '09:30');
-  assert.equal(byName(mount).end.value, '10:00');
+  // 2026-10-21 06:00Z is 08:00 in Rome: the grid still opens today, so the
+  // proposal is the first slot of today, never tomorrow 09:30.
+  assert.equal(byName(mount).date.value, '2026-10-21');
+  assert.equal(byName(mount).start.value, '09:00');
+  assert.equal(byName(mount).end.value, '09:30');
 });
 
 test('il messaggio di dato mancante sparisce appena il dato c’è', async () => {

@@ -40,7 +40,7 @@ The desired catalogue already contains the underlying user jobs. A new catalogue
 - `ACC-JTBD-SALES-MGR-020` — experiment with new agentic team workflows.
 - `ACC-JTBD-AE-019` — build new personal plays through agents.
 - `ACC-JTBD-CRM-PO-020` — evolve the platform through agents and capability packs.
-- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, model routing and context optimization, and hallucination/authorization controls. These JTBDs are composed only through Accordo managed capabilities; pack work uses Factory's selector/checkpoint/executor lifecycle (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§2.3, 6), and no model-router, checkpoint, retry engine, or ledger is defined inside a pack.
+- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, model routing and context optimization, and hallucination/authorization controls. These JTBDs are composed only through Accordo managed capabilities; pack work uses Orchestro's selector/checkpoint/executor lifecycle (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§2.3, 6), and no model-router, checkpoint, retry engine, or ledger is defined inside a pack.
 
 ### Marketing and ABM cluster
 
@@ -92,15 +92,9 @@ Today that builder execution is harness-driven: the coding agent uses its own
 tools around Accordo's deterministic CLI/JSON contracts. This roadmap does not
 create an Accordo plan executor or generic agent orchestrator.
 
-After Factory closes Phase 6 and declares **Factory Core v1 — Integration
-Freeze**, the intended durable builder execution path is the one defined in
-`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`: Accordo supplies bounded business
-intent, checked plans, policies, approvals and verification commands; Factory
-owns governed work selection, checkpointing, coding-agent CLI execution,
-execution evidence and independent technical verification. The first integration
-is **FA1 / Accordo Builder Pack**.
+Durable builder execution runs on the Orchestro loop (Dan, 2026-11-12, ADR-046), as defined in `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`: Accordo supplies bounded business intent, checked plans, policies, approvals and verification commands; Orchestro owns governed work selection, checkpointing, coding-agent CLI execution, execution evidence and independent technical verification. There is no freeze gate and no FA-first sequence.
 
-Pre-freeze harness wording only above: PLAN here is the Accordo checked SolutionPlan, and post-freeze execution maps to `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §6 (Accordo through APPROVE, Factory SELECT → EXECUTE, no second planner).
+Harness wording above: PLAN here is the Accordo checked SolutionPlan, and loop execution maps to `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §6 (Accordo through APPROVE, Orchestro SELECT → EXECUTE, no second planner).
 
 ### Runtime role agent
 
@@ -115,35 +109,32 @@ The runtime role agent must expose:
 - tool calls and external-operation outcomes;
 - cost and latency observations where available;
 - immutable audit/trace evidence;
-- retry, stop, compensation, and escalation state. Business retry/stop/compensation here is Accordo jobs/outbox/managed-action state, not a pack-level retry or checkpoint engine; coding-agent retry/checkpoint remains Factory-owned (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §3, Finding B).
+- retry, stop, compensation, and escalation state. Business retry/stop/compensation here is Accordo jobs/outbox/managed-action state, not a pack-level retry or checkpoint engine; coding-agent retry/checkpoint remains Orchestro-owned (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §3, Finding B).
 
 A coding-agent session is not automatically a supported unattended production runtime. Provider terms, authentication, durability, and deployment authority must be proven for the selected runtime rather than inferred from a desktop or subscription session.
 
-## Factory integration boundary
+## Orchestro integration boundary
 
-Role-agent packs remain **Accordo domain compositions**. Factory does not become
+Role-agent packs remain **Accordo domain compositions**. Orchestro does not become
 the role-pack model, CRM database, campaign system, secret store or provider
-integration layer. Conversely, Accordo does not reproduce Factory's selector,
-checkpoint, coding-agent executor lifecycle, Factory ledger or independent
+integration layer. Conversely, Accordo does not reproduce Orchestro's selector,
+checkpoint, coding-agent executor lifecycle, loop ledger or independent
 technical verifier.
 
-The AW slices below are Accordo product-roadmap slices, not the Factory
-integration sequence. They do **not** authorize Factory work before the freeze,
-and they do not outrank the FA sequence. In particular:
+The AW slices below are Accordo product-roadmap slices, not the Orchestro
+integration sequence. They do **not** outrank that sequence. In particular:
 
-1. no Factory integration implementation starts before **Factory Core v1 —
-   Integration Freeze**;
-2. **FA1 / Accordo Builder Pack** is the first integration;
-3. Marketing, SEO, prospecting and other operational loops may use Factory only
-   after FA1 proves the seam;
-4. no universal `Initiative` model, generic orchestrator, scheduler, agent SDK or
+1. builder execution runs on the Orchestro loop directly (Dan, 2026-11-12, ADR-046): no freeze gate, no first-pack gate;
+2. Marketing, SEO, prospecting and other operational loops may use Orchestro only
+   after the builder seam proves itself;
+3. no universal `Initiative` model, generic orchestrator, scheduler, agent SDK or
    duplicate execution ledger is introduced to make those future loops generic;
-5. every external business side effect still crosses an Accordo managed action
+4. every external business side effect still crosses an Accordo managed action
    or operation boundary.
 
-Factory remains local-first and provider-neutral: installed coding-agent CLIs
-and their native authenticated sessions sit behind Factory adapters. Accordo
-must not add a mandatory model API dependency merely to integrate with Factory.
+Orchestro execution stays provider-neutral: installed coding-agent CLIs
+and their native authenticated sessions sit behind Orchestro adapters. Accordo
+must not add a mandatory model API dependency merely to integrate with Orchestro.
 
 ## Native-first, provider-neutral execution
 
@@ -160,8 +151,7 @@ The default strategy is:
 
 This creates a “bring the permitted runtime and tools” model instead of a mandatory Accordo model bill.
 
-For future builder execution after the integration freeze, Factory is the
-canonical governed coding-agent loop. That does not change the Accordo runtime
+For builder execution, Orchestro is the canonical governed coding-agent loop (Dan, 2026-11-12, ADR-046). That does not change the Accordo runtime
 rule above: provider-facing business mutations remain Accordo operations.
 
 ## Role-agent pack
@@ -266,12 +256,12 @@ Role-agent packs become useful only when the following reusable layers exist.
 | Managed Cloud C0–C3 | Project/environment/deployment records, managed runtime, PostgreSQL/secrets/backups, health/logs/trace. |
 
 These are Accordo business-runtime dependencies. Their scheduler/jobs/outbox wake
-and execute Accordo business work; they do not replace Factory's selector or
+and execute Accordo business work; they do not replace Orchestro's selector or
 coding-agent execution lifecycle.
 
 ## Proposed roadmap slices
 
-The slices below are planning groups, not coverage claims and not the Factory FA
+The slices below are planning groups, not coverage claims and not the Orchestro
 integration sequence.
 
 ### AW0 — Role-pack composition contract
@@ -345,16 +335,14 @@ PT/Gym lead or trial
 
 This tests Accordo’s agent composition, PostgreSQL/Cloud posture, jobs, interactions, Admin, and a selected JTBD acceptance pack against a real product.
 
-This Arvo business pilot is not the first Factory integration. Factory integration
-still begins with FA1 only after the Integration Freeze; a later operational
-pilot may then reuse the proven seam.
+This Arvo business pilot is independent of the engine choice: agent-team execution runs on the Orchestro loop (Dan, 2026-11-12, ADR-046), and a later operational pilot may reuse the proven builder seam.
 
 ## Roadmap continuity for future campaigns
 
 Every future implementation prompt that advances Cloud, guided onboarding, role-agent packs, Arvo, the winery blueprint, Interactions, Customer Data Operations, Marketing, or the package ecosystem must re-read and reconcile the live versions of:
 
 - this roadmap;
-- `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` whenever Factory execution is relevant;
+- `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` whenever Orchestro execution is relevant;
 - `GUIDED_ONBOARDING_AND_VERTICAL_BLUEPRINTS.md`;
 - `../jtbd/roadmap/OWNERSHIP.md` and the independent coverage overlay;
 - `../PROJECT_STATUS.md` and Repository Truth.
@@ -376,6 +364,6 @@ Accordo’s differentiator should not be “we ship a generic autonomous agent.�
 
 > A coding agent can assemble a business-specific operational agent from deterministic customer/revenue primitives, bounded tools, explicit policy, and executable evidence — while the project retains its source, provider choice, and operational limits.
 
-For durable builder execution after the Factory freeze, Accordo consumes Factory
+For durable builder execution, Accordo runs on Orchestro (Dan, 2026-11-12, ADR-046)
 rather than growing a duplicate agent executor. For business execution, Accordo
 remains the policy and managed-action authority.
