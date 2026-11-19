@@ -323,3 +323,43 @@ test('5036bc435465: device dictation reads array-like results without Symbol.ite
   handle.stop();
   assert.deepEqual(ended, [true], 'the end still closes the dictation');
 });
+
+// Restyle 19/11 (Dan, foto Presti): the three draft fields stay in the DOM
+// but out of sight until there is a draft, the AI is off, or the operator
+// asks to write them; the toggle says whether the panel is open.
+const draftWrapOf = (mount) => mount.findAll('div')
+  .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-voice-draft')) ?? null;
+
+test('restyle 19/11: the draft is hidden until «Ordina con l’AI» fills it', async () => {
+  const hooksLog = [];
+  const { mount } = await open({ dictate: stubDictate(hooksLog) });
+  assert.equal(byAction(mount, 'dictate-note').getAttribute('aria-expanded'), 'false');
+  await openPanel(mount);
+  assert.equal(byAction(mount, 'dictate-note').getAttribute('aria-expanded'), 'true', 'the toggle says the panel is open');
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), '', 'no empty draft fields before a draft exists');
+  field(mount, 'voiceNoteText').value = 'il cliente richiama lunedì';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null, 'the ordered draft is shown');
+  assert.equal(byAction(mount, 'voice-draft-manual').getAttribute('hidden'), '', 'the hand-writing offer steps aside');
+});
+
+test('restyle 19/11: «Scrivi tu» shows the draft fields without the AI', async () => {
+  const { mount } = await open();
+  await openPanel(mount);
+  byAction(mount, 'voice-draft-manual').listeners.click[0]();
+  await flush();
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null);
+});
+
+test('restyle 19/11: with the AI off the draft opens for hand editing', async () => {
+  const { mount } = await open({
+    voiceRefusal: Object.assign(new Error('no model'), { status: 409, code: 'VOICE_NOTE_UNAVAILABLE' }),
+  });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'appunti della chiamata';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('L’AI non è attiva in questo spazio'));
+  assert.equal(draftWrapOf(mount).getAttribute('hidden'), null, 'the sentence says the draft is below: it is');
+});
