@@ -4523,6 +4523,24 @@ test('backlog:88ab568cdcba (was d30d17880f63 review #880): the AI-off state land
   assert.match(aiLine(panel).textContent, /L’AI non è attiva in questo spazio/, 'the reason line says where to write instead');
 });
 
+// backlog:88ab568cdcba (verifier 17/11, live 2026-11-17.md:87): the landing
+// keeps the focus, but a press on the off row («Scrittura con l'AI non
+// disponibile») still moves the cursor to the message field without saying
+// so. The move stays, the silence goes: the press announces where the
+// cursor went.
+test('backlog:88ab568cdcba: with the AI off a press on the empty request row says the cursor moved to the message field', async () => {
+  const client = aiStateClient({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  const { panel } = await openComposerMount({ client, role: 'owner' });
+  const { area } = aiParts(panel);
+  area.__focused = false;
+  const line = aiLine(panel);
+  assert.ok(!line.textContent.includes('cursore'), 'the move is not announced before the press');
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  field.dispatch('mousedown', { preventDefault: () => {} });
+  assert.equal(area.__focused, true, 'the message field still takes the typing');
+  assert.match(line.textContent, /cursore .* nel messaggio/i, 'the press says where the cursor went');
+});
+
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
   for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
     const client = aiStateClient(shape);
