@@ -946,6 +946,70 @@ test('d77f434ba40c: the past link resets an active channel filter', async () => 
     'back to Tutti the past booking rows read again');
 });
 
+// backlog:d77f434ba40c, review #1057 (P2): with past bookings only but the
+// listino still in flight the vista holds grey bars — the timeline hides
+// booked rows until the listino lands, so the vista must not advertise
+// cronologia rows that are not on screen yet.
+test('d77f434ba40c: the past-only vista waits for the listino, never a bare link', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'booked',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const gates = new Map();
+  const hold = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const client = stubClient({ timeline: pastOnly });
+  const waiting = { ...client };
+  waiting.request = async (path, options = {}) => {
+    if (path === '/api/appointments/services') return hold('services').promise;
+    return client.request(path, options);
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const shown = createCustomerCardView({ doc, mount, client: waiting }).renderCard('contact', 'c1');
+  await flush();
+  await flush();
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  await flush();
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('in cronologia'),
+    `no advertised past rows before the listino lands: ${recap.textContent}`);
+  assert.ok(!recap.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'no past link before the listino lands');
+  assert.ok(recap.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'),
+    'grey bars while the listino loads');
+  gates.get('services').release.resolve({ services: [{ serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' }] });
+  await shown;
+  await flush();
+  const vistaAfter = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vistaAfter, 'the recap keeps its Appuntamenti vista after the listino');
+  vistaAfter.dispatch('click');
+  await flush();
+  const recapAfter = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recapAfter.textContent.includes('Nessun appuntamento in programma'),
+    `the honest past-only state once the listino lands: ${recapAfter.textContent}`);
+  assert.ok(recapAfter.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'the past link returns with the listino');
+});
+
 // backlog:d77f434ba40c: with no booking at all the honest empty state stays.
 test('d77f434ba40c: with no booking the vista still reads «Nessun appuntamento prenotato»', async () => {
   const empty = {

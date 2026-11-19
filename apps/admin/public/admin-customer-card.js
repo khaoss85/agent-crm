@@ -6030,6 +6030,14 @@ export function createCustomerCardView(deps) {
         box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
         return;
       }
+      // Review #1057 (P2): the timeline hides booked rows while the listino
+      // loads, so the vista holds grey bars instead of advertising cronologia
+      // rows that are not on screen yet — like the upcoming path below.
+      if (!servicesReady) {
+        box.appendChild(uiSkeleton(doc, { width: '62%', block: true }));
+        box.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+        return;
+      }
       box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento in programma'));
       box.appendChild(el('p', 'bo-muted',
         `${past.length === 1 ? '1 passato' : `${past.length} passati`} in cronologia`));
