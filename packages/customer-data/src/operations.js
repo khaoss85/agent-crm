@@ -1,8 +1,7 @@
 // @ts-check
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, findStage, isOpenOfferStage, normalizeActor } from '../../core/index.js';
 import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
-import { findStage, isOpenOfferStage } from '../../core/src/pipeline-registry.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
@@ -1385,12 +1384,14 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     const openOffers = myOffers.filter((row) => {
       const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
       // Review giro 1 (agent-crm#1038, P2): a stage key belongs to the
-      // pipeline that defines it — a row filed under another pipeline
-      // (pipelineKey names it) reads through the canonical stage, never
-      // through the composed pipeline's types.
+      // pipeline that defines it — only a row filed under the composed
+      // pipeline (pipelineKey names it) reads through its types, anything
+      // else through the canonical stage. A row with a pipeline stage but
+      // no pipeline key is not on any pipeline, so the canonical stage
+      // decides for it too.
       const rowPipeline = typeof row?.pipelineKey === 'string' && row.pipelineKey !== '' ? row.pipelineKey : null;
       if (key !== null && opportunityPipeline !== null
-        && (rowPipeline === null || rowPipeline === opportunityPipeline.name)
+        && rowPipeline === opportunityPipeline.name
         && findStage(opportunityPipeline, key) !== null) {
         return isOpenOfferStage(opportunityPipeline, key);
       }
