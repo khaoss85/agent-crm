@@ -514,12 +514,18 @@ export function spaceSwitcherLabel(spaces) {
 
 /**
  * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
- * get a hint; the rest render without one. Display initials never repeat
- * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
- * the word rule («Prova Validazione B1» → «PV»), then longer slices of
- * the name — the first unused candidate, so «Presti Group» and «Prova
- * Validazione B1» read differently even when both arrive as «PR».
- * Rows outside the host's live member list (backlog:ca7008cac764) carry
+ * get a hint; the rest render without one. The sigla is always computed
+ * from the space name (backlog:44f7bfe8a74c): the word rule («Prova
+ * Validazione B1» → «PV»), then longer slices of the name — the first
+ * unused candidate. Stored initials are never used: other paths stamp
+ * them with other rules (the session profile slices the raw name), so
+ * honoring them would read a different sigla for the same space
+ * depending on which path computed it. Sigle are claimed in id order,
+ * so the same set of spaces reads the same sigla from any space —
+ * in the menu and in Spazi e accessi alike — whatever order the list
+ * arrives in; rows still render in the received order with their ⌘N
+ * hint. Display initials never repeat (backlog:ecb26347d12c). Rows
+ * outside the host's live member list (backlog:ca7008cac764) carry
  * `needsAccess`: visited mounts the session profile does not name may land
  * on the space login instead of switching, so the menu marks them instead
  * of promising a seamless switch. Without a member list every row reads
@@ -530,20 +536,30 @@ export function spaceSwitcherLabel(spaces) {
  */
 export function spaceMenuItems(spaces, activeId, memberIds = null) {
   const list = Array.isArray(spaces) ? spaces : [];
-  const seen = new Set();
   const memberSet = memberIds == null ? null : new Set(
     (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
   );
-  return list.map((space, index) => {
-    const name = typeof space?.name === 'string' ? space.name : '';
-    const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
-      ? space.initials.trim().toUpperCase()
-      : '';
-    const word = spaceInitialsFor(name);
+  const candidatesOf = (name) => {
+    const candidates = [spaceInitialsFor(name)];
     const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '').toUpperCase();
-    const candidates = stored !== '' ? [stored, word] : [word];
     if (clean.length >= 3) candidates.push(clean.slice(0, 3));
     if (clean.length >= 3) candidates.push(`${clean[0]}${clean[clean.length - 1]}`);
+    return candidates;
+  };
+  // Claim sigle in id order, render in list order: the same set always
+  // maps to the same sigle, from any space, in both views.
+  const byId = list.map((space, index) => ({ space, index })).sort((left, right) => {
+    const leftId = typeof left.space?.id === 'string' ? left.space.id : '';
+    const rightId = typeof right.space?.id === 'string' ? right.space.id : '';
+    if (leftId < rightId) return -1;
+    if (leftId > rightId) return 1;
+    return left.index - right.index;
+  });
+  const seen = new Set();
+  const initialsByIndex = new Array(list.length);
+  for (const { space, index } of byId) {
+    const name = typeof space?.name === 'string' ? space.name : '';
+    const candidates = candidatesOf(name);
     let initials = candidates[0] ?? '·';
     for (const candidate of candidates) {
       if (candidate !== '' && !seen.has(candidate)) {
@@ -552,17 +568,18 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
       }
     }
     seen.add(initials);
-    return {
-      id: space.id,
-      name: space.name,
-      initials,
-      color: spaceBadgeColor(space?.id),
-      badgeClass: spaceBadgeClass(space?.id),
-      keyHint: index < 9 ? `⌘${index + 1}` : '',
-      active: space.id === activeId,
-      needsAccess: memberSet !== null && space.id !== activeId && !memberSet.has(space.id),
-    };
-  });
+    initialsByIndex[index] = initials;
+  }
+  return list.map((space, index) => ({
+    id: space.id,
+    name: space.name,
+    initials: initialsByIndex[index],
+    color: spaceBadgeColor(space?.id),
+    badgeClass: spaceBadgeClass(space?.id),
+    keyHint: index < 9 ? `⌘${index + 1}` : '',
+    active: space.id === activeId,
+    needsAccess: memberSet !== null && space.id !== activeId && !memberSet.has(space.id),
+  }));
 }
 
 /**

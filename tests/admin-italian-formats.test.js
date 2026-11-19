@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { buildAdminBundle } from '../apps/server/src/admin-bundle.js';
 import { MODULE_NAMES, moduleScreenLabel, plural } from '../apps/admin/public/admin-labels.js';
 import { formatAmount } from '../apps/admin/public/admin-core.js';
+import { reportingMoney } from '../apps/admin/public/admin-reporting.js';
 import { createdWithin } from '../apps/admin/public/admin-pipeline.js';
 import { pluralize } from '../apps/admin/public/admin-personalizzazione.js';
 import { buildDashboardModel, formatMinor } from '../packages/analytics/src/dashboard.js';
@@ -48,14 +49,17 @@ test('93e26f3d2cdc: formatAmount never throws and never repeats an unknown or ma
   assert.equal(seen(formatAmount(-108000, 'XYZ')), '-1.080', 'the bare rule keeps the sign');
 });
 
-test('93e26f3d2cdc: Clienti, Reporting, Pipeline and the scheda read the same shape', () => {
+test('93e26f3d2cdc: Clienti, Pipeline and the scheda read the same shape; Reporting always shows cents', () => {
   assert.equal(seen(formatAmount(108000, 'EUR')), '1.080 €');
-  // Every screen that writes money renders through formatAmount (checked by
-  // the source scan below), so the same cents read the same everywhere.
+  // Clienti, Pipeline and the scheda render through formatAmount (checked
+  // by the source scan below), so the same cents read the same there.
+  // Reporting is the exception (backlog:9236684c96a7): its reportingMoney()
+  // voice always groups and always shows cents — «1.080,00 €».
+  assert.equal(seen(reportingMoney(108000, 'EUR')), '1.080,00 €');
   assert.match(source('admin-clienti.js'), /formatAmount\(Number\(row\.offerValueCents\), row\.offerCurrency \?\? ''\)/);
   assert.match(source('admin-pipeline.js'), /formatAmount\(record\.valueCents, record\.currency\)/);
   assert.match(source('admin-customer-card.js'), /formatAmount\(first\.amountCents, first\.currency\)/);
-  assert.match(source('admin-reporting.js'), /formatAmount\(entry\.minor, model\.currency\)/);
+  assert.match(source('admin-reporting.js'), /reportingMoney\(entry\.minor, model\.currency\)/);
   // Oggi renders no amounts (no money helper, no cents, no €): nothing to unify.
   assert.doesNotMatch(source('admin-oggi.js'), /formatAmount|formatMoney|Cents\b/, 'Oggi shows no money');
   assert.doesNotMatch(source('admin-oggi.js'), /€/, 'Oggi shows no money');
@@ -152,35 +156,46 @@ test('famiglia F8: no English label in a kicker, eyebrow or crumb of the /bo vie
   assert.deepEqual(offenders, [], 'English labels shown in capitals');
 });
 
-test('93e26f3d2cdc: a single display helper — no currency formatter, no hand-made money', () => {
+test('93e26f3d2cdc: display helpers — no stray currency formatter, no hand-made money', () => {
   const { jsBody } = buildAdminBundle(PUBLIC_DIR);
-  // Display money goes through formatAmount (hand-rolled, pinned grouping):
-  // no Intl currency formatter belongs to a /bo view. The only currency
-  // formatter left in the bundle is the en-IE demo page (app.js, outside
-  // /bo, excluded from the view scan like the other NOT_BO sources).
+  // Display money goes through formatAmount (hand-rolled, pinned grouping),
+  // plus the Reporting voice euro() in admin-labels.js (backlog:9236684c96a7:
+  // it-IT with useGrouping 'always', the four-digit grouping fix). No other
+  // Intl currency formatter belongs to a /bo view. The en-IE formatter is
+  // the demo page (app.js, outside /bo, excluded like the other NOT_BO
+  // sources).
   const currency = [...jsBody.matchAll(/new Intl\.NumberFormat\(\s*'([^']+)'\s*,\s*\{([^}]*)\}/g)]
     .filter((match) => /style:\s*'currency'/.test(match[2]));
   assert.deepEqual(
-    currency.map((match) => match[1]),
-    ['en-IE'],
-    'the only currency formatter is the app.js demo',
+    currency.map((match) => match[1]).sort(),
+    ['en-IE', 'it-IT'],
+    'the currency formatters are the Reporting voice and the app.js demo',
+  );
+  assert.ok(
+    currency.some((match) => match[1] === 'it-IT' && /useGrouping:\s*'always'/.test(match[2])),
+    'the it-IT currency formatter always groups (backlog:9236684c96a7)',
   );
   // Hand-made money: a number turned to text by locale or toFixed and glued to €.
   assert.doesNotMatch(jsBody, /toLocaleString\(\s*'it-IT'\s*,\s*\{\s*minimumFractionDigits/, 'no ungrouped toLocaleString money');
   assert.doesNotMatch(jsBody, /\$\{[^}`]*(?:toFixed\(2\)|priceText\([^)]*\)|formatPriceCents\([^)]*\))[^}`]*\}\s*€/, 'no «45.00 €» glued by hand');
-  // Exactly one money-display helper is defined in apps/admin/public
-  // (formatAmount in admin-core.js): no export whose name stems from
+  // The money-display helpers in apps/admin/public are formatAmount in
+  // admin-core.js plus the Reporting voice euro()/plainAmount() in
+  // admin-labels.js (backlog:9236684c96a7): no export whose name stems from
   // money|amount|currency|euro may display money, outside this allowlist of
-  // non-display helpers — the input parsers (parseEuroToCents, euroToCents)
-  // and the reporting currency constant (REPORTING_CURRENCY). The machine
-  // form (formatMinorUnits) and the form-prefill text (formatPriceCents)
-  // match no stem and stay out of scope by design. A new export matching
-  // the stems fails here by shape, whatever it is called.
+  // display helpers and non-display helpers — the input parsers
+  // (parseEuroToCents, euroToCents) and the reporting currency constant
+  // (REPORTING_CURRENCY). The machine form (formatMinorUnits) and the
+  // form-prefill text (formatPriceCents) match no stem and stay out of scope
+  // by design. A new export matching the stems fails here by shape,
+  // whatever it is called.
   const ALLOWED_MONEY_EXPORTS = new Set([
     'admin-core.js#formatAmount',
     'admin-core.js#parseEuroToCents',
+    'admin-labels.js#euro',
+    'admin-labels.js#plainAmount',
     'admin-offer-panel.js#euroToCents',
     'admin-reporting.js#REPORTING_CURRENCY',
+    'admin-reporting.js#reportingMoney',
   ]);
   const defined = [];
   for (const name of readdirSync(PUBLIC_DIR).filter((file) => file.endsWith('.js'))) {
@@ -195,7 +210,11 @@ test('93e26f3d2cdc: a single display helper — no currency formatter, no hand-m
   );
   assert.ok(
     defined.includes('admin-core.js#formatAmount'),
-    'the single display helper is still formatAmount',
+    'the shared display helper is still formatAmount',
+  );
+  assert.ok(
+    defined.includes('admin-labels.js#euro') && defined.includes('admin-labels.js#plainAmount'),
+    'the Reporting voice euro()/plainAmount() is declared (backlog:9236684c96a7)',
   );
   // No amount glued to € by hand outside formatAmount (backlog:93e26f3d2cdc):
   // labels, placeholders and examples may name €, but a computed value next
@@ -214,8 +233,9 @@ test('93e26f3d2cdc: a single display helper — no currency formatter, no hand-m
     }
   }
   assert.deepEqual(glued, [], `no hand-glued € outside formatAmount: ${glued}`);
-  // The views that write money read it.
-  assert.match(source('admin-reporting.js'), /formatAmount\(entry\.minor, model\.currency\)/);
+  // The views that write money read it: Reporting through its own voice
+  // reportingMoney() (backlog:9236684c96a7), always grouped with cents.
+  assert.match(source('admin-reporting.js'), /reportingMoney\(entry\.minor, model\.currency\)/);
   // Clienti and the Calendario service menu use main's grouped helper
   // (formatAmount, backlog:5c2f8bc67859 and c2f21b5debdd): same «1.080» grouping.
   assert.match(source('admin-clienti.js'), /formatAmount\(Number\(row\.offerValueCents\), row\.offerCurrency \?\? ''\)/);

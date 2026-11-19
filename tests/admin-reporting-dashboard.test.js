@@ -28,6 +28,7 @@ import {
   isDashboardPayload,
   ownerSigla,
   periodOptions,
+  reportingMoney,
 } from '../apps/admin/public/admin-reporting.js';
 import { formatAmount } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -486,7 +487,7 @@ test('forecastStatus is on track at and past the obiettivo, honest below it (C13
   );
   assert.equal(
     forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: 2000000 }, 'EUR'),
-    `✦ Ti mancano ${formatAmount(1976667, 'EUR')} per l\u2019obiettivo`,
+    `✦ Ti mancano ${reportingMoney(1976667, 'EUR')} per l\u2019obiettivo`,
     'below target names the honest gap in Italian money',
   );
   assert.equal(forecastStatus({ closedMinor: 0, probableMinor: 0, targetMinor: 0 }, 'EUR'),
@@ -538,14 +539,14 @@ test('forecast renders the honest gap below target and nothing without one (C13)
   assert.ok(bare.includes('Obiettivo non impostato'), 'the missing-obiettivo note still renders');
 });
 
-test('obiettivo 20.000 € renders as 20.000 € with the honest gap (backlog:1ce3a1f0)', async () => {
+test('obiettivo 20.000 € renders as 20.000,00 € with the honest gap (backlog:1ce3a1f0, backlog:9236684c96a7)', async () => {
   const { mount, view } = harness();
   await view.renderReporting();
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
-  assert.ok(text.includes(`Obiettivo ${formatAmount(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
+  assert.ok(text.includes(`Obiettivo ${reportingMoney(2000000, 'EUR')}`), 'the obiettivo shows grouped euros with cents (backlog:9236684c96a7)');
   assert.ok(!text.includes('2.000.000'), 'cents are never shown as euros');
   assert.ok(
-    text.includes(`✦ Ti mancano ${formatAmount(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
+    text.includes(`✦ Ti mancano ${reportingMoney(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
     'the gap is target minus reached, in Italian money',
   );
 });
@@ -683,7 +684,7 @@ test('c3e66b36ddb7: the funnel lists each stage with n · amount over a full bar
   const [funnel] = byClass(mount, 'section', 'bo-preventivi');
   assert.ok(funnel);
   const steps = byClass(funnel, 'div', 'bo-rep-step-line').map((node) => node.textContent);
-  const eur = (minor) => formatAmount(minor, 'EUR');
+  const eur = (minor) => reportingMoney(minor, 'EUR');
   assert.deepEqual(steps, [`Qualifica3 · ${eur(14500)}`, `Trattativa2 · ${eur(10000)}`, `Vinte2 · ${eur(14000)}`]);
   assert.ok(!/%/.test(funnel.textContent), 'stage counts are a snapshot: no conversion percentage is claimed');
 });
@@ -693,9 +694,9 @@ test('c3e66b36ddb7: the forecast names its goal in the head, carries amounts in 
   await view.renderReporting();
   const forecast = mount.findAll('div').find((node) => classesOf(node).includes('pipeline-forecast'));
   const head = byClass(forecast, 'div', 'bo-rep-head')[0];
-  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatAmount(2000000, 'EUR')}`);
+  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${reportingMoney(2000000, 'EUR')}`);
   const amounts = byClass(forecast, 'strong', 'bo-rep-amount').map((node) => node.textContent);
-  assert.deepEqual(amounts, [formatAmount(14000, 'EUR'), `+${formatAmount(9333, 'EUR')}`, `+${formatAmount(14000, 'EUR')}`]);
+  assert.deepEqual(amounts, [reportingMoney(14000, 'EUR'), `+${reportingMoney(9333, 'EUR')}`, `+${reportingMoney(14000, 'EUR')}`]);
   assert.match(forecast.textContent, /✦ Stima: .*non è una promessa/, 'the heuristic is labelled, never a promise');
   assert.equal((forecast.textContent.match(/Obiettivo/g) ?? []).length, 1, 'the goal is said once, in the head');
 });
@@ -781,7 +782,7 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
     insights: [],
   }, []);
   assert.deepEqual(named.team.map((entry) => entry.owner).slice(1), ['Senza referente']);
-  assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
+  assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }, '2026-11-30T00:00:00.000Z'),
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
@@ -796,9 +797,11 @@ test('ed6bae5e5c0d: the team column reads «Offerte aperte», won and rate stay 
   assert.ok(!heads.includes('Preventivi'), 'no bare «Preventivi» header stays ambiguous');
   assert.ok(!heads.includes('Preventivi aperti'), 'open offers are not called preventivi');
   const cells = mount.findAll('td').map((node) => node.textContent);
-  // MODEL: alice 2 open, 1 won (9000 minor = 90 €) and 1 lost in the period → 50%.
+  // MODEL: alice 2 open, 1 won (9000 minor = 90,00 €) and 1 lost in the period → 50%.
+  // Intl writes a no-break space before the symbol: compare what the eye reads.
+  const seenCell = (text) => String(text).replace(/ | /g, ' ');
   assert.ok(cells.includes('2'), 'alice open count renders');
-  assert.ok(cells.includes('1 (90 €)'), `alice won count renders, got: ${cells.join(' | ')}`);
+  assert.ok(cells.map(seenCell).includes('1 (90,00 €)'), `alice won count renders, got: ${cells.join(' | ')}`);
   assert.ok(cells.includes('50%'), 'alice period rate renders');
 });
 

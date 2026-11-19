@@ -1495,7 +1495,7 @@ async function route() {
     calendarioView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
-    renderSettingsPanel({
+    const paintSettings = () => renderSettingsPanel({
       doc: document,
       mount: moduleView,
       fixCount: shellFixCount,
@@ -1505,7 +1505,21 @@ async function route() {
       // sidebar badge, and the panel shows the fresh answer.
       onRetry: () => refreshShellCounts().then(() => ({ fixCount: shellFixCount, customerDataAvailable: shellCustomerData })),
     });
+    paintSettings();
     syncShell({ view: 'settings' });
+    // backlog:797922a0c15e: the panel paints with the last known count —
+    // on a cold open that is still unknown. When the live reads land (200,
+    // no error) the card says what to fix, or that there is nothing to
+    // fix, instead of keeping the unread note. A late answer never
+    // repaints a screen opened meanwhile.
+    if (shellFixCount === null || shellFixCount === undefined) {
+      const settingsToken = navToken;
+      void refreshShellCounts().then(() => {
+        if (settingsToken !== navToken) return;
+        if (targetForHash(window.location.hash || '#/').view !== 'settings') return;
+        paintSettings();
+      }).catch(() => {});
+    }
     return;
   }
   const target = targetForHash(hash);

@@ -4427,6 +4427,19 @@ export function createCalendarioView(deps) {
         const withoutPerson = { ...draft };
         delete withoutPerson.teamMemberId;
         state.draftFill = withoutPerson;
+        // The outsider name may still belong to an existing customer: propose
+        // them in the customer search, never as the on-duty person. No
+        // auto-pick — homonyms stay the operator's explicit choice. A
+        // customer the operator already picked stays: the phrase never
+        // clears an explicit choice (backlog:3aabaea07bfe).
+        if (!(state.customerPick != null && typeof state.customerPick.id === 'string' && state.customerPick.id !== '')) {
+          state.customerPick = null;
+          state.customerQuery = member;
+          state.customerItems = [];
+          state.customerError = null;
+          state.customerPartial = false;
+          await searchCustomers(member);
+        }
         return;
       }
       const searchIds = memberIds.length > 0 ? memberIds : [member];
@@ -4450,11 +4463,10 @@ export function createCalendarioView(deps) {
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
-      // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
-      // below the grid (fetta 8), never dropped.
-      // backlog:d1e4d90e — the night is always free, so rank the painted
-      // hours first: day steps fill the proposals, night steps stay behind
-      // for the honest lines, never dropped (fetta 8).
+      // it (backlog:d1e4d90e). Only the painted 09:00–18:00 hours fill the
+      // rows (inHours below): the night is always free, so night steps would
+      // otherwise crowd out the day. An explicitly asked time keeps its
+      // honest line below the grid (exact, fetta 8).
       // Review #646 P2: the held-booking guard reads the SEARCHED person's
       // week. When the painted week does not hold every searched identity
       // (nobody named, the filter shows marco and the phrase names sara, a
@@ -4476,6 +4488,11 @@ export function createCalendarioView(deps) {
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
       const nowMs = clock().getTime();
       const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      // Only the painted 09:00–18:00 Rome hours are proposed: the night is
+      // always free, so a fully booked day would otherwise fill the rows
+      // with 00:00–02:30 steps. An explicitly asked time keeps its honest
+      // line below the grid (exact, fetta 8).
+      const inHours = ranked.filter((slot) => slotInGrid(slot?.startsAt, slot?.endsAt));
       // backlog:913c61ec — a sentence with a time asks for that time: when it
       // is free the proposal is the draft itself; when it is missing the next
       // free steps of the same afternoon follow, with the reason said — «già
@@ -4487,7 +4504,7 @@ export function createCalendarioView(deps) {
         : null;
       // The exact step books the draft's own end (a stated 20 minutes inside
       // a free 30-minute step stays 20, never the search size).
-      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : inHours;
       state.proposals = proposals.slice(0, 24);
       // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
       // several rows the recognition stands (the draft and its free steps),
@@ -4832,6 +4849,33 @@ export function createCalendarioView(deps) {
   }
 
   /**
+   * A slot Conferma names the manual form in its refusals: reopen it even
+   * when the operator had shut it, so the fix happens where the note points.
+   * The reopened form carries that slot (person, day, start, end): typed
+   * service, notes and customer pick are never overwritten. An already
+   * open form keeps its values — no defaults overwrite typed values.
+   * @param {{ teamMemberId?: unknown, startsAt?: unknown, endsAt?: unknown }} [slotFill]
+   */
+  function reopenManual(slotFill) {
+    if (slotFill) {
+      const fillMember = typeof slotFill.teamMemberId === 'string' ? slotFill.teamMemberId : '';
+      const fillDate = romeDayKey(slotFill.startsAt);
+      const fillStartMin = romeMinutes(slotFill.startsAt);
+      const fillEndMin = romeMinutes(slotFill.endsAt);
+      const manual = { ...(state.manual ?? {}) };
+      if (fillMember !== '') manual.teamMemberId = fillMember;
+      if (typeof fillDate === 'string' && fillDate !== '') manual.date = fillDate;
+      if (fillStartMin !== null) manual.start = minutesLabel(fillStartMin);
+      if (fillEndMin !== null) manual.end = minutesLabel(fillEndMin);
+      state.manual = manual;
+    }
+    if (!state.manualOpen) {
+      state.manualOpen = true;
+      ensureManualDefaults();
+    }
+  }
+
+  /**
    * A proposal Conferma (row or ghost) books through confirmBooking: the
    * claim is the manual form the operator sees, with the slot's person and
    * times. The source key binds member, slot and customer, so a retry or a
@@ -4872,6 +4916,12 @@ export function createCalendarioView(deps) {
       state.aiNote = state.servicesMode === 'failed'
         ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco.'
         : 'Scegli il servizio dal listino nel modulo «Nuovo appuntamento», poi conferma.';
+      // The note names the form: reopen it even when shut, and keep the
+      // missing-data note there too.
+      state.bookingNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : 'Mancano dei dati: servizio. Sceglilo dal listino e conferma.';
+      reopenManual({ teamMemberId: member, startsAt, endsAt });
       renderAll();
       return;
     }
@@ -4882,6 +4932,8 @@ export function createCalendarioView(deps) {
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
       state.aiNote = CONFIRM_SERVICE_NOTE;
+      state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      reopenManual({ teamMemberId: member, startsAt, endsAt });
       renderAll();
       return;
     }
@@ -4906,11 +4958,38 @@ export function createCalendarioView(deps) {
         // The cause is the service field: say it there, and point at it here.
         state.serviceError = refusal;
         state.aiNote = CONFIRM_SERVICE_NOTE;
+        state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+        reopenManual({ teamMemberId: member, startsAt, endsAt });
       } else {
         state.aiNote = humanWriteError(error, {
           failed: CONFIRM_FORM_NOTE,
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
+        // Name exactly what the reopened form still misses, like Proponi
+        // does — the slot gives person and times, never customer or service.
+        // The form reopens with the slot first, so the note reads the
+        // slot-filled values, never the dropped shut-form ones.
+        reopenManual({ teamMemberId: member, startsAt, endsAt });
+        const filled = state.manual ?? {};
+        const slotDate = romeDayKey(startsAt);
+        const slotStartMin = romeMinutes(startsAt);
+        const slotEndMin = romeMinutes(endsAt);
+        const missing = missingBookingFields(
+          {
+            teamMemberId: member,
+            serviceKey: typeof filled.serviceKey === 'string' ? filled.serviceKey : manualValue('serviceKey'),
+            date: typeof slotDate === 'string' && slotDate !== '' ? slotDate
+              : (typeof filled.date === 'string' ? filled.date : manualValue('date')),
+            start: slotStartMin !== null ? minutesLabel(slotStartMin)
+              : (typeof filled.start === 'string' ? filled.start : manualValue('start')),
+            end: slotEndMin !== null ? minutesLabel(slotEndMin)
+              : (typeof filled.end === 'string' ? filled.end : manualValue('end')),
+          },
+          Boolean(state.customerPick && typeof state.customerPick.id === 'string' && state.customerPick.id !== ''),
+        );
+        if (missing.length > 0) {
+          state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+        }
       }
     }
     renderAll();
@@ -5378,6 +5457,10 @@ export function createCalendarioView(deps) {
       ['end', 'time', 'Fine', ''],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
+    // The missing-data block always paints, right after the Fine field, so
+    // its text never jumps the buttons below and the note stays put until
+    // an edit clears it.
+    const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
     for (const [name, type, label, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
@@ -5393,6 +5476,7 @@ export function createCalendarioView(deps) {
       // Giorno and Note take the row; Inizio and Fine sit side by side, so
       // no date ever gets cut on the 340 px popover.
       form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
+      if (name === 'end') form.appendChild(bookingNoteNode);
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -5494,8 +5578,6 @@ export function createCalendarioView(deps) {
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
-    const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
-    if (state.bookingNote) panel.appendChild(bookingNoteNode);
     return panel;
   }
 
