@@ -5755,11 +5755,12 @@ export function createCustomerCardView(deps) {
 
   /**
    * backlog:0d68c387 — a confirmed booking reads in the cronologia as its
-   * own row («Appuntamento fissato · servizio · data»), at the slot it
-   * fixes: the booking used to leave no row, only its cancellation. A
-   * cancelled booking keeps that row too (the Mac saw two cancellations
-   * with no fissato row before them): the cancellation row follows it at
-   * the decided instant, newest first.
+   * own row («Appuntamento fissato · servizio · data»), at the instant it
+   * was fixed (bookedAt), not at the slot: the booking used to leave no
+   * row, only its cancellation. A cancelled booking keeps that row too
+   * (the Mac saw two cancellations with no fissato row before them): the
+   * cancellation row follows it at the decided instant, newest first. The
+   * title still names the slot; only the grouping instant is the event.
    * @param {any} timeline
    * @param {Map<string, string> | null} serviceNames
    */
@@ -5770,10 +5771,11 @@ export function createCustomerCardView(deps) {
       .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
       .map((item) => {
         const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
+        const bookedMs = Date.parse(String(item?.bookedAt ?? ''));
         return {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
-          occurredAt: item?.startsAt,
+          occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
           title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: null,
         };
@@ -5812,8 +5814,10 @@ export function createCustomerCardView(deps) {
    * The booked service as the listino names it («Lezione di prova»), never
    * the raw slug. A key the listino does not name reads as slug words —
    * with the sigle uppercase as in the listino («pt-singola» →
-   * «PT singola», while «lezione-di-prova» stays «Lezione di prova»):
-   * a token of two or more letters with no vowel is a sigla, never a word.
+   * «PT singola», while «lezione-di-prova» stays «Lezione di prova» and
+   * «my-lesson» stays «My lesson»): only a token the listino itself
+   * writes uppercase (plus the known «PT») reads uppercase, never every
+   * vowel-less word (review Codex P2 su c4f2faa: «my», «by», «gym»).
    */
   function serviceTitle(serviceKey, serviceNames = null) {
     const key = typeof serviceKey === 'string' ? serviceKey : '';
@@ -5829,8 +5833,17 @@ export function createCustomerCardView(deps) {
     }
     const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
     if (words === '') return 'Appuntamento';
+    const sigle = new Set(['pt']);
+    if (serviceNames instanceof Map) {
+      for (const listedName of serviceNames.values()) {
+        if (typeof listedName !== 'string') continue;
+        for (const token of listedName.split(/\s+/)) {
+          if (token.length >= 2 && /^[A-ZÀ-Þ]+$/.test(token)) sigle.add(token.toLowerCase());
+        }
+      }
+    }
     const readable = words.split(' ').map((word) =>
-      word.length >= 2 && !/[aeiouàèéìòóù]/i.test(word) ? word.toUpperCase() : word,
+      word.length >= 2 && sigle.has(word.toLowerCase()) ? word.toUpperCase() : word,
     ).join(' ');
     return `${readable.charAt(0).toUpperCase()}${readable.slice(1)}`;
   }
