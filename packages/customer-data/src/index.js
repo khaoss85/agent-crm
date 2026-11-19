@@ -169,7 +169,9 @@ export function createCustomerDataPackage(options = {}) {
     // old one. Version 5: the erasure reason is a code from a closed list.
     // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
     // declared surface (propose-field-from-question, fill-ai-field-values).
-    version: 6,
+    // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the
+    // composed opportunity pipeline (pipelines option) so Pagato is won.
+    version: 7,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
