@@ -7,7 +7,7 @@ import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
-import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { openOfferPanel, offerShareMessage, offerShareUrlFromAnswer } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
@@ -5600,7 +5600,7 @@ export function createCustomerCardView(deps) {
             const origin = typeof deps.origin === 'string' && deps.origin !== ''
               ? deps.origin
               : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
-            const url = offerShareUrl(origin, fresh);
+            const url = offerShareUrlFromAnswer(origin, result);
             if (url === null) {
               if (mount.contains(shareLine)) {
                 shareLine.setAttribute('class', 'field-error');

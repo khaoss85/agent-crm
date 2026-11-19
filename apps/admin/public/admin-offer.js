@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { centsToField, euroToCents, offerShareMessage, offerShareUrlFromAnswer } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -1222,7 +1222,7 @@ export function createOfferDetail(deps) {
         const expiresAt = typeof share?.expiresAt === 'string' ? share.expiresAt : null;
         let url = null;
         if (fresh !== null) {
-          url = offerShareUrl(spaceOrigin, fresh);
+          url = offerShareUrlFromAnswer(spaceOrigin, result);
           if (url !== null) shareLinks.set(quote.id, { url, expiresAt });
         } else {
           url = shareLinks.get(quote.id)?.url ?? null;
@@ -1314,7 +1314,7 @@ export function createOfferDetail(deps) {
           line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
           return;
         }
-        const url = offerShareUrl(spaceOrigin, fresh);
+        const url = offerShareUrlFromAnswer(spaceOrigin, result);
         if (url === null) {
           line.setAttribute('class', 'field-error offer-share-line');
           line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';

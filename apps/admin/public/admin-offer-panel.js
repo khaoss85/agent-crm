@@ -81,6 +81,54 @@ export function offerShareUrl(origin, token) {
 }
 
 /**
+ * backlog:bf1bc20a: validates a bridge publicPath (`/w/<space>/q/<token>`)
+ * with plain string checks only (backlog:b545aca18b8f: no regex literal with
+ * `//` in this client file). Returns the path when the edge can route it,
+ * else null — a forged or shapeless path never paints.
+ */
+function offerShareMountPath(publicPath) {
+  if (typeof publicPath !== 'string' || !publicPath.startsWith('/w/')) return null;
+  const parts = publicPath.split('/');
+  if (parts.length !== 5 || parts[0] !== '' || parts[1] !== 'w' || parts[3] !== 'q') return null;
+  const space = parts[2];
+  if (space.length !== 36) return null;
+  if (space[8] !== '-' || space[13] !== '-' || space[18] !== '-' || space[23] !== '-') return null;
+  const hex = '0123456789abcdef';
+  for (let i = 0; i < 36; i += 1) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) continue;
+    if (!hex.includes(space[i])) return null;
+  }
+  if (offerSharePath(parts[4]) === null) return null;
+  return `/w/${space}/q/${parts[4]}`;
+}
+
+/**
+ * backlog:bf1bc20a: the public share URL straight from a share-link or
+ * regenerate-link answer. The /bo bridge (pilot #729, merged) names the exact
+ * mount path the edge routes (`/w/<space>/q/<token>`); the shell prints that
+ * path after the origin instead of recomposing the bare `/q/<token>` the
+ * edge 404s («Workspace unavailable»). A forged or shapeless publicPath names
+ * no URL — the minted token fallback holds, so an old bridge still paints —
+ * and without a token there is no URL at all, never a throw.
+ */
+export function offerShareUrlFromAnswer(origin, result) {
+  const mountPath = offerShareMountPath(
+    result !== null && typeof result === 'object' ? result.publicPath : undefined,
+  );
+  if (mountPath !== null) {
+    let base = typeof origin === 'string' ? origin.trim() : '';
+    while (base.endsWith('/')) base = base.slice(0, -1);
+    if (base === '') return null;
+    if (!base.startsWith('http://') && !base.startsWith('https://')) return null;
+    return `${base}${mountPath}`;
+  }
+  const token = result !== null && typeof result === 'object' && typeof result.token === 'string'
+    ? result.token
+    : null;
+  return offerShareUrl(origin, token);
+}
+
+/**
  * backlog:7fa422415232: the ready-to-send Italian message carrying an offer
  * link. Names the offer, keeps the URL on its own so it stays tappable, and
  * the expiry in the operator's day form — never a raw id, never a price.
