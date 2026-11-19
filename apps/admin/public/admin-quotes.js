@@ -839,7 +839,21 @@ export function createQuoteView(deps) {
             const rows = (answer.rows ?? []).filter((component) => component.offerId === selectedId);
             flat = rows.length > 0
               && rows.every((component) => component?.pricingModel === 'flat_fee' && Number(component?.tierCount ?? 0) === 0);
-          } catch {
+          } catch (error) {
+            // A failed component read must stay diagnosable: log the safe
+            // fields (code/status plus the price book and offer ids, never a
+            // message that could carry personal data), like AGENTS.md asks —
+            // the panel then falls back to an editable quantity.
+            const record = error !== null && typeof error === 'object' ? error : {};
+            const code = typeof /** @type {{code?: unknown}} */ (record).code === 'string'
+              ? /** @type {{code?: unknown}} */ (record).code
+              : 'UNKNOWN';
+            const status = typeof /** @type {{status?: unknown}} */ (record).status === 'number'
+              ? /** @type {{status?: unknown}} */ (record).status
+              : null;
+            if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+              console.warn('[bo] lettura fallita', { code, status, priceBookId: quote.priceBookId ?? null, offerId: selectedId });
+            }
             flat = false;
           }
         }

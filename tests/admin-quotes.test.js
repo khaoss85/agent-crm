@@ -853,6 +853,46 @@ test('b9b7912320f8: the add-line panel locks quantity at 1 for a flat-fee offer'
   assert.equal(fresh.__quantity.disabled, false, 'a mixed offer keeps its quantity');
 });
 
+test('b9b7912320f8: a failed component read keeps the quantity editable and logs safe fields', async () => {
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const inner = stubClient({ lines: [], entries: [trialEntry, ENTRY] });
+  const failure = Object.assign(new Error('boom'), { code: 'UPSTREAM', status: 503 });
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-component/records')) throw failure;
+      return inner.request(path, options);
+    },
+  };
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const mount = createMount();
+    await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+    const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+    await addPanel.__flatSync;
+    assert.equal(addPanel.__quantity.disabled, false, 'a failed lookup never blocks adding the line');
+    const logged = warnings.find((args) => args[0] === '[bo] lettura fallita');
+    assert.ok(logged, 'the failure is logged');
+    assert.equal(logged[1]?.code, 'UPSTREAM', 'the log carries the error code');
+    assert.equal(logged[1]?.status, 503, 'the log carries the status');
+    assert.equal(logged[1]?.offerId, 'o9', 'the log carries the offer id');
+    assert.ok(!JSON.stringify(logged).includes('boom'), 'no error message that could carry personal data');
+  } finally {
+    console.warn = origWarn;
+  }
+});
+
 test('d56122ee2844: the detail paints a skeleton at once and reads in parallel', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
