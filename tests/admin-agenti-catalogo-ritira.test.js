@@ -99,7 +99,7 @@ test('8605b6f520c0: Ritira su un agente da catalogo chiede Conferma e mette in p
   assert.equal(pauses.length, 1, 'una sola scrittura');
   assert.deepEqual(pauses[0].body, { spaceId: 'presti', agentSourceKey: RISPOSTE.sourceKey, status: 'paused' });
   assert.ok(typeof pauses[0].key === 'string' && pauses[0].key.length > 0, 'Idempotency-Key del chiamante');
-  assert.ok(mount.textContent.includes('Risposte ritirato: resta nel team ma non riceve più incarichi.'), 'la riga lo dice');
+  assert.ok(mount.textContent.includes('Risposte in pausa: resta nel team ma non riceve più incarichi.'), 'la riga lo dice con la parola del badge');
   assert.equal(cardButton(mount, RISPOSTE.sourceKey, 'retire-agent').textContent, 'Riattiva', 'dopo la rilettura la card offre Riattiva');
   assert.ok(mount.textContent.includes(AGENT_STATUS_LABEL.paused), 'il badge dice In pausa');
 });
