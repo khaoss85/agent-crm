@@ -6212,6 +6212,11 @@ export function createCustomerCardView(deps) {
       if (!returning) {
         flushWithdrawals();
         noteEditing = null;
+      } else {
+        // backlog:fc09e6f16326: back on the same customer — a suspended
+        // «Annulla» comes back with the scheda instead of sitting on the
+        // screen the operator just left.
+        reshowSuspendedWithdrawToast(resource, id);
       }
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
@@ -6480,6 +6485,13 @@ export function createCustomerCardView(deps) {
   const withdrawalHere = (pending, resource, id) => pending.spaceId === activeSpaceId()
     && pending.resource === resource && pending.id === id;
   /**
+   * backlog:fc09e6f16326: the «Nota eliminata · Annulla» toast the router hid
+   * when the operator left the scheda for another screen. The withdrawals
+   * still wait: back on the same customer the card shows their Annulla again
+   * until the window ends, so the toast never sits on the wrong screen.
+   */
+  let noteToastSuspended = false;
+  /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
    * this id. The id belongs to a space — on the pilot it is the space
@@ -6596,6 +6608,9 @@ export function createCustomerCardView(deps) {
   function flushWithdrawals(options = {}) {
     const unsent = [...pendingWithdrawals.entries()]
       .filter(([, pending]) => pending.state === 'waiting' || pending.state === 'restored');
+    // backlog:fc09e6f16326: whatever waited is sent now — a suspended toast
+    // has nothing to come back to.
+    noteToastSuspended = false;
     if (unsent.length === 0) return;
     if (unsent.some(([, pending]) => pending.state === 'waiting')) hideToast(NOTE_TOAST_SCOPE);
     // Review Muse #883 (P2): a withdrawal restored from the previous page
@@ -6603,6 +6618,36 @@ export function createCustomerCardView(deps) {
     for (const [pendingKey, pending] of unsent) {
       pending.state = 'waiting';
       void commitWithdrawal(pendingKey, options);
+    }
+  }
+  /**
+   * backlog:fc09e6f16326: the operator left the scheda for another screen —
+   * its «Nota eliminata · Annulla» toast leaves too, never sitting on the
+   * next screen. A withdrawal still waiting stays waiting: the router calls
+   * this next to invalidate(), and the card shows the Annulla again on the
+   * way back to the same customer until the window ends.
+   */
+  function suspendNoteToast() {
+    if (noteToastSuspended) return;
+    const waiting = [...pendingWithdrawals.values()]
+      .some((pending) => pending.state === 'waiting' || pending.state === 'restored');
+    if (!waiting) return;
+    hideToast(NOTE_TOAST_SCOPE);
+    noteToastSuspended = true;
+  }
+  /**
+   * backlog:fc09e6f16326: back on the same customer while the «Annulla»
+   * window is still open — the toast the router hid on the way out comes
+   * back with its working Annulla. After the window ends nothing still waits,
+   * so nothing comes back.
+   * @param {string} resource @param {string} id
+   */
+  function reshowSuspendedWithdrawToast(resource, id) {
+    if (!noteToastSuspended) return;
+    noteToastSuspended = false;
+    for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+      if (pending.state !== 'waiting' || !withdrawalHere(pending, resource, id)) continue;
+      showWithdrawToast(pending, pendingKey);
     }
   }
   // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
@@ -6701,6 +6746,34 @@ export function createCustomerCardView(deps) {
     }
   }
   /**
+   * backlog:fc09e6f16326: the «Nota eliminata · Annulla» toast of one waiting
+   * withdrawal. Shown on «Elimina», and shown again on the way back to the
+   * same customer when the router hid it on the way out — the same window,
+   * the same Annulla, never a second timer.
+   * @param {{ resource: string, id: string, noteId: string, spaceId: string | null, state: string }} pending @param {string} pendingKey
+   */
+  function showWithdrawToast(pending, pendingKey) {
+    toast('Nota eliminata', false, {
+      scope: NOTE_TOAST_SCOPE,
+      duration: NOTE_WITHDRAW_GRACE_MS,
+      action: {
+        label: 'Annulla',
+        run: () => {
+          // The toast stays while the pointer is on it, so «Annulla» can
+          // come after the withdrawal left: say so, never a silent tap.
+          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
+            toast('La nota è già stata eliminata: non si può più annullare.', true);
+            return;
+          }
+          pendingWithdrawals.delete(pendingKey);
+          noteToastSuspended = false;
+          repaintIfShown(pending.resource, pending.id);
+          toast('Nota ripristinata');
+        },
+      },
+    });
+  }
+  /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
    * toast for the grace window, the withdrawal sent when it ends.
    * @param {string} resource @param {string} id @param {string} noteId
@@ -6719,24 +6792,8 @@ export function createCustomerCardView(deps) {
     pendingWithdrawals.set(pendingKey, pending);
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
-    toast('Nota eliminata', false, {
-      scope: NOTE_TOAST_SCOPE,
-      duration: NOTE_WITHDRAW_GRACE_MS,
-      action: {
-        label: 'Annulla',
-        run: () => {
-          // The toast stays while the pointer is on it, so «Annulla» can
-          // come after the withdrawal left: say so, never a silent tap.
-          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
-            toast('La nota è già stata eliminata: non si può più annullare.', true);
-            return;
-          }
-          pendingWithdrawals.delete(pendingKey);
-          repaintIfShown(resource, id);
-          toast('Nota ripristinata');
-        },
-      },
-    });
+    noteToastSuspended = false;
+    showWithdrawToast(pending, pendingKey);
     void wait(NOTE_WITHDRAW_GRACE_MS).then(() => commitWithdrawal(pendingKey));
   }
   /** @type {Array<any> | null} */
@@ -7128,5 +7185,5 @@ export function createCustomerCardView(deps) {
     resetTitle();
   }
 
-  return { renderCard, invalidate };
+  return { renderCard, invalidate, suspendNoteToast };
 }
