@@ -173,6 +173,7 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
       enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
       if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) return { items: [] };
       throw new Error('sync giù');
     },
   };
@@ -189,6 +190,54 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
   assert.ok(warnings[0].includes('Error'));
   assert.ok(warnings[0].includes('spaceId=prova'));
   assert.ok(!warnings[0].includes('sync giù'));
+});
+
+/**
+ * backlog:6563edf41aab (ritorno verifica 19/11, ANSWER supervisore 19/11
+ * 03:0xZ, punto (d)): Impostazioni diceva «Niente da sistemare.» mentre il
+ * doppione del team era segnalato in Spazi e accessi — il riquadro conta
+ * anche l'avviso doppione, letto dallo stesso roster della vista.
+ */
+test('backlog:6563edf41aab: Impostazioni conta anche il doppione del team', async () => {
+  const teamClient = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) {
+        return {
+          items: [
+            { subject: 'google|1049887766', displayName: 'Daniele Pelleri', role: 'owner', status: 'active' },
+            { subject: 'broker+adopted-7f3a', displayName: 'daniele pelleri', role: 'operator', status: 'active' },
+          ],
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  assert.equal(await loadFixCount(teamClient), 1);
+
+  // Una lettura membri fallita degrada alla base, come la metà sync: mai
+  // null quando la qualità si legge, mai un crash del badge.
+  const membersDown = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      throw new Error('membri giù');
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(membersDown), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('bo-shell team count unreadable'));
+  assert.ok(!warnings[0].includes('membri giù'));
 });
 
 test('the badge counts the session space first, the stored one only without a session', () => {
