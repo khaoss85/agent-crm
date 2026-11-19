@@ -58,6 +58,20 @@ function requireSpaceId(value) {
   return checkSpaceId(value);
 }
 
+/**
+ * Single source of truth for close reasons (lost moves and refusals):
+ * trimmed, non-blank, at most QUOTE_MAX chars. The route (proposal and
+ * apply) and confirm share it, so the same input gets the same verdict.
+ * @param {unknown} value @param {string} [field]
+ */
+function requireCloseReason(value, field = 'reason') {
+  const checked = requireText(value, field, QUOTE_MAX);
+  if (checked.trim() === '') {
+    throw new ValidationError(`${field} must be a non-blank string`, { field });
+  }
+  return checked;
+}
+
 /** @param {unknown} value */
 function requireSuggestedBy(value) {
   if (!value || typeof value !== 'object' || typeof value.type !== 'string' || typeof value.id !== 'string' || value.id === '') {
@@ -119,10 +133,12 @@ export function routeOfferMoveFromReply(args = {}) {
       fromStage,
     });
   }
-  const closeReason = args.reason === undefined || args.reason === null
-    ? null
-    : requireText(args.reason, 'reason', QUOTE_MAX);
   const needsCloseReason = targetStage.type === 'lost';
+  // The shared gate: a supplied reason is validated only when the passage
+  // requires one (lost); other stages ignore it, like confirm does.
+  const closeReason = args.reason === undefined || args.reason === null || !needsCloseReason
+    ? null
+    : requireCloseReason(args.reason, 'reason');
   const quote = requireText(args.quote, 'quote', QUOTE_MAX);
   if (!messageBody.includes(quote)) {
     throw new ValidationError('quote must be a sentence of the customer reply it motivates', {
@@ -231,19 +247,12 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   if (decision !== 'accept' && decision !== 'reject') {
     throw new ValidationError('decision must be "accept" or "reject"', { field: 'decision' });
   }
-  const confirmReason = (value) => {
-    const checked = requireText(value, 'reason', QUOTE_MAX);
-    if (checked.trim() === '') {
-      throw new ValidationError('reason must be a non-blank string', { field: 'reason' });
-    }
-    return checked;
-  };
   let validatedRejectReason = null;
   if (decision === 'reject') {
     if (typeof reason !== 'string' || reason === '') {
       throw new ValidationError('rejecting an offer move requires a reason', { field: 'reason' });
     }
-    validatedRejectReason = confirmReason(reason);
+    validatedRejectReason = requireCloseReason(reason, 'reason');
   }
   // A confirmed move to the lost stage must satisfy the move-stage contract:
   // move-stage refuses a lost move with no reason, so the accept carries the
@@ -280,13 +289,15 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
     });
   }
   const needsCloseReason = targetStage.type === 'lost';
-  const freshReason = decision === 'accept' && typeof reason === 'string' && reason !== ''
-    ? confirmReason(reason)
+  // Close reasons are only validated when the passage requires one (lost):
+  // other stages ignore any supplied reason, so a stray blank never blocks.
+  const freshReason = decision === 'accept' && needsCloseReason && typeof reason === 'string' && reason !== ''
+    ? requireCloseReason(reason, 'reason')
     : null;
-  const suggestedReason = decision === 'accept'
+  const suggestedReason = decision === 'accept' && needsCloseReason
       && typeof proposal.closeReason === 'string'
       && proposal.closeReason !== ''
-    ? confirmReason(proposal.closeReason)
+    ? requireCloseReason(proposal.closeReason, 'reason')
     : null;
   const acceptReason = freshReason ?? suggestedReason;
   if (decision === 'accept' && needsCloseReason && !acceptReason) {

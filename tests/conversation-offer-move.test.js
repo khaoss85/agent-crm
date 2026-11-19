@@ -403,3 +403,90 @@ test('a space id with padding is trimmed like the permission gate, control chars
     /spaceId must be a non-empty/,
   );
 });
+
+// P1 (giro 5): a whitespace-only close reason never closes an offer as lost
+// with an empty motive — route (proposal and apply) and confirm share one
+// gate, so the same input gets the same verdict on both sides.
+test('whitespace-only close reasons are refused by route and confirm alike', () => {
+  const body = 'Grazie ma non mi interessa più, cancellate pure tutto.';
+  const base = {
+    spaceId: SPACE,
+    opportunityId: OPPORTUNITY,
+    messageBody: body,
+    fromStage: 'proposta',
+    toStage: 'perso',
+    quote: 'non mi interessa',
+    suggestedBy: AI,
+    overrideRows: SWITCH_OFF_ROWS,
+  };
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, messageId: 'wa:msg:70', reason: '   ' }),
+    /reason must be a non-blank string/,
+  );
+  assert.throws(
+    () => routeOfferMoveFromReply({
+      ...base, messageId: 'wa:msg:71', overrideRows: SWITCH_ON_ROWS, reason: '   ',
+    }),
+    /reason must be a non-blank string/,
+  );
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, messageId: 'wa:msg:72', reason: 'x'.repeat(2001) }),
+    /at most 2000 characters/,
+  );
+
+  // Parity table: the same bad inputs give the same verdict on both sides.
+  const cases = ['   ', 'y'.repeat(2001)];
+  for (const [index, badReason] of cases.entries()) {
+    let routeError = null;
+    try {
+      routeOfferMoveFromReply({ ...base, messageId: `wa:msg:73${index}`, reason: badReason });
+    } catch (error) {
+      routeError = error;
+    }
+    assert.ok(routeError);
+
+    const good = routeOfferMoveFromReply({
+      ...base, messageId: `wa:msg:74${index}`, reason: 'il cliente ha disdetto',
+    });
+    assert.equal(good.decision, 'proposal');
+    let confirmError = null;
+    try {
+      confirmOfferMoveProposal(
+        { ...good.proposal, closeReason: badReason },
+        { actor: PERSON, decision: 'accept' },
+      );
+    } catch (error) {
+      confirmError = error;
+    }
+    assert.ok(confirmError);
+    assert.equal(confirmError.constructor, routeError.constructor);
+  }
+});
+
+// P2 (giro 5): confirm validates the close reason only when the passage
+// requires one (lost) — other stages ignore a stray reason.
+test('confirm ignores a stray close reason when the move does not require one', () => {
+  const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
+  const routed = route(body, 'prova', { messageId: 'wa:msg:75' });
+  assert.equal(routed.proposal.toStage, 'proposta');
+  const { move } = confirmOfferMoveProposal(
+    { ...routed.proposal, closeReason: '   ' },
+    { actor: PERSON, decision: 'accept' },
+  );
+  assert.deepEqual(move, { opportunityId: OPPORTUNITY, spaceId: SPACE, fromStage: 'prova', toStage: 'proposta' });
+
+  const ignored = routeOfferMoveFromReply({
+    spaceId: SPACE,
+    opportunityId: OPPORTUNITY,
+    messageId: 'wa:msg:76',
+    messageBody: body,
+    fromStage: 'prova',
+    toStage: 'proposta',
+    quote: 'vorrei iniziare',
+    suggestedBy: AI,
+    overrideRows: SWITCH_OFF_ROWS,
+    reason: '   ',
+  });
+  assert.equal(ignored.decision, 'proposal');
+  assert.equal(ignored.proposal.closeReason, null);
+});
