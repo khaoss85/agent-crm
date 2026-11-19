@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView, customerHint, customerMatchReason } from '../apps/admin/public/admin-calendario.js';
+import { createCalendarioView, customerHint, customerMatchReason, customerNameExplains, customerResultVisible } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -247,7 +247,7 @@ test('form: two customers with the same name show a partial email or phone, a si
   const customers = [
     { resource: 'contact', id: 'c1', name: 'Ada Rossi', email: 'ada.rossi@example.com', phone: null, company: null },
     { resource: 'contact', id: 'c2', name: 'Ada Rossi', email: null, phone: { value: '+393331234567', system: 'whatsapp' }, company: null },
-    { resource: 'contact', id: 'c3', name: 'Bea Neri', email: 'bea@example.com', phone: null, company: null },
+    { resource: 'contact', id: 'c3', name: 'Ada Neri', email: 'bea@example.com', phone: null, company: null, searchMatch: ['name'] },
   ];
   const doc = createFakeDocument();
   const mount = createMount();
@@ -265,7 +265,7 @@ test('form: two customers with the same name show a partial email or phone, a si
   const labels = results.findAll('button').map((node) => node.textContent);
   assert.ok(labels.includes('Ada Rossi · ad…@example.com'), labels.join(' | '));
   assert.ok(labels.includes('Ada Rossi · tel. …4567'), labels.join(' | '));
-  assert.ok(labels.includes('Bea Neri'), 'a name nobody shares carries no hint');
+  assert.ok(labels.includes('Ada Neri'), 'a name nobody shares carries no hint');
   assert.ok(!labels.some((text) => text.includes('ada.rossi@') || text.includes('3331234567')), 'never the whole address or number');
   // The pick still books the customer by id, with the bare name.
   results.findAll('button').find((node) => node.textContent.endsWith('tel. …4567')).dispatch('click');
@@ -276,7 +276,7 @@ test('form: two customers with the same name show a partial email or phone, a si
 // visible reason — the match sat on his company, a field the form never
 // shows): the suggestions keep only matches on the name, the email or the
 // held phone, and a non-name match prints its field beside the name.
-test('form: «anna» drops the company-only match and explains the rest', async () => {
+test('form: «anna 333» drops the company-only match and shows the matched word', async () => {
   const customers = [
     {
       resource: 'contact', id: 'c-magrini', name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it',
@@ -287,7 +287,7 @@ test('form: «anna» drops the company-only match and explains the rest', async 
       phone: null, company: null, searchMatch: ['name', 'email'],
     },
     {
-      resource: 'contact', id: 'c-mario', name: 'Mario Rossi', email: 'mario.rossi@example.it',
+      resource: 'contact', id: 'c-mario', name: 'Mario Rossi', email: 'mario.annabella@example.it',
       phone: null, company: null, searchMatch: ['email'],
     },
     {
@@ -304,16 +304,16 @@ test('form: «anna» drops the company-only match and explains the rest', async 
   await settle();
   openManual(mount);
   const search = byName(mount, 'customerSearch');
-  search.value = 'anna';
+  search.value = 'anna 333';
   search.dispatch('input');
   await settle();
   const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
   const labels = results.findAll('button').map((node) => node.textContent);
   assert.ok(!labels.some((text) => text.includes('Magrini')), `no company-only match: ${labels.join(' | ')}`);
   assert.ok(labels.includes('Anna Bianchi'), `the name match stays bare: ${labels.join(' | ')}`);
-  assert.ok(labels.includes('Mario Rossi · ma…@example.it'), `the email match shows its field: ${labels.join(' | ')}`);
-  assert.ok(labels.includes('Ada Rossi · tel. …4567'), `the phone match shows its field: ${labels.join(' | ')}`);
-  assert.ok(!labels.some((text) => text.includes('mario.rossi@') || text.includes('3331234567')), 'never the whole address or number');
+  assert.ok(labels.includes('Mario Rossi · mario.anna…@example.it'), `the email match shows the searched word: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Ada Rossi · tel. …3331…'), `the phone match shows the searched digits: ${labels.join(' | ')}`);
+  assert.ok(!labels.some((text) => text.includes('mario.annabella@') || text.includes('3331234567')), 'never the whole address or number');
 });
 
 test('form: only company matches read as no match, in plain words', async () => {
@@ -374,6 +374,85 @@ test('form: customerMatchReason prints only the matched email or phone', () => {
   assert.equal(customerMatchReason({ name: 'Ada Rossi' }, ['name']), null, 'a name match needs no reason');
   assert.equal(customerMatchReason({ company: { name: 'Pizzeria Anna' } }, ['company']), null, 'the company is never a reason in the form');
   assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, null), null, 'no reason, no explanation');
+});
+
+// backlog:f6b9d189 (verifier return 2026-11-19: the delivered filter kept
+// rows whose match stays invisible — a name blame the name cannot show, and
+// an email motive like «ma…@example.it» hiding the searched «anna»).
+// RED on the code before the cure (the reason ignores the query and the
+// name blame keeps the row), GREEN after it. reproTest of this item.
+test('form: «anna» keeps only rows with a visible correspondence', () => {
+  const magrini = { name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it', company: { name: 'Pizzeria Anna' } };
+  const mario = { name: 'Mario Rossi', email: 'mario.annabella@example.it' };
+  // AC-1: the motive shows the searched word, never a blind prefix.
+  assert.ok(customerMatchReason(mario, ['email'], 'anna').includes('anna'), 'the email reason shows the searched word');
+  assert.ok(customerMatchReason({ phone: { value: '+393331234567' } }, ['phone'], '333').includes('333'), 'the phone reason shows the searched digits');
+  // AC-2: no row without a visible correspondence.
+  assert.equal(customerMatchReason(magrini, ['name'], 'anna'), null, 'no motive when the name cannot show the blame');
+  assert.equal(customerResultVisible(magrini, ['name'], 'anna'), false, 'a name blame the name cannot show leaves the box');
+  assert.equal(customerResultVisible(magrini, ['company'], 'anna'), false, 'a company blame never shows');
+  assert.equal(customerResultVisible({ name: 'Anna Bianchi', email: 'anna@example.it' }, ['name', 'email'], 'anna'), true, 'a visible name match stays bare');
+  assert.equal(customerResultVisible(mario, ['email'], 'anna'), true, 'a visible email match stays with its motive');
+  assert.equal(customerResultVisible({ name: 'Ada Rossi', phone: { value: '+393331234567' } }, ['phone'], 'anna 333'), true, 'a visible phone match stays with its motive');
+  assert.equal(customerNameExplains({ name: 'Anna Bianchi' }, ['name'], 'anna'), true, 'the bare name explains itself');
+  assert.equal(customerNameExplains(magrini, ['name'], 'anna'), false, '«anna» is nowhere in «Massimiliano Magrini»');
+});
+
+// backlog:f6b9d189 (Mac 19/11 sul live b22bc60 con #985: «esempio.dan»
+// elencava «Daniele …@esempio.it» senza nessun indizio — «dan» stava nel
+// nome e toglieva l'indizio, mentre «esempio» combaciava solo sul dominio
+// nascosto). La riga resta solo con il motivo che mostra TUTTA la ricerca.
+test('form: Mac «esempio.dan» never reads bare when a word matched off the name', () => {
+  // Server blame su questa testa (packages/customer-data searchMatchFields).
+  const daniele = { name: 'Daniele Prova', email: 'prova40@esempio.it', phone: { value: '+393331234567' } };
+  const blame = ['name', 'email'];
+  assert.equal(customerNameExplains(daniele, blame, 'esempio.dan'), false, '«esempio» is nowhere in the shown name');
+  assert.equal(customerResultVisible(daniele, blame, 'esempio.dan'), true, 'the row stays: the email matched too');
+  assert.ok(customerMatchReason(daniele, blame, 'esempio.dan').includes('esempio'), 'the motive shows the domain word');
+});
+
+// backlog:f6b9d189 (Mac 19/11: «-note@» dava righe con l'indizio mascherato
+// «pr…@» che nascondeva «note»). Rifatto sulla testa: il motivo ancorato
+// mostra il pezzo combaciato dentro la parte mascherata.
+test('form: Mac «-note@» shows the matched piece inside the masked local part', () => {
+  const rossi = { name: 'Daniele Rossi', email: 'prenote@esempio.it', phone: null };
+  const blame = ['email'];
+  assert.equal(customerResultVisible(rossi, blame, '-note@'), true, 'the row stays: the email matched');
+  const reason = customerMatchReason(rossi, blame, '-note@');
+  assert.ok(reason.includes('note'), `the motive shows the searched piece, got: ${reason}`);
+  assert.ok(!reason.includes('prenote@'), `never the whole address, got: ${reason}`);
+});
+
+// backlog:f6b9d189 (Mac 19/11: «note@esempio» senza indizio — «note» stava
+// nel nome e toglieva l'indizio, mentre «esempio» combaciava solo sul
+// dominio nascosto). Come «esempio.dan»: il nome spiega solo TUTTA la ricerca.
+test('form: Mac «note@esempio» never reads bare when a word matched off the name', () => {
+  const maria = { name: 'Note di Maria', email: 'maria@esempio.it', phone: null };
+  const blame = ['name', 'email'];
+  assert.equal(customerNameExplains(maria, blame, 'note@esempio'), false, '«esempio» is nowhere in the shown name');
+  assert.equal(customerResultVisible(maria, blame, 'note@esempio'), true, 'the row stays: the email matched too');
+  assert.ok(customerMatchReason(maria, blame, 'note@esempio').includes('esempio'), 'the motive shows the domain word');
+});
+
+// backlog:f6b9d189 (Mac 19/11: con «ova40» il pezzo stava in «pr…@», la parte
+// mascherata dell'email). L'indizio mostra quel pezzo senza svelare il resto:
+// mai l'intera parte locale quando il pezzo la chiude.
+test('form: Mac «ova40» shows only the matched piece, never the whole local part', () => {
+  const daniele = { name: 'Daniele Prova', email: 'prova40@esempio.it', phone: { value: '+393331234567' } };
+  const blame = ['email'];
+  assert.equal(customerResultVisible(daniele, blame, 'ova40'), true, 'the row stays: the email matched');
+  const reason = customerMatchReason(daniele, blame, 'ova40');
+  assert.ok(reason.includes('ova40'), `the motive shows the searched piece, got: ${reason}`);
+  assert.ok(!reason.includes('prova40'), `the motive never publishes the whole local part, got: ${reason}`);
+});
+
+test('form: the visible-correspondence rule also holds without the server reason', () => {
+  const magrini = { name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it', company: { name: 'Pizzeria Anna' } };
+  assert.equal(customerResultVisible(magrini, null, 'anna'), false, 'an older server row matched through its company leaves the box');
+  assert.equal(customerResultVisible({ name: 'Anna Bianchi', email: 'anna@example.it' }, null, 'anna'), true, 'an older server row matched on its name stays');
+  assert.equal(customerResultVisible({ name: 'Ada Rossi' }, [], 'whatsapp'), true, 'a channel-only query keeps the channel member');
+  assert.equal(customerResultVisible({ name: 'Mario Rossi', email: 'mario.annabella@example.it' }, ['email'], 'anna'), true, 'kept rows never print the whole address');
+  assert.ok(!customerMatchReason({ name: 'Mario Rossi', email: 'mario.annabella@example.it' }, ['email'], 'anna').includes('mario.annabella@'), 'the motive stays partial');
 });
 
 test('form: customerHint prefers a partial email, then the phone, then the company', () => {
