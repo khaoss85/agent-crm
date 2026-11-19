@@ -1034,3 +1034,43 @@ test('review #1072 P1: a failed «una volta» retry leaves no fallback note on t
   assert.ok(textOf(mount).includes('Incarico dato a Riaggancio'), 'the scheduled incarico lands');
   assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE), 'no stale «parte una volta» note on a scheduled incarico');
 });
+
+test('review #1072 giro 2 P1: typing during «Invio…» never changes what the «una volta» retry sends', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const drive = driveClient();
+  let assignCalls = 0;
+  const sent = [];
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = {
+    calls: drive.calls,
+    request: async (path, options = {}) => {
+      if (path === '/api/agents/assign') {
+        assignCalls += 1;
+        sent.push(typeof options.body === 'string' ? JSON.parse(options.body) : options.body);
+        if (assignCalls === 1) {
+          await gate;
+          throw Object.assign(new Error('unclear'), { code: 'AGENT_PHRASE_UNCLEAR', status: 422 });
+        }
+      }
+      return drive.request(path, options);
+    },
+  };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const talk = () => mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk().value = 'occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  // While «Invio…» waits, the operator starts the next incarico.
+  talk().value = 'ogni lunedì manda il report';
+  talk().dispatch('input', {});
+  release();
+  await flush();
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].phrase, 'occupati dei lead', 'the retry sends the words of the failed attempt');
+  assert.equal(talk().value, 'ogni lunedì manda il report', 'the new words stay in the field');
+});

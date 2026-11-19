@@ -1226,7 +1226,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
   }
 
-  async function sendInstruction(agent, once = false, fallback = false) {
+  /**
+   * @param {any} agent @param {boolean} [once]
+   * @param {{ phrase: string, costPerRunCents: number } | null} [fallback] the
+   *   «una volta» retry of an unclear phrase: it sends the words and cost of
+   *   the attempt that failed, never what the field holds now (review #1072
+   *   giro 2 P1: typing during «Invio…» must not change what is sent).
+   */
+  async function sendInstruction(agent, once = false, fallback = null) {
     // Review #661: the shell space may have changed under this screen.
     // Never write to the space left behind: repaint on the active one.
     if (readSpace() !== state.space) {
@@ -1234,11 +1241,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       return;
     }
     const draft = draftOf(agent.sourceKey);
-    const phrase = draft.text.trim();
+    const phrase = fallback !== null ? fallback.phrase : draft.text.trim();
     if (draft.busy || phrase === '' || !state.space) return;
     // backlog:1f7cb20d3c30: a capped agent needs the cost of one run.
-    let costPerRunCents = 0;
-    if (agent.capCents !== null && agent.capCents !== undefined) {
+    let costPerRunCents = fallback !== null ? fallback.costPerRunCents : 0;
+    if (fallback === null && agent.capCents !== null && agent.capCents !== undefined) {
       const cents = parseEuroToCents(String(draft.cost ?? ''));
       if (cents === null || cents <= 0) {
         draft.error = AGENT_COST_NEEDED_NOTE;
@@ -1257,14 +1264,18 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now() });
       draft.busy = false;
       draft.unclear = false;
-      draft.text = '';
-      draft.cost = '';
+      // What was typed during «Invio…» is a new incarico in the making: only
+      // the words that were sent leave the field.
+      if (draft.text.trim() === phrase) {
+        draft.text = '';
+        draft.cost = '';
+      }
       draft.attempt = null;
       // Backlog 7d169a3b1dd2: Affida says what the incarico does next — a
       // hand-written agent with no engine waits for it, a paused one stays
       // off until Riattiva.
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`
-        + (fallback ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
+        + (fallback !== null ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
         + (agent.engine === false ? ` ${AGENT_WAIT_ENGINE_DONE}` : '')
         + (agent.status === 'paused' ? ` ${agent.name} ${AGENT_PAUSED_DONE}` : '');
       if (await reload()) paint();
@@ -1280,7 +1291,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         // The fallback travels as an argument of this one call, never in
         // the draft: a failed retry cannot leave it set for the next
         // incarico (review #1072 P1).
-        await sendInstruction(agent, true, true);
+        await sendInstruction(agent, true, { phrase, costPerRunCents });
         return;
       } else if (isPhraseUnclear(error)) {
         draft.unclear = true;
