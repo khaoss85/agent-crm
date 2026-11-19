@@ -102,6 +102,14 @@ export const SETTINGS_AREAS = Object.freeze([
  */
 export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
 
+/**
+ * Reason shown while the space schema has not arrived yet: the composition
+ * is unknown, not absent. Gated voices stay disabled with this story instead
+ * of claiming "not composed in this space", so the first paint shows the
+ * same voices as a reload (backlog:312dd81f83ba).
+ */
+export const SCHEMA_PENDING_REASON = 'Spazio in caricamento…';
+
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
   oggi: 'Chiedi: «cosa è più urgente oggi?»',
@@ -633,13 +641,32 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * not-yet delivered voice stays disabled with its story named. Clienti is
  * available only when the customer-data package is composed in the space
  * (customerDataAvailable), Sequenze only when the sequences package is
- * composed (sequencesAvailable): otherwise each stays disabled with its
- * story, like Pipeline/Calendario, never as a dead link to a blank screen.
+ * composed (sequencesAvailable): once the schema arrived, each stays
+ * disabled with its story, like Pipeline/Calendario, never as a dead link
+ * to a blank screen. Before the schema arrives (no input) nothing claims
+ * "not composed" — see below.
  * Agenti only when the agents package is composed (agentsAvailable).
  * Squadre only when the same package serves squads (squadsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
+ * Call it with no input while the space schema has not arrived: gated voices
+ * then render pending (SCHEMA_PENDING_REASON, Sequenze listed) instead of
+ * claiming "not composed" — the first paint names the same voices a reload
+ * shows (backlog:312dd81f83ba). An explicit input object means the schema
+ * arrived: missing flags read as not composed, as before.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} [input]
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
+export function buildShellNav(input) {
+  const {
+    pipelines = [],
+    customModules = [],
+    customerDataAvailable = false,
+    sequencesAvailable = false,
+    agentsAvailable = false,
+    squadsAvailable = false,
+  } = input ?? {};
+  // No input yet: the schema is still in flight, so the composition is
+  // unknown — never "not composed".
+  const schemaPending = input == null;
+  const pendingOr = (reason) => (schemaPending ? SCHEMA_PENDING_REASON : reason);
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -648,29 +675,33 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
       if (customerDataAvailable) {
         return { ...item, available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: CUSTOMER_DATA_UNAVAILABLE_REASON };
+      return { ...item, route: null, available: false, disabledReason: pendingOr(CUSTOMER_DATA_UNAVAILABLE_REASON) };
     }
     if (item.id === 'pipeline') {
       if (firstPipeline) {
         return { ...item, route: `#/pipelines/${firstPipeline.name}`, available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Nessuna pipeline composta' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Nessuna pipeline composta') };
     }
     if (item.id === 'agenti') {
       if (agentsAvailable) {
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Agenti non attivi in questo spazio') };
     }
     if (item.id === 'squadre') {
       if (squadsAvailable) {
         return { ...item, route: '#/squadre', available: true, disabledReason: '' };
       }
-      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
+      return { ...item, route: null, available: false, disabledReason: pendingOr('Squadre non attive in questo spazio') };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
         return { ...item, route: '#/sequenze', available: true, disabledReason: '', nav: true };
+      }
+      // Pending: listed but disabled, like after a reload — never missing.
+      if (schemaPending) {
+        return { ...item, route: null, available: false, disabledReason: SCHEMA_PENDING_REASON, nav: true };
       }
       return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }

@@ -3061,3 +3061,5 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .plist .bo-perso-empty .empty-title { margin: 0; font-size: 16px; font-weight: 700; }
 .plist .bo-perso-empty .empty { margin: 0 0 6px; padding: 0; }
 
+/* ece111d80305: «Link riunione» appears only for an Online place. */
+.cal-field[hidden] { display: none; }
