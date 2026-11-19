@@ -140,6 +140,9 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // conversation whose last message is a person's, never answered after —
   // notifications (core/sender-kind.js) never wait. Newest waiting first.
   { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
+  // «Archiviati» (voce 91c92940274c): i contatti archiviati spariscono da
+  // viste e conteggi e si ritrovano solo qui. Mai gli eliminati.
+  { id: 'archiviati', label: 'Archiviati', filters: Object.freeze({ archiviati: true }) },
 ]);
 
 /**
@@ -590,6 +593,11 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
     // «Da rispondere»: only rows with a conversation waiting for the team.
     if (viewExtra.daRispondere === true && !((row?.awaitingReplyCount ?? 0) > 0)) return false;
+    // «Archiviati» (voce 91c92940274c): solo gli archiviati; ogni altra
+    // vista non mostra mai un archiviato (difesa in profondità: la
+    // scansione li esclude già, ma un soggetto da identità esatta no).
+    if (viewExtra.archiviati === true && !row?.archivedAt) return false;
+    if (viewExtra.archiviati !== true && row?.archivedAt) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -773,6 +781,8 @@ export function shapeCustomerRow(subject, reads = {}) {
     // while neither reads like a call, which carries no text. When the empty
     // message carried a file, the row names it like the Oggi inbox does
     // ('Allegato', see apps/admin/public/admin-oggi.js).
+    // Voce 91c92940274c: la vista «Archiviati» filtra su questa marca.
+    archivedAt: contact?.archivedAt ?? null,
     lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
       ?? (isMessageActivity(activity)
         ? (activity.hasAttachment === true ? 'Allegato' : MESSAGE_NO_TEXT) : null),

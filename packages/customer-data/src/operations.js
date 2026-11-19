@@ -833,7 +833,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   if (!companiesSvc || typeof companiesSvc.list !== 'function') {
     throw new AppError('the customer list needs the host company records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  let contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  // Voce 91c92940274c: la vista «Archiviati» legge solo gli archiviati
+  // (mai gli eliminati); le altre viste non li vedono mai.
+  const wantArchived = query.view?.filters?.archiviati === true;
+  let contacts = wantArchived
+    ? await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true })
+    : await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
   let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
   const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
   // backlog:d128847d21fc: the scan holds the newest records only, so a
@@ -859,7 +864,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
     && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
-    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE });
+    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE, ...(wantArchived ? { includeArchived: true } : {}) });
     const scannedCompaniesAll = await companiesSvc.scan({
       limit: Math.max(
         CUSTOMER_SEARCH_COMPANY_RESERVE,
@@ -879,6 +884,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
           CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE,
           CUSTOMER_SEARCH_SCAN_LIMIT - scannedCompaniesAll.length,
         ),
+        ...(wantArchived ? { includeArchived: true } : {}),
       });
     }
     const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle, query.spaceId, query.q ?? '');

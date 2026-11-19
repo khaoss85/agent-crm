@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
+import { AppError, ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import { requiredString, requiredEmail, optionalString } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
@@ -59,6 +59,8 @@ export class ContactService {
       role: optionalString(input.role, 'role'),
       createdAt: timestamp,
       updatedAt: timestamp,
+      archivedAt: null,
+      deletedAt: null,
     };
 
     const insert = { kind: 'insert', table: 'contacts', values: contactValues(contact) };
@@ -194,16 +196,34 @@ export class ContactService {
     });
   }
 
-  /** @param {{companyId?: string, limit?: number}} [filters] */
+  /**
+   * Voce 91c92940274c: archiviati ed eliminati spariscono dalle viste e
+   * dai conteggi. Il filtro è in lettura: `get` resta la verità sulla
+   * riga (serve all'audit e alla sync che non deve ricrearla), `list` e
+   * `scan` nascondono per difetto. Solo la vista «Archiviati» chiede
+   * `includeArchived`; gli eliminati non tornano in nessuna lista.
+   * @param {{companyId?: string, limit?: number, includeArchived?: boolean, archivedOnly?: boolean}} [filters]
+   */
   list(filters = {}) {
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    const where = filters.companyId
-      ? [{ column: 'company_id', op: 'eq', value: filters.companyId }]
-      : [];
-    return storageMany(this.database, {
+    const where = [];
+    if (filters.companyId) where.push({ column: 'company_id', op: 'eq', value: filters.companyId });
+    // Gli eliminati non tornano mai in lista (restano per l'audit).
+    where.push({ column: 'deleted_at', op: 'is-null' });
+    if (filters.archivedOnly) {
+      if (!filters.includeArchived) {
+        throw new ValidationError('archivedOnly needs includeArchived', { field: 'archivedOnly' });
+      }
+    } else if (!filters.includeArchived) {
+      where.push({ column: 'archived_at', op: 'is-null' });
+    }
+    const rows = storageMany(this.database, {
       kind: 'select', table: 'contacts', columns: '*', where,
-      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit: filters.archivedOnly ? limit : limit,
     }, mapContactRow);
+    const adapt = (list) => (filters.archivedOnly ? list.filter((row) => row.archivedAt !== null) : list);
+    if (rows && typeof rows.then === 'function') return rows.then(adapt);
+    return adapt(rows);
   }
 
   /**
@@ -217,10 +237,139 @@ export class ContactService {
   scan(options = {}) {
     const requested = Number.isInteger(options.limit) ? options.limit : SCAN_MAX_ROWS;
     const limit = Math.min(Math.max(requested, 1), SCAN_MAX_ROWS);
+    const where = [{ column: 'deleted_at', op: 'is-null' }];
+    if (!options.includeArchived) where.push({ column: 'archived_at', op: 'is-null' });
     return storageMany(this.database, {
-      kind: 'select', table: 'contacts', columns: '*',
+      kind: 'select', table: 'contacts', columns: '*', where,
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapContactRow);
+  }
+
+  /**
+   * Voce 91c92940274c: archivia un contatto. Sparisce da viste e
+   * conteggi, resta per audit e sync (che non lo ricrea) e si ripristina.
+   * @param {string} id
+   * @param {{actor?: unknown, reason?: unknown}} [context]
+   */
+  async archive(id, context = {}) {
+    const current = await this.get(id);
+    if (current.deletedAt !== null) {
+      throw new ValidationError('an eliminated contact cannot be archived', { field: 'id' });
+    }
+    if (current.archivedAt !== null) return current;
+    const archivedAt = nowIso();
+    const write = {
+      kind: 'update', table: 'contacts',
+      values: [{ column: 'archived_at', value: archivedAt }, { column: 'updated_at', value: archivedAt }],
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor, action: 'contact.archived', entityType: 'contact', entityId: id,
+      data: { id, archivedAt, reason: typeof context.reason === 'string' ? context.reason.slice(0, 280) : null },
+    };
+    if (isSyncStorage(this.database)) {
+      const sync = this.database.storage.sync;
+      sync.savepoint('contact_archive', () => {
+        sync.execute(write);
+        this.audit.record(entry, sync);
+      });
+    } else {
+      await storageMutate(this.database, 'contact_archive', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record(entry, tx);
+      });
+    }
+    const reread = await this.get(id);
+    await this.events.emit('contact.archived', reread);
+    return reread;
+  }
+
+  /**
+   * Voce 91c92940274c: ripristina un contatto archiviato.
+   * @param {string} id
+   * @param {{actor?: unknown}} [context]
+   */
+  async restore(id, context = {}) {
+    const current = await this.get(id);
+    if (current.deletedAt !== null) {
+      throw new ValidationError('an eliminated contact cannot be restored', { field: 'id' });
+    }
+    if (current.archivedAt === null) return current;
+    const updatedAt = nowIso();
+    const write = {
+      kind: 'update', table: 'contacts',
+      values: [{ column: 'archived_at', value: null }, { column: 'updated_at', value: updatedAt }],
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor, action: 'contact.restored', entityType: 'contact', entityId: id,
+      data: { id, restoredAt: updatedAt },
+    };
+    if (isSyncStorage(this.database)) {
+      const sync = this.database.storage.sync;
+      sync.savepoint('contact_restore', () => {
+        sync.execute(write);
+        this.audit.record(entry, sync);
+      });
+    } else {
+      await storageMutate(this.database, 'contact_restore', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record(entry, tx);
+      });
+    }
+    const reread = await this.get(id);
+    await this.events.emit('contact.restored', reread);
+    return reread;
+  }
+
+  /**
+   * Voce 91c92940274c: eliminazione definitiva (soft). Regola: un
+   * contatto con offerte collegate si può solo archiviare, mai eliminare
+   * (le offerte naming il referente restano integre); senza offerte
+   * l'eliminazione scrive `deleted_at`, lascia la traccia di audit e non
+   * tocca le conversazioni degli altri contatti (altri pacchetti, retained).
+   * La sync ritrova la riga dall'email e non la ricrea.
+   * @param {string} id
+   * @param {{actor?: unknown, reason?: unknown}} [context]
+   */
+  async remove(id, context = {}) {
+    const current = await this.get(id);
+    if (current.deletedAt !== null) return current;
+    const linked = await storageMany(this.database, {
+      kind: 'select', table: 'opportunities', columns: ['id'],
+      where: [{ column: 'contact_id', op: 'eq', value: id }], limit: 1,
+    }, (row) => row);
+    const linkedCount = Array.isArray(linked) ? linked.length : 0;
+    if (linkedCount > 0) {
+      throw new AppError('un contatto con offerte si può solo archiviare, non eliminare', {
+        code: 'CONTACT_HAS_OPPORTUNITIES', status: 409, contactId: id,
+      });
+    }
+    const deletedAt = nowIso();
+    const write = {
+      kind: 'update', table: 'contacts',
+      values: [{ column: 'deleted_at', value: deletedAt }, { column: 'updated_at', value: deletedAt }],
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor, action: 'contact.deleted', entityType: 'contact', entityId: id,
+      data: { id, deletedAt, reason: typeof context.reason === 'string' ? context.reason.slice(0, 280) : null },
+    };
+    if (isSyncStorage(this.database)) {
+      const sync = this.database.storage.sync;
+      sync.savepoint('contact_delete', () => {
+        sync.execute(write);
+        this.audit.record(entry, sync);
+      });
+    } else {
+      await storageMutate(this.database, 'contact_delete', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record(entry, tx);
+      });
+    }
+    const reread = await this.get(id);
+    await this.events.emit('contact.deleted', reread);
+    return reread;
   }
 }
 
@@ -233,6 +382,7 @@ function contactValues(contact) {
     ['id', contact.id], ['company_id', contact.companyId], ['first_name', contact.firstName],
     ['last_name', contact.lastName], ['email', contact.email], ['role', contact.role],
     ['created_at', contact.createdAt], ['updated_at', contact.updatedAt],
+    ['archived_at', contact.archivedAt ?? null], ['deleted_at', contact.deletedAt ?? null],
   ].map(([column, value]) => ({ column, value }));
 }
 
@@ -247,5 +397,7 @@ function mapContactRow(row) {
     role: row.role,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    archivedAt: row.archived_at ?? null,
+    deletedAt: row.deleted_at ?? null,
   };
 }
