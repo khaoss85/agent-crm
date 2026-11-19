@@ -304,6 +304,14 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // went red three times in two days (#836 Agenti 13/11, #849 Profilo
   // 13/11, #879 Agenti retire/confirm 14/11).
   'tests/admin-cta-busy.test.js',
+  // Scans every apps/admin/public/*.js file with readFileSync for a regex
+  // literal holding `//` (backlog:4137e4c8), never importing the screens: a
+  // PR touching one screen selects that screen's own tests through the
+  // import mapping and not this scan, so a reintroduced `//` regex would
+  // stay green in fast while the served /bo shell loses its sidebar
+  // (b545aca18b8f on admin-offer-panel.js, agent-crm#890 on
+  // admin-calendario.js).
+  'tests/admin-client-noslash-regex.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
