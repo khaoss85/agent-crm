@@ -168,3 +168,31 @@ test('«Apri Agenti →» lascia frase e chiave per la card', async () => {
   assert.equal(prefill.sourceKey, AUGURI.sourceKey);
   assert.equal(prefill.phrase, 'ogni lunedì fai gli auguri');
 });
+
+test('pausa: mentre riattiva il bottone dice che lavora', async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const base = driveClient({ agents: [{ ...RIAGGANCIO, status: 'paused' }] });
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/agents/set-status') {
+        base.calls.push({ path, method: 'POST', body: options.body });
+        await gate;
+        return { ok: true, agent: { ...RIAGGANCIO, status: 'active' } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, panel } = openPanel(client);
+  await panel.open('oggi', null, null, '@Riaggancio occupati dei lead');
+  await flush();
+  mount.findByText('BUTTON', 'Riattiva Riaggancio').dispatch('click', {});
+  await flush();
+  const busy = mount.findByText('BUTTON', 'Riattivo…');
+  assert.ok(busy, 'il bottone dice che lavora');
+  assert.equal(busy.getAttribute('aria-busy'), 'true');
+  release();
+  await flush();
+  assert.ok(mount.textContent.includes('Riaggancio riattivato'));
+});

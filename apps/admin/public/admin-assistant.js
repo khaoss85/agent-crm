@@ -2617,10 +2617,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         // never «Affida» (the incarico would stay put).
         say(`${mention.agent.name} ${AGENT_PAUSED_DONE}`);
         const actions = el(doc, 'div', 'bo-assistant-actions');
-        const go = el(doc, 'button', 'bo-assistant-confirm', `Riattiva ${mention.agent.name}`);
+        const reactivating = mention.busy === true;
+        const go = el(doc, 'button', 'bo-assistant-confirm', reactivating ? 'Riattivo…' : `Riattiva ${mention.agent.name}`);
         go.setAttribute('type', 'button');
         go.setAttribute('data-action', 'agent-reactivate');
-        go.disabled = mention.busy === true;
+        if (reactivating) go.setAttribute('aria-busy', 'true');
+        go.disabled = reactivating;
         go.addEventListener('click', () => { void reactivateMention(); });
         actions.appendChild(go);
         actions.appendChild(cancelButton());
@@ -2695,10 +2697,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         // Retry the same intent: same sourceKey, never a second incarico.
         // A paused agent retries the reactivation, never an «Affida».
         const retryPaused = mention.agent?.status === 'paused';
-        const retry = el(doc, 'button', 'bo-assistant-confirm', 'Riprova');
+        const retrying = mention.busy === true;
+        const retry = el(doc, 'button', 'bo-assistant-confirm', retrying ? (retryPaused ? 'Riattivo…' : 'Riprovo…') : 'Riprova');
         retry.setAttribute('type', 'button');
         retry.setAttribute('data-action', retryPaused ? 'agent-reactivate' : 'agent-retry');
-        retry.disabled = mention.busy === true;
+        if (retrying) retry.setAttribute('aria-busy', 'true');
+        retry.disabled = retrying;
         retry.addEventListener('click', () => {
           if (retryPaused) void reactivateMention();
           else void confirmMention(mention.once === true);
