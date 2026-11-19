@@ -219,7 +219,7 @@ export class ContactService {
     }
     const rows = storageMany(this.database, {
       kind: 'select', table: 'contacts', columns: '*', where,
-      orderBy: [{ column: 'created_at', direction: 'desc' }], limit: filters.archivedOnly ? limit : limit,
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapContactRow);
     const adapt = (list) => (filters.archivedOnly ? list.filter((row) => row.archivedAt !== null) : list);
     if (rows && typeof rows.then === 'function') return rows.then(adapt);
