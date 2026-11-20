@@ -153,12 +153,19 @@ test('jobs that install dependencies restore the verified npm cache first', () =
     for (const inst of steps.filter((s) => s.uses === null && /(^|[^\w-])npm ci([^\w-]|$)/.test(runText(s)))) {
       // An unconditional cache restore covers a conditional install in the same
       // job; the reverse would leave the install without a cache.
+      // Two restore shapes count (backlog:a6def994): setup-node with the npm
+      // cache (restores and saves, kept only by the scheduled nightly job) and
+      // the read-only actions/cache/restore of the npm dir outside the work
+      // dir (no post step, no slow save). Either way npm itself verifies every
+      // tarball against the lockfile on read.
       const cache = steps.find(
         (s) =>
           s.job === inst.job &&
           s.uses !== null &&
-          s.uses.startsWith('actions/setup-node@') &&
-          s.options.cache === 'npm' &&
+          ((s.uses.startsWith('actions/setup-node@') && s.options.cache === 'npm') ||
+            (s.uses.startsWith('actions/cache/restore@') &&
+              typeof s.options.path === 'string' &&
+              /(^|\/)(\.npm|npm-cache)\/?$/.test(s.options.path))) &&
           (s.iff === null || s.iff === inst.iff) &&
           s.line < inst.line,
       );
@@ -168,6 +175,23 @@ test('jobs that install dependencies restore the verified npm cache first', () =
           `the only disk saving allowed is the read-only cache outside the work dir`,
       );
     }
+  }
+});
+
+test('ci.yml never saves the npm cache (backlog:6cc2b44b stays fixed)', () => {
+  const steps = stepsOf(read('.github/workflows/ci.yml'));
+  for (const s of steps) {
+    if (s.uses === null) continue;
+    assert.ok(
+      !(s.uses.startsWith('actions/setup-node@') && s.options.cache !== undefined),
+      `ci.yml:${s.line} re-enables the setup-node cache: its save post step held jobs 13-17 min on 19/11; ` +
+        `restore read-only with actions/cache/restore instead`,
+    );
+    assert.ok(
+      !s.uses.startsWith('actions/cache/save@') && !/^actions\/cache@v\d+/.test(s.uses),
+      `ci.yml:${s.line} saves the cache: only actions/cache/restore (read-only) is allowed here; ` +
+        `the scheduled nightly workflow is the one that keeps the entry fresh`,
+    );
   }
 });
 
