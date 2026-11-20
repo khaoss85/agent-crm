@@ -1000,6 +1000,13 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:afa97ffe5a4d (production 18/11: the phrase POST answered 502
+  // LLM_PROVIDER_FAILED): after the one POST retry the card says the
+  // assistant is not answering and offers the manual form — never the
+  // generic «Ricerca non riuscita».
+  if (code === 'LLM_PROVIDER_FAILED') {
+    return 'L’assistente non risponde in questo momento: riprova tra poco, oppure compila l’appuntamento a mano.';
+  }
   // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
   // event: the slot is held, the reminder would strand, or the booking is
   // closed and moves nowhere. The event stays where it was.
@@ -1496,17 +1503,32 @@ export function isMovableAppointment(row) {
 }
 
 /**
- * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
- * 'off' (AI switched off or not configured for the space) or 'cap' (the
- * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
- * other refusal.
+ * backlog:afa97ffe5a4d — whether the phrase POST failed on the assistant's
+ * own provider (production 18/11: 502 LLM_PROVIDER_FAILED): the POST
+ * retries once, and past the retry the card offers «Compila a mano» like
+ * the other blocks. True for that failure only, never for a queued answer
+ * (BO_PHRASE_PENDING) or a waking host.
  * @param {unknown} error
- * @returns {'off'|'cap'|null}
+ */
+export function isProviderDownError(error) {
+  const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+  return code === 'LLM_PROVIDER_FAILED';
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space), 'cap' (the
+ * daily AI spend ceiling, 429) or 'down' (backlog:afa97ffe5a4d: the
+ * provider failed even after the POST retry). All three offer
+ * «Compila a mano»; null for any other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|'down'|null}
  */
 export function aiBlockOf(error) {
   const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
   if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
+  if (code === 'LLM_PROVIDER_FAILED') return 'down';
   return null;
 }
 
@@ -2010,7 +2032,7 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
-    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    /** The last phrase refusal blocked the AI ('off', 'cap' or 'down'): the card offers «Compila a mano». @type {'off'|'cap'|'down'|null} */
     aiBlocked: null,
     /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
     phraseNoDraft: false,
@@ -4546,8 +4568,9 @@ export function createCalendarioView(deps) {
     }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
-    // backlog:3771ac637027: with the AI off or over today's ceiling the way
-    // forward is the manual form, opened right here — the same form as
+    // backlog:3771ac637027: with the AI off, over today's ceiling or down
+    // (backlog:afa97ffe5a4d) the way forward is the manual form, opened
+    // right here — the same form as
     // «Nuovo appuntamento › Compila manualmente» (also when the phrase gave
     // no draft). No «Accendi l'AI»: no /bo screen switches the AI on (the
     // pilot's operator does), so none is offered rather than a button that
@@ -4638,11 +4661,22 @@ export function createCalendarioView(deps) {
   async function phraseAnswer({ resumeId = null, seq }) {
     let requestId = resumeId;
     if (requestId === null) {
+      // backlog:afa97ffe5a4d — production 18/11 answered this POST with 502
+      // LLM_PROVIDER_FAILED: a provider failure retries the same POST once,
+      // then throws so the card says the assistant is not answering with
+      // «Compila a mano». A queued answer (BO_PHRASE_PENDING) never
+      // retries: it reads back, like before.
+      const postPhrase = () => client.request('/api/appointments/phrase', {
+        method: 'POST',
+        body: { spaceId: readSpace(), phrase: state.phrase },
+      });
       try {
-        return await client.request('/api/appointments/phrase', {
-          method: 'POST',
-          body: { spaceId: readSpace(), phrase: state.phrase },
-        });
+        try {
+          return await postPhrase();
+        } catch (error) {
+          if (!isProviderDownError(error)) throw error;
+          return await postPhrase();
+        }
       } catch (error) {
         requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
         if (requestId === null) throw error;

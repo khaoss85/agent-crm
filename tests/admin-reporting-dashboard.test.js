@@ -824,6 +824,62 @@ test('ed6bae5e5c0d: the team column reads «Offerte aperte», won and rate stay 
   assert.ok(cells.includes('50%'), 'alice period rate renders');
 });
 
+// backlog:3a0858397fc7: the «Tasso di chiusura» card reads the chosen
+// month like the team table and «Cosa noto» — never the lifetime rate —
+// a month with no closures reads n.d., and the open count shares the
+// column's name («Offerte aperte»).
+test('3a0858397fc7: periodCloseRate sums the team rows of the chosen month', async () => {
+  const { periodCloseRate } = await import('../apps/admin/public/admin-reporting.js');
+  assert.deepEqual(periodCloseRate([
+    { owner: 'alice', wonCount: 1, lostCount: 1 },
+    { owner: 'bob', wonCount: 1, lostCount: 0 },
+  ]), { won: 2, lost: 1, display: '67%' }, 'october: 2 won, 1 lost');
+  assert.deepEqual(periodCloseRate([
+    { owner: 'alice', wonCount: 0, lostCount: 0 },
+    { owner: 'bob', wonCount: 0, lostCount: 0 },
+  ]), { won: 0, lost: 0, display: 'n.d.' }, 'september: no closures, never a rate from elsewhere');
+  assert.deepEqual(periodCloseRate([]), { won: 0, lost: 0, display: 'n.d.' }, 'empty team reads n.d.');
+  assert.deepEqual(periodCloseRate(null), { won: 0, lost: 0, display: 'n.d.' }, 'missing team never throws');
+});
+
+test('3a0858397fc7: the card shows the month rate even when the payload serves a lifetime rate', async () => {
+  const { mount, view } = harness({
+    dashboard: {
+      ...MODEL,
+      kpis: MODEL.kpis.map((kpi) => (kpi.id === 'win-rate'
+        ? { ...kpi, display: '100%', sub: '9 vinte, 0 perse' }
+        : kpi)),
+    },
+  });
+  await view.renderReporting();
+  const cards = mount.findAll('div').filter((node) => node.getAttribute('class') === 'metric');
+  const texts = cards.map((card) => card.textContent);
+  const rate = texts.find((text) => text.includes('Tasso di chiusura'));
+  assert.ok(rate, 'the closing-rate card renders');
+  assert.ok(rate.includes('67%'), `the card reads the month (2 vinte, 1 persa), got: ${rate}`);
+  assert.ok(!rate.includes('100%'), `no lifetime rate leaks into the card, got: ${rate}`);
+  const open = texts.find((text) => text.includes('Offerte aperte'));
+  assert.ok(open, `the open count shares the column name, got: ${texts.join(' || ')}`);
+  assert.ok(!texts.some((text) => text.includes('Preventivi aperti')), 'no «Preventivi aperti» label stays on the card');
+});
+
+test('3a0858397fc7: a month with no closures reads n.d., never the rate of always', async () => {
+  const { mount, view } = harness({
+    dashboard: {
+      ...MODEL,
+      periodLabel: 'settembre 2026',
+      team: [{ owner: 'alice', openCount: 2, openMinor: 14000, wonCount: 0, wonMinor: 0, lostCount: 0, winRate: null, winRateDisplay: 'n.d.' }],
+      owners: ['alice'],
+    },
+  });
+  await view.renderReporting();
+  const cards = mount.findAll('div').filter((node) => node.getAttribute('class') === 'metric');
+  const rate = cards.map((card) => card.textContent).find((text) => text.includes('Tasso di chiusura'));
+  assert.ok(rate, 'the closing-rate card renders');
+  assert.ok(rate.includes('n.d.'), `no closures reads n.d., got: ${rate}`);
+  assert.ok(rate.includes('nessuna chiusura'), `the card says so in words, got: ${rate}`);
+});
+
 // 35c3c897d696: a malformed first or last week reads the count only, never throws.
 test('channelsLede with a malformed week never throws', async () => {
   const { channelsLede } = await import('../apps/admin/public/admin-reporting.js');

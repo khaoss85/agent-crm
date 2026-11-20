@@ -4882,7 +4882,9 @@ export function createCustomerCardView(deps) {
       }
       if (ordered.length > visible.length) {
         const rest = ordered.length - visible.length;
-        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        // backlog:f733f95742a1: the button names how many passages are still
+        // hidden — «Mostra precedenti · 25» — never a «20 di 25» page count.
+        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${rest}`);
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {

@@ -4061,7 +4061,7 @@ test('the timeline shows the newest 20 first and opens older ones on demand', as
   assert.equal(shown().length, 20, 'one page');
   assert.equal(shown()[0], 'm44', 'newest first');
   const older = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
-  assert.equal(older().textContent, 'Mostra precedenti · 20 di 25');
+  assert.equal(older().textContent, 'Mostra precedenti · 25');
   older().dispatch('click');
   assert.equal(shown().length, 40);
   older().dispatch('click');

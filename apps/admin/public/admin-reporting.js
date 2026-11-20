@@ -18,7 +18,7 @@
 // — never innerHTML with data, so hostile bundle rows are inert text.
 
 import { formatAmount } from './admin-core.js';
-import { personLabel, teamPeople } from './admin-labels.js';
+import { personLabel, plural, teamPeople } from './admin-labels.js';
 import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /** Hash route of the Reporting screen. */
@@ -295,6 +295,28 @@ export function withPersonNames(model, roster) {
   };
 }
 
+/**
+ * backlog:3a0858397fc7: the month's own close rate, summed over the team
+ * rows the server scopes to the chosen period (won/lost closed in the
+ * month, like «Cosa noto» and the team table) — never the lifetime rate
+ * the server still serves on the KPI. No decided offer in the month reads
+ * 'n.d.', never a rate from other months.
+ * @param {unknown} team `model.team` rows
+ */
+export function periodCloseRate(team) {
+  let won = 0;
+  let lost = 0;
+  if (Array.isArray(team)) {
+    for (const entry of team) {
+      if (entry === null || typeof entry !== 'object') continue;
+      if (Number.isInteger(entry.wonCount) && entry.wonCount > 0) won += entry.wonCount;
+      if (Number.isInteger(entry.lostCount) && entry.lostCount > 0) lost += entry.lostCount;
+    }
+  }
+  const decided = won + lost;
+  return { won, lost, display: decided === 0 ? 'n.d.' : `${Math.round((won / decided) * 100)}%` };
+}
+
 /** Hash route of the "+ Nuovo modulo" screen. */
 export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 
@@ -561,11 +583,25 @@ export function createReportingView(deps) {
 
   function kpiCards(section, model) {
     const grid = el(doc, 'div', { class: 'metrics' });
+    // backlog:3a0858397fc7: the «Tasso di chiusura» card reads the chosen
+    // month like the team table and «Cosa noto» — summed over the team's
+    // own period rows, never the lifetime rate the payload still serves.
+    const rate = periodCloseRate(model?.team);
+    const decided = rate.won + rate.lost;
     for (const kpi of model.kpis ?? []) {
       const card = el(doc, 'div', { class: 'metric' });
-      card.appendChild(el(doc, 'span', { text: kpi.label }));
-      card.appendChild(el(doc, 'strong', { text: kpi.display }));
-      card.appendChild(el(doc, 'span', { text: kpi.sub }));
+      // The card names what it counts like the team column (ed6bae5e5c0d):
+      // «Offerte aperte», never «Preventivi aperti».
+      const label = kpi?.id === 'open-count' && kpi?.label === 'Preventivi aperti' ? 'Offerte aperte' : kpi?.label;
+      const display = kpi?.id === 'win-rate' ? rate.display : kpi?.display;
+      const sub = kpi?.id === 'win-rate'
+        ? (decided === 0
+          ? `nessuna chiusura in ${model?.periodLabel ?? 'questo mese'}`
+          : `${plural(rate.won, 'vinta', 'vinte')}, ${plural(rate.lost, 'persa', 'perse')}`)
+        : kpi?.sub;
+      card.appendChild(el(doc, 'span', { text: label }));
+      card.appendChild(el(doc, 'strong', { text: display }));
+      card.appendChild(el(doc, 'span', { text: sub }));
       grid.appendChild(card);
     }
     section.appendChild(grid);
