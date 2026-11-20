@@ -3853,6 +3853,15 @@ export function createCustomerCardView(deps) {
     box.setAttribute('data-editing-field', String(def?.key ?? ''));
     const classes = String(box.getAttribute('class') ?? '');
     if (!classes.split(/\s+/).includes('bo-campo-editing')) box.setAttribute('class', `${classes} bo-campo-editing`.trim());
+    // Verifica Mac 20/11 07:29Z: Salva (200) or Annulla must close the
+    // editor. The repaint below re-reads open editors as drafts
+    // (readDrafts, review #835), so the editing marks go first — otherwise
+    // the repaint brings the same editor back and it never closes.
+    const closeEditor = () => {
+      box.removeAttribute('data-editing-field');
+      const now = String(box.getAttribute('class') ?? '').split(/\s+/).filter((name) => name !== '' && name !== 'bo-campo-editing');
+      box.setAttribute('class', now.join(' '));
+    };
     box.appendChild(el('h4', undefined, 'Campi personalizzati'));
     const rows = Array.isArray(ctx.values) ? ctx.values : [];
     const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
@@ -3878,6 +3887,7 @@ export function createCustomerCardView(deps) {
           resource: ctx.resource, id: ctx.id, key: def?.key, value: entry.read(),
         });
         toast('Campo salvato');
+        closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
         entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
@@ -3885,6 +3895,7 @@ export function createCustomerCardView(deps) {
       }
     }));
     cancel.addEventListener('click', async () => {
+      closeEditor();
       await renderCard(ctx.resource, ctx.id);
     });
   }

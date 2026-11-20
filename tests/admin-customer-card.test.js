@@ -3878,6 +3878,12 @@ test('434cc39a: an edit rewrites the single row and re-reads', async () => {
   save.dispatch('click');
   await flush();
   assert.deepEqual(saved, { resource: 'contact', id: 'c1', key: 'amico', value: 'sì' }, 'one governed value write');
+  // Verifica Mac 20/11 07:29Z: after Salva the editor closes — the repaint
+  // must not bring it back as a draft.
+  assert.equal(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-field-value'), undefined,
+    'the edit form is gone after Salva');
+  assert.ok(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico'),
+    'the field reads as a value again');
 });
 
 test('434cc39a: + Aggiungi campo defines a space field from the scheda', async () => {
