@@ -439,8 +439,26 @@ export function mergeSpaces(primary, secondary) {
 }
 
 /**
+ * Canonical space order (backlog:8e1092b95c8a): spaces sorted by id, so the
+ * menu numbers (⌘N), the de-duplicated initials and the ⌘1/2/3 shortcuts all
+ * read from the same order no matter which source listed the spaces first.
+ * The same space keeps the same number and initials in every menu render.
+ * @param {unknown} spaces
+ */
+export function canonicalSpaceOrder(spaces) {
+  const list = Array.isArray(spaces) ? [...spaces] : [];
+  list.sort((left, right) => {
+    const a = left != null && typeof left.id === 'string' ? left.id : '';
+    const b = right != null && typeof right.id === 'string' ? right.id : '';
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return list;
+}
+
+/**
  * Resolve a ⌘1/2/3 (or Ctrl+1/2/3) keypress to a space id among the user's
- * spaces. Anything else — no modifier, another key, out of range — is null.
+ * spaces, in canonical order (see `canonicalSpaceOrder`). Anything else —
+ * no modifier, another key, out of range — is null.
  * @param {{ metaKey?: boolean, ctrlKey?: boolean, key?: string }} event
  * @param {Array<{ id: string }>} spaces
  */
@@ -448,9 +466,10 @@ export function resolveSpaceShortcut(event, spaces) {
   if (event == null || (event.metaKey !== true && event.ctrlKey !== true)) return null;
   const key = event.key;
   if (typeof key !== 'string' || !/^[1-9]$/.test(key)) return null;
+  const ordered = canonicalSpaceOrder(spaces);
   const index = Number(key) - 1;
-  if (!Array.isArray(spaces) || index < 0 || index >= spaces.length) return null;
-  const target = spaces[index];
+  if (index < 0 || index >= ordered.length) return null;
+  const target = ordered[index];
   return target != null && typeof target.id === 'string' ? target.id : null;
 }
 
@@ -563,7 +582,8 @@ export function spaceSwitcherLabel(spaces) {
 }
 
 /**
- * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
+ * Space-menu rows with the ⌘N hint, in canonical id order
+ * (backlog:8e1092b95c8a). Only the first nine spaces
  * get a hint; the rest render without one. Display initials never repeat
  * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
@@ -579,7 +599,9 @@ export function spaceSwitcherLabel(spaces) {
  * @param {Array<string> | null} [memberIds] ids the session profile names
  */
 export function spaceMenuItems(spaces, activeId, memberIds = null) {
-  const list = Array.isArray(spaces) ? spaces : [];
+  // backlog:8e1092b95c8a: canonical order, so number and initials never
+  // depend on which source listed the spaces first.
+  const list = canonicalSpaceOrder(spaces);
   const seen = new Set();
   const memberSet = memberIds == null ? null : new Set(
     (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
@@ -623,11 +645,15 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  * write the space's agents and sequences — left alone they would keep the
  * space just left behind. Calendario too (review #664): its week and its
  * queued phrase search belong to one space.
+ * Voce 5fc6709109fa: the dashboard is Oggi, the most space-scoped screen
+ * of all — after Cambia spazio it re-reads the new space in place instead
+ * of keeping the space just left behind. Unmounted the dashboard is the
+ * framework demo, so re-routing it is a no-op paint.
  * @param {unknown} view the routed view id
  * @param {{ mounted?: boolean }} [options]
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
-  if (view === 'dashboard') return mounted === true;
+  if (view === 'dashboard') return true;
   return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
@@ -1048,7 +1074,7 @@ export function createShellView({
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
     const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
-      line: 'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato' });
+      line: 'Descrivi il modulo, il tuo agente di coding lo prepara separato dal resto' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {

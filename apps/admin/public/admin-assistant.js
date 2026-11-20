@@ -140,7 +140,7 @@ export const SUGGESTION_CATALOG = Object.freeze({
     { id: 'bo04:reporting:call', title: 'Chi ha gestito più call questo mese?', detail: 'Chiamate registrate per operatore ed esito.' },
   ]),
   'nuovo-modulo': Object.freeze([
-    { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, manifest, comandi veri.' },
+    { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, scheda del modulo, comandi veri.' },
   ]),
   // Voce d525f4aa48b2: the customer card's own proposals behind
   // «✦ Chiedi all'AI» in Dettagli. The card opens the panel with the
@@ -1058,10 +1058,10 @@ async function answerLeadSito(client) {
 function answerNuovoAi() {
   const answer = emptyAnswer('bo05:nuovo-modulo:crea-ai', 'Come creo un modulo con l’AI?');
   answer.lines.push('1. Descrivi il modulo nella schermata Nuovo modulo (nome, campi, tipi).');
-  answer.lines.push('2. L’agente di coding redige il manifest dalla descrizione (docs/MODULE_MANIFEST.md).');
-  answer.lines.push('3. L’agente esegue bundle create --apply: file veri in bundles/<nome>/<versione>/, mai nel kernel.');
-  answer.lines.push('4. Il modulo viene provato davvero: si apre e mostra un record, altrimenti non esiste.');
-  answer.lines.push('5. bundle install lo registra; l’host lo compone con createAccordoApp({ bundles }).');
+  answer.lines.push('2. L’agente di coding scrive la scheda del modulo partendo dalla descrizione.');
+  answer.lines.push('3. L’agente esegue il comando di creazione: file veri nella cartella del modulo, mai nel nucleo.');
+  answer.lines.push('4. Il modulo viene provato davvero: si apre e mostra dati veri, altrimenti non esiste.');
+  answer.lines.push('5. La registrazione lo aggiunge all’elenco; l’app lo mostra insieme agli altri moduli.');
   answer.actions.push({ id: 'bo05:apri-nuovo-modulo', label: 'Apri: Nuovo modulo', kind: 'navigate', href: '#/nuovo-modulo', customerFacing: false });
   answer.actions.push({ id: 'bo05:apri-reporting', label: 'Apri: Reporting', kind: 'navigate', href: '#/reporting', customerFacing: false });
   return answer;

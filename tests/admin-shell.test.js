@@ -18,6 +18,7 @@ import {
   loadClientCount,
   loadFixCount,
   resolveBadgeSpaceId,
+  canonicalSpaceOrder,
   defaultSpaces,
   mergeSpaces,
   readSpaces,
@@ -1448,4 +1449,45 @@ test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in
     assert.equal(screen.label, label);
   }
   assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
+});
+
+test('backlog:8e1092b95c8a: stesso spazio, stesso numero e stesse iniziali nel menu', () => {
+  const spaces = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'test-2f07', name: 'Prova verifica' },
+  ];
+  const flipped = [...spaces].reverse();
+  // L'ordine canonico è per id, da qualunque fonte arrivi l'elenco.
+  assert.deepEqual(canonicalSpaceOrder(flipped).map((space) => space.id), ['presti-group', 'test-2f07']);
+  assert.deepEqual(canonicalSpaceOrder(null), []);
+  const rows = spaceMenuItems(spaces, 'test-2f07');
+  const rowsFlipped = spaceMenuItems(flipped, 'test-2f07');
+  assert.deepEqual(
+    rowsFlipped.map((row) => [row.id, row.keyHint, row.initials]),
+    rows.map((row) => [row.id, row.keyHint, row.initials]),
+    'numbers and initials never depend on the listing order',
+  );
+  assert.equal(rows[0].id, 'presti-group');
+  assert.equal(rows[0].keyHint, '⌘1');
+  assert.equal(rows[1].keyHint, '⌘2');
+  assert.equal(resolveSpaceShortcut({ metaKey: true, key: '1' }, flipped), 'presti-group');
+  // Sigle in collisione: vince sempre lo stesso spazio, in qualunque ordine.
+  const clash = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'prova', name: 'Prova' },
+  ];
+  const clashRows = spaceMenuItems(clash, 'prova');
+  const clashFlipped = spaceMenuItems([...clash].reverse(), 'prova');
+  assert.deepEqual(
+    clashFlipped.map((row) => [row.id, row.initials]),
+    clashRows.map((row) => [row.id, row.initials]),
+  );
+  assert.equal(clashRows.find((row) => row.id === 'presti-group').initials, 'PR');
+
+  // Il menu «+ Nuovo modulo» non mostra parole tecniche inglesi.
+  const { sidebar } = renderShell();
+  const addMenu = sidebar.findAll('div').find((node) => (node.className ?? '').split(/\s+/).includes('bo-add-menu'));
+  assert.ok(addMenu, 'the add menu renders');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('bundle'), 'no bundle in the add menu');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('manifest'), 'no manifest in the add menu');
 });
