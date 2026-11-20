@@ -12,6 +12,7 @@ import {
   createAppointmentsPackageV2,
   parseBookingPhrase,
   proposeBooking,
+  readTeamWeek,
   suggestSlots,
   validateBookingLinkToken,
 } from '../packages/appointments/src/index.js';
@@ -1488,4 +1489,85 @@ test('the package capabilities carry the composed calendarSync: the registry sea
   assert.deepEqual(week.members[0].busy, [{
     startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', title: 'test accordo',
   }]);
+});
+
+// backlog:f2e52f14 (P1 Presti, Mac live 5bece6f): a cancelled booking held
+// neither the slot nor the key. Conferma on a freed slot with the same
+// claim used to answer 200 «booked» with the cancelled row (nothing
+// created, grid empty); with a changed claim it refused 409
+// APPOINTMENTS_LOG_CONFLICT. Now the confirm creates a live appointment
+// under a derived key and the week shows it.
+test('f2e52f14: a confirm on a cancelled slot books a live appointment and the week shows it', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const request = { ...booking(), spaceId: SPACE, confirmed: true };
+  const first = await cap.confirmBooking(request);
+  assert.equal(first.decision, 'booked');
+  assert.equal(first.appointment.status, 'confirmed');
+  await cap.cancelAppointment({ id: first.appointment.id, reason: 'Il cliente ha disdetto' });
+  assert.equal(service.rows[0].status, 'cancelled');
+  // Propose still drafts on the freed slot — no overlap refusal.
+  const draft = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(draft.decision, 'confirm-required');
+  // Confirm with the identical claim creates — never replays the dead row.
+  const rebooked = await cap.confirmBooking(request);
+  assert.equal(rebooked.decision, 'booked');
+  assert.equal(rebooked.appointment.status, 'confirmed', 'a live appointment exists');
+  assert.notEqual(rebooked.appointment.id, first.appointment.id, 'a new row, not the cancelled one');
+  assert.equal(rebooked.replayed, false);
+  assert.equal(service.rows[0].status, 'cancelled', 'the cancelled row keeps its key and its history');
+  assert.equal(service.rows[0].sourceKey, 'gym:flow:1');
+  assert.equal(rebooked.appointment.sourceKey, 'gym:flow:1:rebook-2');
+  // The week (the grid) shows the live booking on the slot.
+  const week = await readTeamWeek({ appointments: service }, {
+    teamMemberIds: ['coach-guido'],
+    from: '2026-10-20T16:00:00.000Z',
+    to: '2026-10-20T19:00:00.000Z',
+  });
+  const live = week.members[0].appointments.filter((entry) => entry.status !== 'cancelled');
+  assert.deepEqual(live.map((entry) => entry.startsAt), ['2026-10-20T17:00:00.000Z']);
+  // A retry of the same confirm replays the live winner, never a third row.
+  const retried = await cap.confirmBooking(request);
+  assert.equal(retried.replayed, true);
+  assert.equal(retried.appointment.id, rebooked.appointment.id);
+  assert.equal(service.rows.length, 2, 'no duplicate on retry');
+});
+
+// backlog:f2e52f14: same freed slot, changed claim (notes added at the desk
+// behind the same key) — the cancelled row no longer 409s the new claim.
+test('f2e52f14: a confirm on a cancelled slot with a changed claim books instead of 409', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const first = await cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
+  await cap.cancelAppointment({ id: first.appointment.id, reason: 'Il cliente ha disdetto' });
+  const rebooked = await cap.confirmBooking({
+    ...booking(), notes: 'Richiamare prima', spaceId: SPACE, confirmed: true,
+  });
+  assert.equal(rebooked.decision, 'booked');
+  assert.equal(rebooked.appointment.status, 'confirmed');
+  assert.equal(rebooked.appointment.notes, 'Richiamare prima');
+  assert.equal(service.rows.length, 2);
+});
+
+// backlog:f2e52f14: the cancelled row keeps its key — cancel-by-key stays
+// idempotent and a reschedule by the old key still refuses as terminal.
+test('f2e52f14: the cancelled row keeps answering cancel-by-key and refuses reschedule', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const first = await cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
+  await cap.cancelAppointment({ id: first.appointment.id, reason: 'Il cliente ha disdetto' });
+  const again = await cap.cancelAppointment({ sourceKey: 'gym:flow:1', reason: 'Doppio clic' });
+  assert.equal(again.cancelled, false, 'cancel-by-key stays idempotent');
+  assert.equal(again.appointment.status, 'cancelled');
+  await assert.rejects(
+    cap.rescheduleAppointment({
+      sourceKey: 'gym:flow:1',
+      startsAt: '2026-10-20T18:00:00.000Z',
+      endsAt: '2026-10-20T19:00:00.000Z',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_INVALID_STATE');
+      return true;
+    },
+  );
 });
