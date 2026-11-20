@@ -20,6 +20,14 @@
  *   repository — `tests/helpers` and fixtures, `packages/` barrels,
  *   `scripts/`, `apps/`, `examples/`: a test that reaches the changed file
  *   only via a helper or a barrel re-export is still selected;
+ * - a changed file a test file reads as text runs its readers
+ *   (`textReferencesOf`: a fixed `readFileSync(new URL(...))`,
+ *   `readFileSync(join(root, ...))`, or any literal `readFile`/`open` path
+ *   resolving to the changed file — dynamic reads of a walked directory
+ *   stay repo-wide guards instead). `tests/admin-navigation-loading.test.js`
+ *   reads `apps/admin/public/app.js` as text without importing it: before
+ *   this rule a PR touching only `app.js` never ran it while the full suite
+ *   on `main` failed (backlog:bdfa2aa54a78);
  * - `export ... from` re-exports count as imports for the mapping above.
  *   The mapping walks the graph backwards: forward edges are indexed once
  *   per run, then a single reverse search from the changed files finds the
@@ -219,8 +227,9 @@ export const STEP_BUDGET_SEC = 450;
  * `scripts/` wholesale — a repo-wide `grep`/`rg`, or a recursive directory
  * walk seeded at the repository — so adding any file there can flip its
  * verdict. A test that reads one fixed repo file, or walks a scratch
- * directory it built itself, is not a guard: its fixed path is either
- * mapped through a relative import or covered by the fail-closed refusal.
+ * directory it built itself, is not a guard: its fixed path is mapped
+ * through a relative import or a text reference (`textReferencesOf`), so
+ * the selection above already runs it.
  *
  * Measured cost on the shared Mac (2026-10-18, `node --test` per file):
  * isolated-git ~1.1 s, spine-tenancy-truth ~2.1 s,
@@ -322,6 +331,13 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // fast stayed green while the nightly full suite failed on three of its
   // five tests (main run 43665590178, cure in agent-crm backlog:d6402b8f).
   'tests/tour-claim.test.js',
+  // Reads apps/admin/public/app.js with readFileSync, never importing it:
+  // an app.js-only change selects nothing through the import mapping, so
+  // the fast stayed green while the scheduled full suite failed on
+  // «a stale failure stays diagnosable» (main run 44453039304, #1009
+  // added a silent early return to the router catch, cure in
+  // agent-crm backlog:f268787b).
+  'tests/admin-navigation-loading.test.js',
 ]);
 
 /**
@@ -404,6 +420,107 @@ export function relativeImportsOf(
 }
 
 /**
+ * Top-level directories a string literal can name a repository file from:
+ * `join(root, 'apps/admin/public/styles.css')` or a bare `'apps/...'` path
+ * is a repository file, while `'text/plain'` or `'a/b'` is not. Mirrors the
+ * trees `buildFileImports` walks, plus the checked-in `site/` and `docs/`
+ * trees tests also read as text (brand, tour claims).
+ */
+const TEXT_REF_TOP = /^(apps|packages|scripts|tests|examples|site|docs)\//;
+
+/** A single- or double-quoted string literal, without the quotes. */
+const QUOTED_LITERAL = /('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")/;
+
+/**
+ * Unquote a matched string literal to its raw inner text. Paths never carry
+ * escapes that change their meaning here; the raw text is what joins.
+ * @param {string} literal the quoted literal, quotes included.
+ */
+function unquoteLiteral(/** @type {string} */ literal) {
+  return literal.slice(1, -1);
+}
+
+/**
+ * Whether a literal path is repository-relative and where it resolves: a
+ * dot-prefixed literal (`../apps/admin/public/app.js`) resolves against
+ * the reading file's directory — the `new URL(path, import.meta.url)` and
+ * `readFileSync` shape — while a top-directory literal
+ * (`apps/admin/public/styles.css`) resolves against the repository root —
+ * the `join(root, path)` shape. Anything else (absolute URLs, bare
+ * variables, bare filenames) is not a mappable reference.
+ * @param {string} literal the raw inner text.
+ * @param {string} fromFile the repository-relative path of the reading file.
+ * @returns {string | null} the normalized repository-relative reference.
+ */
+function resolveTextLiteral(/** @type {string} */ literal, /** @type {string} */ fromFile) {
+  if (literal.startsWith('./') || literal.startsWith('../')) {
+    return normalize(join(dirname(fromFile), literal)).replace(/\\/g, '/');
+  }
+  if (TEXT_REF_TOP.test(literal)) {
+    return normalize(literal).replace(/\\/g, '/');
+  }
+  return null;
+}
+
+/**
+ * The fixed repository files a file reads as text instead of importing:
+ * `readFileSync(new URL('../apps/admin/public/app.js', import.meta.url))`,
+ * `readFileSync(join(root, 'apps/admin/public/styles.css'))`, or any
+ * `readFileSync`/`readFile`/`open`/`createReadStream` first argument that is
+ * a mappable string literal. Dynamic reads (`readFileSync(file)`,
+ * `readFileSync(new URL(file, PUBLIC_DIR))`) are not mappable and stay
+ * uncovered here: a test that walks a whole directory to find its files is
+ * a repo-wide guard (`REPO_WIDE_GUARDS`), not a fixed reference.
+ *
+ * Returns extension-free repository-relative paths, resolved the way
+ * `relativeImportsOf` resolves them, so the reachability search below reads
+ * them as the same edges. Comments are not code: only the comment-free
+ * source is scanned, so a doc example naming a path never selects its
+ * readers. Template literals are never mapped: an interpolation is not a
+ * fixed path. A `join`/`resolve` with several literals but no single
+ * root-relative one (e.g. a `join(dir, sub, file)` with no repo-rooted
+ * literal) is a documented miss: only each qualifying literal is read.
+ */
+export function textReferencesOf(
+  /** @type {string} */ fromFile,
+  /** @type {string} */ content,
+) {
+  // Blank comments but keep every string literal intact: paths live in
+  // strings, while `//` inside a string (an `https://` URL) must not start
+  // a comment. Template bodies stay whole; an interpolation holding a
+  // line comment is pathological and out of scope.
+  const codeOnly = content.replace(
+    /('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+    (match, string) => (string !== undefined ? match : ''),
+  );
+  const found = new Set();
+  const take = (/** @type {string} */ literal) => {
+    const resolved = resolveTextLiteral(unquoteLiteral(literal), fromFile);
+    if (resolved !== null) found.add(stripSourceExtension(resolved));
+  };
+  // `new URL('<path>', ...)` — whatever wraps it (`readFileSync`,
+  // `fileURLToPath`, a bare probe) reads that path as text.
+  const urlPattern = new RegExp(`new\\s+URL\\s*\\(\\s*${QUOTED_LITERAL.source}`, 'g');
+  for (const match of codeOnly.matchAll(urlPattern)) take(match[1]);
+  // `readFileSync('<path>', ...)`, `readFile`, `open`, `createReadStream`:
+  // only a literal first argument is a fixed reference.
+  const readPattern = new RegExp(
+    `\\b(?:readFileSync|readFile|open|createReadStream)\\s*\\(\\s*${QUOTED_LITERAL.source}`,
+    'g',
+  );
+  for (const match of codeOnly.matchAll(readPattern)) take(match[1]);
+  // `join(root, '<path>', ...)` / `resolve(root, '<path>')`: every literal
+  // argument that is itself repository-relative is a fixed reference.
+  const joinPattern = /\b(?:join|resolve)\s*\(([^()\n]{0,400})\)/g;
+  for (const match of codeOnly.matchAll(joinPattern)) {
+    const args = match[1];
+    const literalPattern = new RegExp(QUOTED_LITERAL.source, 'g');
+    for (const literal of args.matchAll(literalPattern)) take(literal[1]);
+  }
+  return found;
+}
+
+/**
  * Whether any changed repository-relative path is JavaScript source. Test
  * files themselves count as source here: a changed test file is always
  * selected below, so an empty selection together with a `true` here means a
@@ -477,7 +594,13 @@ export function touchedTestDistances(
   // are leaves.
   const forward = new Map();
   for (const [testPath, content] of testContents) {
-    forward.set(stripSourceExtension(testPath), relativeImportsOf(testPath, content));
+    // A test reaches a changed file it relatively imports — or one it
+    // reads as text (`readFileSync(new URL(...))`): both are edges, so the
+    // reverse search below finds text readers the way it finds importers.
+    forward.set(stripSourceExtension(testPath), new Set([
+      ...relativeImportsOf(testPath, content),
+      ...textReferencesOf(testPath, content),
+    ]));
   }
   for (const [file, imports] of fileImports) {
     forward.set(file, imports);
@@ -1481,9 +1604,16 @@ export function buildFileImports(
       if (!SOURCE_EXT.test(name) || TEST_FILE.test(name)) continue;
       const relative = absolute.slice(repoRoot.length + 1).replace(/\\/g, '/');
       try {
+        const source = readFileSync(absolute, 'utf8');
+        // Helpers and barrels count their text reads as edges too: a test
+        // importing a helper that reads a changed file as text is the test
+        // that catches the regression, the way an import chain does.
         graph.set(
           stripSourceExtension(relative),
-          relativeImportsOf(relative, readFileSync(absolute, 'utf8')),
+          new Set([
+            ...relativeImportsOf(relative, source),
+            ...textReferencesOf(relative, source),
+          ]),
         );
       } catch {
         // Unreadable files are leaves; the run below fails loudly if one a

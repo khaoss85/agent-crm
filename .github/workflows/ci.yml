@@ -88,7 +88,7 @@ jobs:
       # public repo's self-hosted runner): clean:true wipes the worktree only,
       # never `.git`, so `.git/hooks`, `.git/info/attributes` or `.git/config`
       # keys from a previous job can persist on the runner dir — fresh dir per
-      # job stays a follow-up; the saving lives only on the npm cache below.
+      # job stays a follow-up (no npm cache since backlog:6cc2b44b).
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -96,12 +96,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # Savings live ONLY on dependencies, never on the workspace: the npm
-          # cache restores read-only outside the work dir, keyed by the
-          # package-lock hash, and npm itself verifies every tarball against
-          # the lockfile before use (backlog:f16911e3; baseline 13/11: ~1.2 GB
-          # rewritten per job start plus ~107 MB of npm ci, disk wait 16-20%).
-          cache: 'npm'
+          # No npm cache on purpose (backlog:6cc2b44b): on 19/11 the
+          # cache-save post step (tar + zstdmt over ~GBs) held this job
+          # 13-17 min on both runners while PR lanes queued. Without
+          # `cache:` there is no post step at all; `npm ci` downloads
+          # fresh, still far cheaper than the save. Same as bo-shots,
+          # which already runs setup-node without cache.
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -218,8 +218,8 @@ jobs:
     steps:
       # Clean checkout every job (backlog:f16911e3): no checkout reuse;
       # clean:true wipes the worktree only, never the runner's `.git`
-      # (fresh dir per job stays a follow-up). The disk saving lives only
-      # on the npm cache below.
+      # (fresh dir per job stays a follow-up; no npm cache since
+      # backlog:6cc2b44b).
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -228,7 +228,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: 'npm'
+          # No npm cache on purpose (backlog:6cc2b44b): the cache-save
+          # post step held jobs 13-17 min on 19/11; without `cache:`
+          # there is no post step at all.
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -405,11 +407,12 @@ jobs:
     # re-anchor, the freshness gate (`--require-current`) and the realign PR
     # moved to `verify` with the measurement; this job never starts
     # `measure-suite.js` and never fails for a stale-but-agreeing ledger.
-    # Its own lane: a newer push supersedes this check, and it never cancels
-    # — nor waits on — a scheduled measurement already running.
+    # Its own lane: pushes queue behind a run already going and each one runs
+    # to a verdict — a newer push never supersedes this check — and it never
+    # cancels — nor waits on — a scheduled measurement already running.
     concurrency:
       group: ci-main-claims
-      cancel-in-progress: true
+      cancel-in-progress: false
     if: ${{ github.event_name == 'push' }}
     steps:
       # Clean checkout every job (backlog:f16911e3): no checkout reuse;
@@ -439,8 +442,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # Read-only npm cache outside the work dir (backlog:f16911e3).
-          cache: 'npm'
+          # No npm cache on purpose (backlog:6cc2b44b): the cache-save
+          # post step held jobs 13-17 min on 19/11; without `cache:`
+          # there is no post step at all.
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this

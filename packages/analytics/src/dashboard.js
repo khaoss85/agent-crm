@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ValidationError } from '../../core/src/errors.js';
+import { isLostOfferStage, isOpenOfferStage, isWonOfferStage } from '../../core/src/pipeline-registry.js';
 import { OPPORTUNITY_STAGES } from '../../core/src/schema.js';
 import { compileReport } from './compiler.js';
 import { PIPELINE_SEMANTIC_MODEL } from './semantic-model.js';
@@ -391,11 +392,6 @@ function sumRows(rows, predicate) {
   return { minor, count };
 }
 
-/** @param {unknown} value */
-function isOpenStage(value) {
-  return typeof value === 'string' && /** @type {Array<string>} */ ([...OPEN_STAGES]).includes(value);
-}
-
 /**
  * backlog:48993bed7294 (review lead #896): the historical close rate needs
  * at least this many decided offers (won, paid or lost) before it drives
@@ -450,17 +446,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       .sort((a, b) => a.order - b.order)
     : null;
   const typeOf = ordered ? new Map(ordered.map((stage) => [stage.key, stage.type])) : null;
+  // backlog:1adf95307b31 — one closed/won rule with the customer list
+  // (packages/core/src/pipeline-registry.js): Pagato is won.
   /** Same open rule as the board's working columns: open and renewal hold value. */
-  const isOpenValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'open' || typeOf.get(value) === 'renewal'
-    : isOpenStage(value);
+  const isOpenValue = (/** @type {unknown} */ value) => isOpenOfferStage(pipeline, value);
   /** Same close rule as the board: won and paid close at face value. */
-  const isWonValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'won' || typeOf.get(value) === 'paid'
-    : value === WON_STAGE;
-  const isLostValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'lost'
-    : value === LOST_STAGE;
+  const isWonValue = (/** @type {unknown} */ value) => isWonOfferStage(pipeline, value);
+  const isLostValue = (/** @type {unknown} */ value) => isLostOfferStage(pipeline, value);
   const nameOf = (/** @type {unknown} */ value) => {
     if (!pipeline) return stageLabel(value);
     const stage = ordered.find((entry) => entry?.key === value);
