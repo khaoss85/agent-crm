@@ -33,6 +33,27 @@ function isTakenEmail(error) {
   return false;
 }
 
+/**
+ * Voce 91c92940274c (review P1 su #1077): un contatto archiviato o
+ * eliminato è invisibile ma intoccabile — le modifiche e i nuovi legami
+ * (offerte) lo rifiutano con un 409 stabile invece di scrivere su una
+ * riga che nessuna vista mostra. La lettura `get` resta la verità sulla
+ * riga (audit e sync ne hanno bisogno).
+ * @param {{archivedAt?: unknown, deletedAt?: unknown, id?: unknown}} contact
+ */
+export function assertContactLinkable(contact) {
+  if (contact?.deletedAt != null) {
+    throw new AppError('un contatto eliminato non si tocca più', {
+      code: 'CONTACT_DELETED', status: 409, contactId: contact?.id ?? null,
+    });
+  }
+  if (contact?.archivedAt != null) {
+    throw new AppError('un contatto archiviato non si tocca: ripristinalo prima', {
+      code: 'CONTACT_ARCHIVED', status: 409, contactId: contact?.id ?? null,
+    });
+  }
+}
+
 export class ContactService {
   /** @param {{database: any, audit: any, events: any, companies: any}} dependencies */
   constructor({ database, audit, events, companies }) {
@@ -111,6 +132,7 @@ export class ContactService {
    */
   async update(id, patch, context = {}) {
     const current = await this.get(id);
+    assertContactLinkable(current);
     if (!patch || typeof patch !== 'object') {
       throw new ValidationError('a contact update needs at least one field', { field: 'patch' });
     }
@@ -214,16 +236,18 @@ export class ContactService {
       if (!filters.includeArchived) {
         throw new ValidationError('archivedOnly needs includeArchived', { field: 'archivedOnly' });
       }
+      // Review P1 su #1077: il predicato sta nel WHERE, così il LIMIT si
+      // applica agli archiviati — filtrarlo dopo in memoria perdeva gli
+      // archiviati vecchi oltre la pagina e dichiarava una completezza
+      // finta.
+      where.push({ column: 'archived_at', op: 'is-not-null' });
     } else if (!filters.includeArchived) {
       where.push({ column: 'archived_at', op: 'is-null' });
     }
-    const rows = storageMany(this.database, {
+    return storageMany(this.database, {
       kind: 'select', table: 'contacts', columns: '*', where,
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapContactRow);
-    const adapt = (list) => (filters.archivedOnly ? list.filter((row) => row.archivedAt !== null) : list);
-    if (rows && typeof rows.then === 'function') return rows.then(adapt);
-    return adapt(rows);
   }
 
   /**
@@ -238,7 +262,17 @@ export class ContactService {
     const requested = Number.isInteger(options.limit) ? options.limit : SCAN_MAX_ROWS;
     const limit = Math.min(Math.max(requested, 1), SCAN_MAX_ROWS);
     const where = [{ column: 'deleted_at', op: 'is-null' }];
-    if (!options.includeArchived) where.push({ column: 'archived_at', op: 'is-null' });
+    // Review P1 su #1077: la scansione di ricerca della vista «Archiviati»
+    // chiede solo archiviati (predicato in SQL), così gli attivi non
+    // affamano la pagina oltre il tetto.
+    if (options.archivedOnly) {
+      if (!options.includeArchived) {
+        throw new ValidationError('archivedOnly needs includeArchived', { field: 'archivedOnly' });
+      }
+      where.push({ column: 'archived_at', op: 'is-not-null' });
+    } else if (!options.includeArchived) {
+      where.push({ column: 'archived_at', op: 'is-null' });
+    }
     return storageMany(this.database, {
       kind: 'select', table: 'contacts', columns: '*', where,
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
@@ -328,7 +362,12 @@ export class ContactService {
    * (le offerte naming il referente restano integre); senza offerte
    * l'eliminazione scrive `deleted_at`, lascia la traccia di audit e non
    * tocca le conversazioni degli altri contatti (altri pacchetti, retained).
-   * La sync ritrova la riga dall'email e non la ricrea.
+   * Una sola tombstone: l'eliminazione cancella anche `archived_at`
+   * (niente doppia marca senza via d'uscita — review P1 su #1077) e libera
+   * l'email con una rimappatura interna, così la stessa persona si può
+   * ricreare e la sync non lega più nuovi messaggi alla riga invisibile.
+   * L'archiviato invece tiene l'email: la sync lo riusa in silenzio e non
+   * crea doppioni.
    * @param {string} id
    * @param {{actor?: unknown, reason?: unknown}} [context]
    */
@@ -348,12 +387,23 @@ export class ContactService {
     const deletedAt = nowIso();
     const write = {
       kind: 'update', table: 'contacts',
-      values: [{ column: 'deleted_at', value: deletedAt }, { column: 'updated_at', value: deletedAt }],
+      values: [
+        { column: 'deleted_at', value: deletedAt },
+        // Una sola tombstone: via anche l'archivio, se c'era.
+        { column: 'archived_at', value: null },
+        // L'email si libera: la rimappatura interna tiene l'UNIQUE ma
+        // lascia l'indirizzo riusabile (niente email bruciata per sempre).
+        { column: 'email', value: freedEmailFor(current) },
+        { column: 'updated_at', value: deletedAt },
+      ],
       where: [{ column: 'id', op: 'eq', value: id }],
     };
     const entry = {
       actor: context.actor, action: 'contact.deleted', entityType: 'contact', entityId: id,
-      data: { id, deletedAt, reason: typeof context.reason === 'string' ? context.reason.slice(0, 280) : null },
+      data: {
+        id, deletedAt, previousEmail: current.email,
+        reason: typeof context.reason === 'string' ? context.reason.slice(0, 280) : null,
+      },
     };
     if (isSyncStorage(this.database)) {
       const sync = this.database.storage.sync;
@@ -371,6 +421,20 @@ export class ContactService {
     await this.events.emit('contact.deleted', reread);
     return reread;
   }
+}
+
+/**
+ * Voce 91c92940274c (review P1 su #1077): l'indirizzo di un contatto
+ * eliminato torna riusabile. La rimappatura interna tiene NOT NULL +
+ * UNIQUE ma non collide mai con un indirizzo vero (l'id la rende unica).
+ * @param {{id: string, email: string}} contact
+ */
+function freedEmailFor(contact) {
+  const raw = String(contact.email ?? '');
+  const at = raw.lastIndexOf('@');
+  const tag = `+deleted-${String(contact.id).slice(0, 8)}`;
+  if (at > 0 && at < raw.length - 1) return `${raw.slice(0, at)}${tag}${raw.slice(at)}`;
+  return `${raw}${tag}@deleted.invalid`;
 }
 
 /** The ceiling of one search scan: a fixed bound, never the whole table. */
