@@ -498,7 +498,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   // never hidden. The card keeps `display` in the chosen currency (CSV and
   // every reader unchanged) and gains `also`: the same value in each other
   // currency, summed on its own (never converted), or null.
-  const otherOpen = otherCurrencies.map((code) => ({
+  // Review Muse #1108 (P2): a stored code the formatter does not know
+  // (opportunity currency is free text) never breaks the dashboard — it is
+  // left out of `also`, like it was before.
+  const alsoCurrencies = otherCurrencies.filter((code) => isSupportedCurrency(code));
+  const otherOpen = alsoCurrencies.map((code) => ({
     code,
     ...sumRows(byStageRows, (row) => row['opportunity.currency'] === code && isOpenValue(row['opportunity.stage'])),
   })).filter((entry) => entry.count > 0);
@@ -525,7 +529,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   const isOpen = (/** @type {Record<string, any>} */ row) => isOpenValue(row['opportunity.stage']);
   const openInPeriod = sumRows(dated, (row) => isOpen(row) && inPeriod(row));
   const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && closedInPeriod(row));
-  const otherWonInPeriod = otherCurrencies.map((code) => ({
+  const otherWonInPeriod = alsoCurrencies.map((code) => ({
     code,
     ...sumRows(scheduleRows, (row) => row['opportunity.currency'] === code
       && isWonValue(row['opportunity.stage']) && closedInPeriod(row)),

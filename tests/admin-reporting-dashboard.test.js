@@ -851,3 +851,11 @@ test('restyle 54b9a2a2706f: il valore aperto si legge «€ + USD», mai nascost
   assert.ok(!text.includes('Solo EUR mostrati'), text);
   assert.ok(text.includes('Valore aperto e vinte contano anche USD'), text);
 });
+
+test('review Muse #1108: il conteggio segue il valore — «· 1 in altre valute»', async () => {
+  const kpis = MODEL.kpis.map((kpi) => (kpi.id === 'open-value' ? { ...kpi, also: { display: '30 USD', count: 1 } } : kpi));
+  const { mount, view } = harness({ dashboard: { ...MODEL, kpis } });
+  await view.renderReporting();
+  const spans = mount.findAll('span').map((node) => node.textContent);
+  assert.ok(spans.includes('6 preventivi aperti · 1 in altre valute'), spans.join(' | '));
+});

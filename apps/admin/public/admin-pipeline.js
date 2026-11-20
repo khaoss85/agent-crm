@@ -1617,7 +1617,7 @@ export function createPipelineBoard(deps) {
     const openText = [...openOff.entries()].sort().map(([currency, total]) => formatAmount(total, currency)).join(' + ');
     const toggle = el(doc, 'button', {
       class: 'link-button pipeline-off-toggle',
-      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline${openText === '' ? '' : ` · ${openText} aperti`}`,
+      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline${openText === '' ? '' : ` · ${truncated ? 'almeno ' : ''}${openText} aperti`}`,
       attrs: { type: 'button', 'data-action': 'show-off-pipeline', 'aria-expanded': 'false' },
     });
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });

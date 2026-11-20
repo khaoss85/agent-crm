@@ -568,7 +568,10 @@ export function createReportingView(deps) {
       // header — the other currencies are never hidden behind a note.
       const also = typeof kpi.also?.display === 'string' && kpi.also.display !== '' ? kpi.also.display : null;
       card.appendChild(el(doc, 'strong', { text: also === null ? kpi.display : `${kpi.display} + ${also}` }));
-      card.appendChild(el(doc, 'span', { text: kpi.sub }));
+      // Review Muse #1108 (P2): the count follows the value — never a value
+      // that covers more offers than its line says.
+      const alsoCount = also !== null && Number.isSafeInteger(kpi.also?.count) && kpi.also.count > 0 ? kpi.also.count : 0;
+      card.appendChild(el(doc, 'span', { text: alsoCount > 0 ? `${kpi.sub} · ${alsoCount} in altre valute` : kpi.sub }));
       grid.appendChild(card);
     }
     section.appendChild(grid);

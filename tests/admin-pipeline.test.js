@@ -1939,3 +1939,15 @@ test('restyle e47da0d6655e: il richiamo «altre pipeline» dice il valore aperto
   assert.equal(toggle.textContent, `3 offerte di altre pipeline · ${formatAmount(1500, 'EUR')} + ${formatAmount(3000, 'USD')} aperti`);
   assert.ok((toggle.getAttribute('class') ?? '').includes('pipeline-off-toggle'), 'a visible chip, not a bare link');
 });
+
+test('review Muse #1108: con la lettura troncata anche il valore fuori pipeline dice «almeno»', async () => {
+  const records = [];
+  for (let index = 0; index < 200; index += 1) records.push(record(`b${index}`, 'demo'));
+  records.push({ ...record('x', 'demo'), pipelineKey: null, pipelineStage: null, stage: 'proposal', valueCents: 1500, currency: 'EUR' });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createPipelineBoard({ doc, mount, client: stubClient(records) }).renderBoard('b2b-sales');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the off-board chip is there');
+  assert.match(toggle.textContent, /^almeno .* · almeno .+ aperti$/);
+});
