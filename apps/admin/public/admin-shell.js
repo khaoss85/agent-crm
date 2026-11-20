@@ -5,6 +5,7 @@ import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
 import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { buildTeamRows, duplicateTeamHints } from './admin-labels.js'; // backlog:6563edf41aab (d): the Impostazioni count reads the same team rows the Spazi view paints.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -246,6 +247,41 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
 }
 
 /**
+ * Count the possible team duplicates the Spazi e accessi screen paints for
+ * the same roster (`GET /api/spine/memberships`): the same painted rows
+ * (`buildTeamRows`) through the same hints (`duplicateTeamHints`), so the
+ * Impostazioni count and the screen never disagree. A failed or shapeless
+ * read counts 0 instead of failing the badge — the screen shows its own
+ * honest note for that half.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @returns {Promise<number>}
+ */
+export async function loadTeamDuplicateCount(client) {
+  try {
+    const membersRead = await client.request('/api/spine/memberships');
+    if (!Array.isArray(membersRead?.items)) {
+      try {
+        console.warn('bo-shell team count unreadable: shapeless memberships');
+      } catch {
+        // Logging must never break the badge read.
+      }
+      return 0;
+    }
+    return duplicateTeamHints(buildTeamRows(membersRead.items)).length;
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name is logged — never record bodies,
+    // cookies or personal data here.
+    try {
+      console.warn('bo-shell team count unreadable:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return 0;
+  }
+}
+
+/**
  * Read the real fix count for the badge. Returns null (unknown) when the
  * customer-data package is not composed or a read fails: an unknown count
  * must never light the badge, and it must never render as "none" either.
@@ -254,6 +290,11 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
  * read from the same activity payload); a failed or uncomposed sync read
  * keeps the quality count instead of failing the badge — the screen shows
  * its own honest note for that half.
+ * The team is one per organization, not per space, so the count always
+ * adds the possible team duplicates the Spazi e accessi screen paints
+ * (backlog:6563edf41aab): the same roster, the same rows, the same hints.
+ * A failed or shapeless team read keeps the base count instead of failing
+ * the badge — the screen shows its own honest note for that half.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ spaceId?: unknown }} [options]
  * @returns {Promise<number | null>}
@@ -265,7 +306,8 @@ export async function loadFixCount(client, options = {}) {
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
-    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
+    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items })
+      + await loadTeamDuplicateCount(client);
     const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
     if (spaceId === '') return base;
     try {

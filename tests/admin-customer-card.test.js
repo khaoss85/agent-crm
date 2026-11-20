@@ -8,6 +8,7 @@ import {
   mergeLinkedIdentities,
   observedDirections,
   offerStageTargets,
+  passageExpandedText,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   NO_COMPANY_NAME,
   shownCompanyName,
@@ -187,7 +188,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null, companyProfile = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -213,6 +214,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         }
         if (timelineError) throw timelineError;
         return timeline;
+      }
+      if (path.startsWith('/api/customer-data/profile/company/')) {
+        if (!companyProfile) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return companyProfile;
       }
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profileError) throw profileError;
@@ -2215,17 +2220,36 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer links the company card, never another customer offer', async () => {
+  // Voce 4ec1fe6d (supervisore 17/11, supersedes the hidden card): c1 has no
+  // own offer but is linked to co1, so the offer card links the company card
+  // instead of hiding. The anti-leak half of this test stays: no offer row
+  // from anywhere is ever shown here.
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
       opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
     },
+    companyProfile: {
+      customerProfileContract: 1,
+      subject: { resource: 'company', id: 'co1' },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
   }));
   const text = mount.textContent;
   const titles = mount.findAll('h4').map((node) => node.textContent);
-  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(titles.includes('Offerta'), 'the offer card links the company offers');
+  assert.ok(text.includes('Palestra Esempio'), 'the card names the linked company');
+  const offerSection = mount.findAll('section').find((node) => (
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-card-offer')
+  ));
+  const link = offerSection?.findAll('a')[0] ?? null;
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'the link opens the company card');
   assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
 });
@@ -4019,6 +4043,30 @@ test('message text reads cleanly and a long one folds behind «Mostra tutto»', 
   more.dispatch('click');
   assert.equal(body.getAttribute('data-folded'), 'false');
   assert.equal(more.textContent, 'Mostra meno');
+});
+
+// Voce 0c24dc5b88b2: an expanded mail kept only the body and lost its
+// subject (live 18/11, Lia Marroni, mail del 14/11 «Certificato medico per
+// la prova (Prova E2E)»). The open mail reads subject and body.
+test('an expanded mail keeps its subject above the full body', async () => {
+  const subject = 'Certificato medico per la prova (Prova E2E)';
+  const bodyText = `Buongiorno, in allegato il certificato medico per la prova. ${'Resto del referto. '.repeat(20)}`;
+  const items = [{ entry: 'message', id: 'mail1', channel: 'email', direction: 'inbound', sync: 'received', subject, body: bodyText, remoteHandle: 'lia.marroni@esempio.it', occurredAt: '2026-11-14T10:00:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const body = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-entry-body');
+  assert.ok(body.textContent.includes(subject), 'the closed line names the subject');
+  const more = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'entry-expand');
+  assert.ok(more, 'a long mail folds behind «Mostra tutto»');
+  assert.equal(more.textContent, 'Mostra tutto');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'false');
+  assert.ok(body.textContent.includes(subject), 'the open mail keeps the subject');
+  assert.ok(body.textContent.includes('Resto del referto.'), 'the open mail reads the full body');
+  assert.equal(body.textContent, passageExpandedText(items[0]), 'the open mail reads the expanded passage');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'true');
+  assert.equal(more.textContent, 'Mostra tutto');
+  assert.ok(body.textContent.includes(subject), 'folding back keeps the subject line');
 });
 
 test('Annulla on Dettagli restores the card in place, without re-reading the scheda', async () => {
