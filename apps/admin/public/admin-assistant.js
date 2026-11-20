@@ -2100,11 +2100,15 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     for (const read of trace.reads) {
       if (!read || typeof read.target !== 'string') continue;
       const bound = typeof read.limit === 'number' ? ` (limite ${read.limit})` : '';
+      const label = read.target === 'space-permissions/effective'
+        ? 'gli interruttori AI di questo spazio'
+        : read.target;
+      const rowsText = read.rows === 1 ? '1 riga letta' : `${read.rows} righe lette`;
       const text = read.status === 'ok'
-        ? `${read.target}: ${read.rows} righe lette${bound}`
+        ? `${label}: ${rowsText}${bound}`
         : read.status === 'invalid'
-          ? `${read.target}: risposta non valida, ignorata`
-          : `${read.target}: non leggibile in questo spazio`;
+          ? `${label}: risposta non valida, ignorata`
+          : `${label}: non leggibile in questo spazio`;
       const item = el(doc, 'li', 'bo-assistant-trace-read', text);
       list.appendChild(item);
     }
