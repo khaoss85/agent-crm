@@ -364,3 +364,41 @@ test('backlog:0a980182918f: an offer row names its customer like the Pipeline ca
   assert.ok(row.textContent.includes('Giulia Bianchi'));
   assert.ok(!s.list().textContent.includes('Senza azienda'));
 });
+
+// ---- backlog:bb3dbbd37b96 --------------------------------------------
+
+test('backlog:bb3dbbd37b96: a question asks first — Enter hands it to the assistant, never to a customer', async () => {
+  const s = shell();
+  await s.type('Cosa può fare l’AI senza chiedermi?');
+  const rows = s.options();
+  assert.ok(rows.length > 0, 'the menu opens for a question');
+  assert.equal(rows[0].getAttribute('data-kind'), 'ask', 'the first row (Enter) is «Chiedi all’assistente»');
+  assert.equal(rows[0].textContent.includes('Chiedi all’assistente: «Cosa può fare l’AI senza chiedermi?»'), true);
+  assert.ok(!rows.some((row) => row.getAttribute('data-kind') === 'customer'), 'no customer row for a question');
+  assert.deepEqual(s.seen.customerQueries, [], 'a question never launches the Clienti read with the phrase');
+  s.key('Enter');
+  assert.deepEqual(s.seen.asked, ['Cosa può fare l’AI senza chiedermi?'], 'Enter asks the assistant');
+  assert.deepEqual(s.seen.navigate, [], 'Enter opens no customer');
+});
+
+test('backlog:bb3dbbd37b96: buildCommandRows keeps the ask row first for a question even with customers around', async () => {
+  const { buildCommandRows, isQuestionText } = await import('../apps/admin/public/admin-cmdk.js');
+  assert.equal(isQuestionText('Cosa può fare l’AI senza chiedermi?'), true);
+  assert.equal(isQuestionText('Ada'), false);
+  assert.equal(isQuestionText('  Quanti lead oggi?  '), true);
+  const rows = buildCommandRows({
+    query: 'Cosa può fare l’AI senza chiedermi?',
+    pages: [],
+    customers: [{ resource: 'contact', id: 'c-9', name: 'Cosa può fare', email: 'x@y.zz' }],
+    offers: [],
+  });
+  assert.equal(rows[0].kind, 'ask');
+  assert.ok(!rows.some((row) => row.kind === 'customer'), 'customers passed in are not shown for a question');
+  const plain = buildCommandRows({
+    query: 'Ada',
+    pages: [],
+    customers: [{ resource: 'contact', id: 'c-1', name: 'Ada Lovelace', email: 'ada@example.it' }],
+    offers: [],
+  });
+  assert.equal(plain[plain.length - 1].kind, 'ask', 'a name still finds first, asks last');
+});

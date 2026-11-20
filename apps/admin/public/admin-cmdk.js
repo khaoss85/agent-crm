@@ -7,8 +7,9 @@ import { customerOf } from './admin-pipeline.js';
 // lists the matching /bo pages, customers and offers at once, from local
 // data (the shell's own voices) and from reads the /bo already makes (the
 // Clienti list with `q`, the Pipeline offers read). The AI stays one
-// explicit row at the bottom, «Chiedi all'assistente: …», never the default
-// path for a name. Model: Linear / Attio command palette.
+// explicit row, «Chiedi all'assistente: …», last for a name — but first
+// for a question (backlog:bb3dbbd37b96), which never reads the customers.
+// Model: Linear / Attio command palette.
 //
 // Conventions follow admin-shell.js: the row builders are pure and
 // DOM-free; the menu renders with createElement + textContent only, so a
@@ -27,6 +28,17 @@ export const COMMAND_AGENTS_TTL_MS = 60_000;
 
 const RECORD_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * A question is a text that ends with «?»: it goes to the assistant, never
+ * to the Clienti read (backlog:bb3dbbd37b96 — «Cosa può fare l'AI senza
+ * chiedermi?» must ask, not search customers for the phrase).
+ * @param {unknown} value
+ */
+export function isQuestionText(value) {
+  if (typeof value !== 'string') return false;
+  return value.trim().endsWith('?');
+}
 
 /**
  * Lowercase, accents off, spaces collapsed: «Attività» matches «attivita».
@@ -138,10 +150,13 @@ export async function readCommandAgents(request, spaceId) {
 
 /**
  * The palette rows for one query, in display order: Pagine, Clienti,
- * Offerte, then the explicit ask row. A query starting with «@» talks to an
- * agent (admin-assistant.js): the space's matching agents first (backlog
- * 1f7cb20d3c30 — the hand-written agent suggests like the catalogue ones),
- * then the ask row, which hands the whole line to the assistant.
+ * Offerte, then the explicit ask row — except a question (backlog
+ * bb3dbbd37b96), where the ask row comes first and the Clienti read is
+ * skipped: Enter asks the assistant instead of opening a customer. A query
+ * starting with «@» talks to an agent (admin-assistant.js): the space's
+ * matching agents first (backlog 1f7cb20d3c30 — the hand-written agent
+ * suggests like the catalogue ones), then the ask row, which hands the
+ * whole line to the assistant.
  * @param {{ query: unknown, pages?: Array<{ label: string, href: string, sub?: string }>, customers?: Array<any> | null, offers?: Array<any> | null, agents?: Array<any> | null }} input
  * @returns {Array<{ kind: string, group: string, label: string, sub: string, href: string, text?: string }>}
  */
@@ -149,6 +164,36 @@ export function buildCommandRows({ query, pages = [], customers = null, offers =
   const text = typeof query === 'string' ? query.trim() : '';
   if (text === '') return [];
   const ask = { kind: 'ask', group: '', label: `Chiedi all’assistente: «${text}»`, sub: '', href: '', text };
+  if (isQuestionText(text)) {
+    const rows = [ask];
+    const folded = foldText(text);
+    const seen = new Set();
+    const ranked = pages
+      .map((page) => ({ page, rank: matchRank(page?.label, folded) }))
+      .filter((entry) => entry.rank > 0 && typeof entry.page.href === 'string' && entry.page.href.startsWith('#/'))
+      .sort((a, b) => b.rank - a.rank);
+    for (const { page } of ranked) {
+      if (seen.has(page.label)) continue;
+      seen.add(page.label);
+      rows.push({ kind: 'page', group: 'Pagine', label: page.label, sub: page.sub ?? '', href: page.href });
+      if (rows.length >= COMMAND_GROUP_LIMIT + 1) break;
+    }
+    if (folded.length >= COMMAND_MIN_CHARS) {
+      const offerRows = (Array.isArray(offers) ? offers : [])
+        .map((item) => {
+          const row = offerCommand(item);
+          if (row === null) return null;
+          const rank = Math.max(matchRank(item.name, folded), matchRank(item.contactName, folded),
+            matchRank(customerOf({ companyName: item.companyName }), folded));
+          return rank > 0 ? { row, rank } : null;
+        })
+        .filter((entry) => entry !== null)
+        .sort((a, b) => /** @type {any} */ (b).rank - /** @type {any} */ (a).rank)
+        .slice(0, COMMAND_GROUP_LIMIT);
+      for (const entry of offerRows) rows.push({ .../** @type {any} */ (entry).row, group: 'Offerte' });
+    }
+    return rows;
+  }
   if (text.startsWith('@')) {
     const folded = foldText(text.slice(1));
     const ranked = [];
@@ -314,18 +359,23 @@ export function createCommandMenu({
       if (row.kind === 'ask') {
         const remote = state.query.trim().length >= COMMAND_MIN_CHARS && !state.query.trim().startsWith('@');
         const atQuery = state.query.trim().startsWith('@');
+        // backlog:bb3dbbd37b96: a question runs no Clienti read, so the
+        // waiting and empty lines never name it; the ask row is its answer.
+        const question = isQuestionText(state.query.trim());
         if (atQuery && state.agentsLoading) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco gli agenti…'));
         } else if (atQuery && state.agentsFailed) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status bo-cmdk-failed', 'Non riesco a leggere gli agenti adesso: premi Invio per chiedere comunque all’assistente.'));
-        } else if (remote && (state.customersLoading || state.offersLoading)) {
+        } else if (remote && question && state.offersLoading) {
+          list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco tra le offerte…'));
+        } else if (remote && !question && (state.customersLoading || state.offersLoading)) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco tra clienti e offerte…'));
         } else if (remote && (state.customersFailed || state.offersFailed)) {
           const what = state.customersFailed && state.offersFailed
             ? 'clienti e offerte'
             : (state.customersFailed ? 'i clienti' : 'le offerte');
           list.appendChild(el(doc, 'p', 'bo-cmdk-status bo-cmdk-failed', `Non riesco a leggere ${what} adesso: riprova tra poco.`));
-        } else if (remote && current.length === 1) {
+        } else if (remote && !question && current.length === 1) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Nessun cliente, offerta o pagina con queste parole.'));
         }
       } else if (row.group !== group) {
@@ -507,7 +557,9 @@ export function createCommandMenu({
     const query = state.query.trim();
     const remote = query.length >= COMMAND_MIN_CHARS && !query.startsWith('@');
     const atQuery = query.startsWith('@');
-    if (remote && typeof search?.customers === 'function') {
+    // backlog:bb3dbbd37b96: a question never launches the Clienti read —
+    // the phrase goes to the assistant, not to the customers search.
+    if (remote && !isQuestionText(query) && typeof search?.customers === 'function') {
       state.customersLoading = true;
       token += 1;
       timer = schedule(() => {
