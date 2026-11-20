@@ -588,7 +588,7 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.ask.popBottom <= probe.ask.innerHeight && probe.ask.popRight <= probe.ask.innerWidth, `the popover with the question stays on screen: ${JSON.stringify(probe.ask)}`);
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.ok(probe.form && probe.form.inRail === false && probe.form.forms === 1, `one form, in the popover (${JSON.stringify(probe.form)})`);
-  assert.deepEqual(probe.form.labels, ['Cliente', 'Persona del team', 'Servizio', 'Prezzo (€)', 'Giorno', 'Inizio', 'Fine', 'Note'], 'every field carries its label');
+  assert.deepEqual(probe.form.labels, ['Cliente', 'Persona del team', 'Servizio', 'Prezzo (€)', 'Giorno', 'Inizio', 'Fine', 'Luogo', 'Link riunione', 'Note'], 'every field carries its label');
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
   assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
   assert.equal(probe.outside, 1, 'the out-of-hours slot is named under the grid (fetta 8)');
