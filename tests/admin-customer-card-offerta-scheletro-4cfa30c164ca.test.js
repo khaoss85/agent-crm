@@ -14,7 +14,8 @@
  * Contratto deciso (main, backlog:9b28b3bc6003, #992 — questa PR lo
  * adotta dopo il merge di main, al posto del blank di c4e8586e): a profilo
  * noto e vuoto, anche con lo schema ancora in volo, niente scheletro e
- * niente riquadro. Aggiornato dalla ANSWER del supervisore (18/11 16:1xZ,
+ * niente riquadro — salvo il link alle offerte quando l'azienda collegata
+ * HA offerte (voce 4ec1fe6d, merge 19/11). Aggiornato dalla ANSWER del supervisore (18/11 16:1xZ,
  * NON PASSA con #1014 su Ada Rossi): a PRIMA visita lo scheletro non si
  * disegna nemmeno mentre il profilo è in volo — resta solo quando la
  * lettura precedente dello stesso cliente ne aveva una (backlog:4cfa30c164ca,
@@ -111,6 +112,20 @@ const EMPTY_PROFILE = {
   limitations: [],
 };
 
+const COMPANY_PROFILE_WITH_OFFER = {
+  customerProfileContract: 1,
+  subject: { resource: 'company', id: 'co-presti' },
+  identity: {
+    company: { id: 'co-presti', name: 'Presti Group' },
+    contact: null,
+  },
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+  },
+  quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+};
+
 const flush = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
 };
@@ -133,6 +148,7 @@ function deferredClient() {
       if ((options?.method ?? 'GET') !== 'GET') return {};
       if (path.startsWith('/api/customer-hub/card/')) return gate('card').promise;
       if (path.startsWith('/api/customer-hub/timeline/')) return gate('timeline').promise;
+      if (path.startsWith('/api/customer-data/profile/company/')) return COMPANY_PROFILE_WITH_OFFER;
       if (path.startsWith('/api/customer-data/profile/')) return gate('profile').promise;
       if (path === '/api/schema') return gate('schema').promise;
       if (path.startsWith('/api/customer-data/enriched/')) return { customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c-ada' }, linked: false, optedOut: null, items: [] };
@@ -166,15 +182,19 @@ test('4cfa30c164ca: a profilo noto e vuoto, nessuno scheletro Offerta mentre res
   // Contratto nuovo (ANSWER supervisore 18/11 su #1014): a prima visita
   // nessuno scheletro mentre il profilo è in volo, nemmeno con carta nota.
   assert.equal(offerBoxes(mount).length, 0, 'a prima visita, profilo in volo: nessuno scheletro Offerta');
-  // Il profilo arriva, vuoto; lo schema resta in volo: il NON PASSA.
+  // Il profilo arriva, vuoto di offerte proprie ma con azienda collegata
+  // (voce 4ec1fe6d): lo schema resta in volo, il riquadro vero con il link
+  // azienda dipinge a profilo noto — nessun fantasma prima.
   client.gates.get('profile').release.resolve(EMPTY_PROFILE);
   await flush(5);
   assert.ok(client.gates.has('schema'), 'lo schema è stato chiesto ed è ancora in volo');
-  assert.equal(offerBoxes(mount).length, 0, 'nessun fantasma Offerta a profilo noto e vuoto');
+  assert.equal(offerBoxes(mount).length, 1, 'a profilo noto il riquadro vero, non un fantasma');
+  assert.ok(!isSkeleton(offerBoxes(mount)[0]), 'il riquadro è contenuto finale, non scheletro');
+  assert.ok(offerBoxes(mount)[0].textContent.includes('Presti Group'), 'il riquadro collega l’azienda');
   client.gates.get('schema').release.resolve({ pipelines: [] });
   await shown;
   await flush(3);
-  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta per chi non ha offerte');
+  assert.equal(offerBoxes(mount).length, 1, 'resta il link alle offerte azienda, non sparisce');
 });
 
 test('4cfa30c164ca: con un’offerta vera il segnaposto diventa il riquadro a profilo arrivato', async () => {

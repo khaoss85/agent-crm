@@ -764,6 +764,25 @@ export function passageFullText(item) {
 }
 
 /**
+ * The whole passage behind «Mostra tutto», like Gmail: the subject stays on
+ * top and the full body follows (voce 0c24dc5b88b2 — an expanded mail used
+ * to lose its subject and read body-only). Same subject rule as the preview
+ * line: a body that opens with its own subject does not repeat it. '' when
+ * there is nothing to show.
+ * @param {{ body?: unknown, subject?: unknown }} item
+ */
+export function passageExpandedText(item) {
+  const subject = cleanPreviewText(item?.subject);
+  const full = passageFullText(item);
+  if (subject === '') return full;
+  if (full === '') return subject;
+  const repeats = full.toLowerCase().startsWith(subject.toLowerCase())
+    && (full.length === subject.length || /[\s|•·:,;.!?–—-]/.test(full[subject.length]));
+  const rest = repeats ? full.slice(subject.length).replace(/^[\s|•·:,;.!?–—-]+/, '') : full;
+  return rest === '' ? subject : `${subject} — ${rest}`;
+}
+
+/**
  * One passage per real message (Dan 10/11): the same mail synced several
  * times — same channel, direction, sender, subject, text and minute — reads
  * once in the cronologia. Notes, calls and attachments are never folded; the first copy
@@ -1565,6 +1584,11 @@ export function createCustomerCardView(deps) {
       const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
         ? keptDraftWrap.getAttribute('data-structured-for') : null;
       if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      // Review #1065 (P2): the draft opened by «Scrivi tu» or by the AI-off
+      // answer stays open through a repaint, empty fields included.
+      if (typeof keptDraftWrap?.getAttribute === 'function' && keptDraftWrap.getAttribute('hidden') === null) {
+        keptVoice.draftShown = true;
+      }
       drafts.voice = keptVoice;
     }
     return Object.keys(drafts).length > 0 ? drafts : null;
@@ -1623,7 +1647,8 @@ export function createCustomerCardView(deps) {
     const spaceId = activeSpaceId();
     const loaded = {
       card: null, cardError: null, timeline: null, timelineError: null,
-      profile: null, profileError: null, enrichment: null, enrichmentError: null,
+      profile: null, profileError: null, companyProfile: null,
+      enrichment: null, enrichmentError: null,
       calls: null, callsError: null, fieldDefs: null, fieldDefsError: null,
       fieldValues: null, fieldValuesError: null, pipelines: [],
       services: null, servicesError: null,
@@ -1700,7 +1725,25 @@ export function createCustomerCardView(deps) {
     // catches), so this await always runs: a failed card still reads the
     // sections behind it, exactly like the single wave did before.
     const wave2 = wave2gate.then(() => Promise.all([
-      PART_READS.profile(encoded).then((read) => take('profile', read)),
+      PART_READS.profile(encoded).then((read) => {
+        take('profile', read);
+        return read;
+      }).then((read) => {
+        // Voce 4ec1fe6d (merge con main 19/11): il link alle offerte
+        // dell'azienda si dipinge solo se l'azienda ha offerte — la
+        // lettura segue il profilo e solo per una scheda persona senza
+        // offerte proprie. Fallisce chiusa (null): nessun link, mai un
+        // riquadro fantasma (voce 4cfa30c164ca).
+        const person = nullOn404(read).value;
+        const company = person?.identity?.company;
+        const companyId = typeof company?.id === 'string' && company.id !== '' ? company.id : null;
+        if (resource !== 'contact' || read.error || commercialFirst(person) !== null || companyId === null) {
+          take('companyProfile', { value: null, error: null });
+          return;
+        }
+        return settle(() => client.request(`/api/customer-data/profile/company/${encodeURIComponent(companyId)}`))
+          .then((companyRead) => take('companyProfile', companyRead));
+      }),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
@@ -2020,15 +2063,20 @@ export function createCustomerCardView(deps) {
    * the card re-reads and the usual «Chiama» flow starts on the number the
    * server holds — the CRM call route dials only that one.
    */
-  function openNumberWindow(card, navCtx, numbers) {
+  function openNumberWindow(card, navCtx, numbers, options = {}) {
+    // backlog:7eb7dc663bbd: from the composer the window only saves the
+    // number and re-reads the card — the call starts only from «Chiama».
+    const callAfterSave = options.callAfterSave !== false;
     closeSchedaWindows();
     openCallNumberPanel({
       doc,
       host: mount,
       customer: typeof card?.name === 'string' ? card.name : null,
       numbers,
+      ...(callAfterSave ? {} : { mode: 'save' }),
       choose: async (number, held) => {
         if (held) {
+          if (!callAfterSave) return null;
           openCallPanel(card, navCtx, number);
           return null;
         }
@@ -2048,6 +2096,10 @@ export function createCustomerCardView(deps) {
         // number was saving — never repaint this one over it, never call.
         const key = `${navCtx.resource}/${navCtx.id}`;
         if (shownKey !== key) return null;
+        if (!callAfterSave) {
+          await renderCard(navCtx.resource, navCtx.id);
+          return null;
+        }
         // Review #776 (P1): the call starts on the number the operator
         // chose, and only once the re-read card holds that very number.
         pendingCallAfterSave = { key, number };
@@ -2901,7 +2953,13 @@ export function createCustomerCardView(deps) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
         chip.setAttribute('aria-disabled', 'true');
-        chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
+        // backlog:7eb7dc663bbd: a phone channel without a number names the
+        // missing number — the operator may come from «WhatsApp» and must
+        // read why it is missing, not a bare «no address».
+        const needsNumber = entry.channel === 'whatsapp' || entry.channel === 'sms';
+        chip.setAttribute('title', needsNumber
+          ? `${entry.label}: il cliente non ha un numero`
+          : `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
@@ -2927,6 +2985,25 @@ export function createCustomerCardView(deps) {
       const preferred = radios.find((row) => row.entry.channel === preferChannel
         && row.entry.recipient !== null && row.entry.connected === true);
       if (preferred) select(preferred.entry);
+    }
+    // backlog:7eb7dc663bbd: the customer holds no phone number — the
+    // composer says WhatsApp is missing for that reason, with a way to add
+    // one. The number window saves through POST /api/customer-hub/phone
+    // (the «Aggiungi telefono» write) and only re-reads the card — no call
+    // starts from here (openNumberWindow's callAfterSave). The draft
+    // survives the window through composerDrafts, like through ✕.
+    const missingPhone = channels.find((entry) => (entry.channel === 'whatsapp' || entry.channel === 'sms')
+      && entry.recipient === null) ?? null;
+    if (missingPhone !== null) {
+      const line = el('span', undefined, `${missingPhone.label} manca perché il cliente non ha un numero. `);
+      const add = el('button', 'bo-composer-add-phone', 'Aggiungi un numero');
+      add.setAttribute('type', 'button');
+      add.setAttribute('data-action', 'composer-add-phone');
+      add.addEventListener('click', () => {
+        openNumberWindow(card, navCtx, [], { callAfterSave: false });
+      });
+      line.appendChild(add);
+      offLine.appendChild(line);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -3720,15 +3797,18 @@ export function createCustomerCardView(deps) {
       const row = el('p', 'bo-scheda-fact');
       row.appendChild(el('span', 'bo-scheda-fact-label', def?.label ?? def?.key ?? 'campo'));
       const shown = formatCustomValue(def, byKey.get(def?.key)?.value ?? null);
-      row.appendChild(el('span', undefined, shown ?? '—'));
-      const edit = el('button', undefined, 'Modifica');
+      // Restyle 19/11 (7de82665ac2a): the value itself opens the edit — no
+      // «Modifica» button per field; an empty field reads «Aggiungi».
+      const label = def?.label ?? def?.key ?? 'campo';
+      const edit = el('button', shown == null ? 'bo-campo-value is-empty' : 'bo-campo-value', shown ?? 'Aggiungi');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', `edit-field:${def?.key ?? ''}`);
+      edit.setAttribute('aria-label', shown == null ? `Aggiungi ${label}` : `Modifica ${label}: ${shown}`);
       edit.addEventListener('click', () => renderFieldForm(box, ctx, def));
       row.appendChild(edit);
       box.appendChild(row);
     }
-    const add = el('button', undefined, '+ Aggiungi campo');
+    const add = el('button', 'bo-campo-add-btn', '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
     const openAdd = (draft = null) => {
@@ -4055,6 +4135,11 @@ export function createCustomerCardView(deps) {
       : runKey !== null ? enrichmentProposals.get(runKey) ?? [] : [];
     if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
+      // Restyle 19/11 (7de82665ac2a): the empty state says what the AI does.
+      if (typeof extract === 'function') {
+        box.appendChild(el('p', 'bo-muted bo-scheda-enrich-hint',
+          'Con «Aggiorna» l’AI legge i messaggi di questo cliente e propone nome, ruolo, azienda e telefono, ognuno con la sua fonte.'));
+      }
       return;
     }
     for (const item of items) {
@@ -4211,6 +4296,12 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+    // Restyle 19/11 (7de82665ac2a): the note and the dictation sit on top of
+    // the cronologia, where the new note lands — no scrolling past every
+    // row to write one.
+    const composerSlot = noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string'
+      ? el('div', 'bo-scheda-note-top') : null;
+    if (composerSlot !== null) box.appendChild(composerSlot);
     // backlog:5346ab531538: a cancelled appointment reads in the cronologia
     // as its own row, under «Tutti» only (it has no channel), at the moment
     // it was cancelled — the slot left the calendar grid, not the history.
@@ -4655,13 +4746,13 @@ export function createCustomerCardView(deps) {
           // always clean. Never an empty line: «(nessun testo)» unless an
           // attachment is what the passage carries.
           const line = passagePreview(item);
-          const full = passageFullText(item);
+          const expanded = passageExpandedText(item);
           const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
           if (line !== '' || !hasAttachment) {
             const shown = line !== '' ? line : PASSAGE_NO_TEXT;
             const bodyNode = el('p', 'bo-scheda-entry-body', shown);
             bubble.appendChild(bodyNode);
-            if (full !== '' && full !== shown) {
+            if (expanded !== '' && expanded !== shown) {
               bodyNode.setAttribute('data-folded', 'true');
               const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
               more.setAttribute('type', 'button');
@@ -4669,7 +4760,7 @@ export function createCustomerCardView(deps) {
               more.addEventListener('click', () => {
                 const folded = bodyNode.getAttribute('data-folded') === 'true';
                 bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
-                bodyNode.textContent = folded ? full : shown;
+                bodyNode.textContent = folded ? expanded : shown;
                 more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
               });
               bubble.appendChild(more);
@@ -4865,7 +4956,7 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(noteError);
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
-      box.appendChild(noteForm);
+      composerSlot.appendChild(noteForm);
       // Voce 5036bc435465: «Detta nota vocale» — after a call from any
       // phone (CRM-logged or tel: fallback) the operator dictates how it
       // went. The browser transcribes on the device (the `dictate` seam,
@@ -4880,8 +4971,13 @@ export function createCustomerCardView(deps) {
       // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
       // still be saved as-is.
       const voiceWrap = el('div', 'bo-scheda-voice-note');
-      const voiceToggle = el('button', undefined, 'Detta nota vocale');
+      // Restyle 19/11 (Dan, foto Presti): the panel is one card — a
+      // composer with the microphone and the AI action in its bar, the
+      // three draft fields only once there is a draft, one dark «Salva».
+      // Texts and data-action anchors are unchanged.
+      const voiceToggle = el('button', 'ui-btn ui-btn-secondary bo-voice-toggle', 'Detta nota vocale');
       voiceToggle.setAttribute('type', 'button');
+      voiceToggle.setAttribute('aria-expanded', 'false');
       voiceToggle.setAttribute('data-action', 'dictate-note');
       voiceWrap.appendChild(voiceToggle);
       const voicePanel = el('div', 'bo-scheda-voice-panel');
@@ -4906,6 +5002,8 @@ export function createCustomerCardView(deps) {
       let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
       let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
       let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      // Review #1065 (P2): whether the draft fields were open, carried like the words.
+      let draftShownCarried = keptVoice?.draftShown === true;
       const stopDictation = () => {
         try {
           voiceDictation?.stop?.();
@@ -4926,14 +5024,22 @@ export function createCustomerCardView(deps) {
         if (curPassi) carriedPassi = String(curPassi.value ?? '');
       };
       const buildVoicePanel = () => {
-        voicePanel.appendChild(el('p', 'bo-muted',
+        const voiceHead = el('div', 'bo-voice-head');
+        voiceHead.appendChild(el('p', 'bo-voice-kicker', 'Nota della chiamata'));
+        voiceHead.appendChild(el('p', 'bo-muted bo-voice-privacy',
           'Dopo la chiamata detta com’è andata: la trascrizione resta su questo dispositivo finché non la salvi. L’audio non lascia mai il dispositivo.'));
-        const dictateRow = el('div', 'bo-scheda-form-actions');
-        const dictateButton = el('button', undefined, 'Detta');
+        voicePanel.appendChild(voiceHead);
+        const composer = el('div', 'bo-voice-composer');
+        const voiceBar = el('div', 'bo-voice-bar');
+        const dictateButton = el('button', 'ui-btn ui-btn-secondary bo-voice-mic', 'Detta');
         dictateButton.setAttribute('type', 'button');
         dictateButton.setAttribute('data-action', 'dictate-start');
-        const dictateState = el('p', 'bo-muted', '');
-        const voiceInput = el('textarea', 'bo-scheda-note-input');
+        const dictateState = el('p', 'bo-muted bo-voice-state', '');
+        const setRecording = (on) => {
+          if (on) composer.setAttribute('data-state', 'recording');
+          else composer.removeAttribute('data-state');
+        };
+        const voiceInput = el('textarea', 'bo-scheda-note-input bo-voice-input');
         voiceInput.setAttribute('name', 'voiceNoteText');
         voiceInput.setAttribute('rows', '3');
         voiceInput.setAttribute('aria-label', 'Dettato della chiamata');
@@ -4959,12 +5065,14 @@ export function createCustomerCardView(deps) {
         dictateButton.addEventListener('click', () => {
           if (voiceDictation !== null) {
             stopDictation();
+            setRecording(false);
             dictateButton.textContent = 'Detta';
             dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
             return;
           }
           dictateState.textContent = 'Detto… premi Stop quando hai finito.';
           dictateButton.textContent = 'Stop';
+          setRecording(true);
           try {
             voiceDictation = startDictate(doc, {
               onText: (chunk) => {
@@ -4975,6 +5083,7 @@ export function createCustomerCardView(deps) {
               },
               onEnd: () => {
                 voiceDictation = null;
+                setRecording(false);
                 dictateButton.textContent = 'Detta';
                 if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
                   dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
@@ -4986,22 +5095,47 @@ export function createCustomerCardView(deps) {
           }
           if (voiceDictation === null || typeof voiceDictation?.stop !== 'function') {
             voiceDictation = null;
+            setRecording(false);
             dictateButton.textContent = 'Detta';
             dictateState.textContent = 'Il dettato non è partito: scrivi qui sotto.';
           }
         });
-        dictateRow.appendChild(dictateButton);
-        voicePanel.appendChild(dictateRow);
-        voicePanel.appendChild(dictateState);
-        voicePanel.appendChild(voiceInput);
+        composer.appendChild(voiceInput);
+        voiceBar.appendChild(dictateButton);
+        voiceBar.appendChild(dictateState);
+        composer.appendChild(voiceBar);
+        voicePanel.appendChild(composer);
         const voiceError = el('small', 'field-error', '');
-        const structureButton = el('button', undefined, 'Ordina con l’AI');
+        // Verifica Mac 19/11: «Detta o scrivi prima…» goes as soon as the
+        // operator writes, like the note form's own error.
+        voiceInput.addEventListener('input', () => {
+          if (voiceError.textContent === 'Detta o scrivi prima com’è andata la chiamata.') voiceError.textContent = '';
+        });
+        const structureButton = el('button', 'ui-btn ui-btn-secondary bo-voice-ai', 'Ordina con l’AI');
         structureButton.setAttribute('type', 'button');
         structureButton.setAttribute('data-action', 'structure-voice-note');
         const draftWrap = el('div', 'bo-scheda-voice-draft');
+        // The three fields stay in the DOM (repaint carry, tests by name):
+        // hidden until a draft exists, the AI is off, or the operator asks
+        // to write them by hand.
+        const manualButton = el('button', 'ui-btn ui-btn-secondary bo-voice-manual', 'Scrivi tu riassunto, decisioni e prossimi passi');
+        manualButton.setAttribute('type', 'button');
+        manualButton.setAttribute('data-action', 'voice-draft-manual');
+        const showDraft = (on) => {
+          draftShownCarried = on;
+          if (on) voicePanel.setAttribute('data-step', 'draft');
+          else voicePanel.removeAttribute('data-step');
+          if (on) {
+            draftWrap.removeAttribute('hidden');
+            manualButton.setAttribute('hidden', '');
+          } else {
+            draftWrap.setAttribute('hidden', '');
+            manualButton.removeAttribute('hidden');
+          }
+        };
         const draftField = (name, label, rows) => {
-          const wrap = el('div');
-          const title = el('label', 'bo-scheda-field-label', label);
+          const wrap = el('div', 'bo-voice-draft-field');
+          const title = el('label', 'bo-scheda-field-label bo-voice-draft-label', label);
           title.setAttribute('for', name);
           const field = el('textarea', 'bo-scheda-note-input');
           field.setAttribute('name', name);
@@ -5020,7 +5154,15 @@ export function createCustomerCardView(deps) {
         if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
         if (carriedPassi !== '') passiField.value = carriedPassi;
         if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
-        const saveButton = el('button', undefined, 'Salva in cronologia');
+        showDraft(draftShownCarried || structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
+        manualButton.addEventListener('click', () => {
+          showDraft(true);
+          riassuntoField.focus?.();
+        });
+        // Verifica Mac 19/11 (lente AI-native): before a draft the AI is the
+        // main action and «Salva» stays secondary; once a draft is on screen
+        // «Salva» takes the lead (data-step on the panel, CSS only).
+        const saveButton = el('button', 'ui-btn ui-btn-secondary bo-voice-save', 'Salva in cronologia');
         saveButton.setAttribute('type', 'button');
         saveButton.setAttribute('data-action', 'save-voice-note');
         structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
@@ -5043,6 +5185,7 @@ export function createCustomerCardView(deps) {
             riassuntoField.value = String(draft?.riassunto ?? '');
             decisioniField.value = String(draft?.decisioni ?? '');
             passiField.value = String(draft?.prossimiPassi ?? '');
+            showDraft(true);
             structuredFor = text;
             draftWrap.setAttribute('data-structured-for', text);
             voiceError.textContent = '';
@@ -5050,6 +5193,12 @@ export function createCustomerCardView(deps) {
             const code = typeof error?.code === 'string' ? error.code : '';
             if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
               voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
+              showDraft(true);
+            } else if (Number(error?.status) === 400 || code === 'VALIDATION_ERROR') {
+              // Verifica Mac 19/11 14:57Z: a refused dictation is not a silent
+              // AI — say what the operator can do now, and open the draft.
+              voiceError.textContent = 'L’AI non è riuscita a ordinare questo testo: salvalo così com’è, oppure dividilo tu qui sotto.';
+              showDraft(true);
             } else {
               voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
             }
@@ -5063,9 +5212,12 @@ export function createCustomerCardView(deps) {
           const dictated = String(voiceInput.value ?? '').trim();
           // Without an AI draft the dictated text itself is the note, so the
           // AI-off path still saves — the option said why, it never blocks.
-          const body = riassunto !== '' || decisioni !== '' || passi !== ''
-            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
-            : dictated;
+          // Verifica Mac 19/11: only the parts written land — no empty
+          // «Decisioni:» in the cronologia.
+          const parts = [['Riassunto', riassunto], ['Decisioni', decisioni], ['Prossimi passi', passi]]
+            .filter(([, value]) => value !== '')
+            .map(([label, value]) => `${label}: ${value}`);
+          const body = parts.length > 0 ? parts.join('\n') : dictated;
           if (body === '') {
             voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
             return;
@@ -5099,6 +5251,7 @@ export function createCustomerCardView(deps) {
             carriedDecisioni = '';
             carriedPassi = '';
             draftWrap.removeAttribute('data-structured-for');
+            showDraft(false);
             const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
               (loaded) => withNote(loaded, saved, body));
             toast('Nota aggiunta in cima alla cronologia');
@@ -5111,31 +5264,38 @@ export function createCustomerCardView(deps) {
             noteSaving = false;
           }
         }));
-        voicePanel.appendChild(structureButton);
+        voiceBar.appendChild(structureButton);
         voicePanel.appendChild(voiceError);
         voicePanel.appendChild(draftWrap);
-        voicePanel.appendChild(saveButton);
+        voicePanel.appendChild(manualButton);
+        const voiceFoot = el('div', 'bo-voice-foot');
+        voiceFoot.appendChild(el('p', 'bo-muted bo-voice-foot-hint', 'Va nella cronologia del cliente. Non viene inviata a nessuno.'));
+        voiceFoot.appendChild(saveButton);
+        voicePanel.appendChild(voiceFoot);
       };
       voiceToggle.addEventListener('click', () => {
         if (voiceOpen) {
           stashPanelWords();
           voiceOpen = false;
           voiceToggle.textContent = 'Detta nota vocale';
+          voiceToggle.setAttribute('aria-expanded', 'false');
           while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
           stopDictation();
           return;
         }
         voiceOpen = true;
         voiceToggle.textContent = 'Chiudi dettato';
+        voiceToggle.setAttribute('aria-expanded', 'true');
         while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
         buildVoicePanel();
       });
       if (voiceOpen) {
         voiceToggle.textContent = 'Chiudi dettato';
+        voiceToggle.setAttribute('aria-expanded', 'true');
         buildVoicePanel();
       }
       voiceWrap.appendChild(voicePanel);
-      box.appendChild(voiceWrap);
+      composerSlot.appendChild(voiceWrap);
     }
   }
 
@@ -5205,7 +5365,48 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
-  function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
+  /**
+   * Voce 4ec1fe6d (verifica Mac 13/11 17:49Z): il link alle offerte
+   * dell'azienda collegata per una scheda persona senza offerte proprie.
+   * Il profilo dietro la scheda persona tiene solo i record del contatto
+   * (voce 1e89d516cfc3: un'offerta dell'azienda su ogni scheda persona
+   * mostrerebbe a tre contatti la stessa riga), così l'offerta dell'azienda
+   * si apre dalla scheda dell'azienda — un click, mai una riga inventata
+   * qui. Solo persona con azienda vera (il profilo nasconde già «Senza
+   * azienda» e i segnaposto: identity.company null): id o nome vuoti,
+   * scheda azienda e profilo illeggibile non collegano niente.
+   * @param {any} profile @param {{ resource?: string } | null} offerCtx
+   */
+  /**
+   * Voce 4ec1fe6d (merge con main 19/11, restringe contro 4cfa30c164ca):
+   * l'azienda collegata conta solo se ha offerte da aprire — un link
+   * verso una scheda azienda senza offerte ricreerebbe il riquadro
+   * fantasma che 4cfa30c164ca ha tolto ad Ada Rossi.
+   * @param {any} companyProfile
+   */
+  function companyHasOffers(companyProfile) {
+    for (const section of [companyProfile?.opportunities, companyProfile?.quotes]) {
+      if (section?.available !== true) continue;
+      if (typeof section.count === 'number' && section.count > 0) return true;
+      if (Array.isArray(section.items) && section.items.length > 0) return true;
+    }
+    return false;
+  }
+
+  function companyOfferLink(profile, offerCtx, companyProfile = null) {
+    if (!offerCtx || offerCtx.resource !== 'contact') return null;
+    if (!companyHasOffers(companyProfile)) return null;
+    const company = profile?.identity?.company;
+    const id = typeof company?.id === 'string' && company.id !== '' ? company.id : null;
+    const name = typeof company?.name === 'string' && company.name.trim() !== '' ? company.name.trim() : null;
+    if (id === null || name === null) return null;
+    const link = el('a', 'bo-scheda-offer-link');
+    link.setAttribute('href', `#/customer-card/company/${encodeURIComponent(id)}`);
+    link.appendChild(el('span', 'bo-scheda-offer-company-name', `Offerte di ${name}`));
+    return link;
+  }
+
+  function offer(box, profile, offerCtx, profileError = null, pipelines = [], companyProfile = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no offer".
     if (profileError) {
@@ -5230,13 +5431,25 @@ export function createCustomerCardView(deps) {
     const fromQuote = (quotes ?? []).length > 0;
     const first = fromQuote ? quotes[0] : ((opportunities ?? [])[0] ?? null);
     if (!first) {
+      // Voce 4ec1fe6d: una persona senza offerte proprie ma con azienda
+      // collegata CHE HA offerte collega le offerte dell'azienda (un link
+      // alla scheda azienda, dove l'offerta si apre con il suo link)
+      // invece di nascondere il riquadro: prima non mostrava né collegava
+      // niente. Su azienda senza offerte (o illeggibile) il riquadro resta
+      // nascosto (voce 4cfa30c164ca: niente fantasmi).
+      const companyLink = companyOfferLink(profile, offerCtx, companyProfile);
       // No linked offer: when BOTH commercial sections were readable (even
       // empty) the customer plainly has none, and the card stays hidden —
       // the scheda reads an offer only when one exists. An empty
       // opportunities read never proves there are no quotes when the quotes
       // read itself failed — the unavailable reason reads instead, never a
       // confirmed absence.
-      if (quotes !== null && opportunities !== null) return false;
+      if (quotes !== null && opportunities !== null) {
+        if (companyLink === null) return false;
+        box.appendChild(el('h4', undefined, 'Offerta'));
+        box.appendChild(companyLink);
+        return true;
+      }
       box.appendChild(el('h4', undefined, 'Offerta'));
       // The unavailable reason stays in the API response and the logs, never
       // on screen: production reasons are English system phrases, and the
@@ -6425,6 +6638,7 @@ export function createCustomerCardView(deps) {
     void readMe();
     const {
       card, timeline, timelineError, profile, profileError,
+      companyProfile = null,
       enrichment, enrichmentError, calls, callsError,
       fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
       services,
@@ -6440,6 +6654,7 @@ export function createCustomerCardView(deps) {
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,
+        companyProfile,
         enrichment, enrichmentError, calls, callsError,
         fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
         services,
@@ -7070,6 +7285,7 @@ export function createCustomerCardView(deps) {
 
   function buildAndShow(key, resource, id, {
     card, timeline, timelineError, profile, profileError,
+    companyProfile = null,
     enrichment, enrichmentError, calls, callsError,
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
     services = null,
@@ -7091,7 +7307,8 @@ export function createCustomerCardView(deps) {
     // a first visit (another customer's read, or none, says nothing). On a
     // full settled paint (pending null) these stay unused.
     const prevLoaded = lastShown !== null && lastShown.key === key ? lastShown.loaded : null;
-    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null;
+    const prevHadOffer = commercialFirst(prevLoaded?.profile ?? null) !== null
+      || companyOfferLink(prevLoaded?.profile ?? null, { resource, id }, prevLoaded?.companyProfile ?? null) !== null;
     const prevHadAppt = upcomingOf(prevLoaded?.timeline ?? null).length > 0;
     // backlog:26afd13657c5: the appointment rows wait for the listino — a
     // row never flashes the slug words while the services read is still in
@@ -7191,7 +7408,10 @@ export function createCustomerCardView(deps) {
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     // backlog:9b28b3bc6003 (main, #992): the offer section hides itself
-    // when the customer has none. backlog:4cfa30c164ca (supervisore 18/11,
+    // when the customer has none. Voce 4ec1fe6d: a contact with no own
+    // offers still paints when the linked company has offers (a link to
+    // the company card), never on an empty company (voce 4cfa30c164ca).
+    // backlog:4cfa30c164ca (supervisore 18/11,
     // NON PASSA su Ada Rossi con #1014): the skeleton painted while the
     // profile was still in flight, then vanished — a ghost box on every
     // first visit. So the skeleton stays off until the read says whether
@@ -7204,7 +7424,7 @@ export function createCustomerCardView(deps) {
     // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js.
     if (waits('profile')) {
       if (prevHadOffer) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
-    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    } else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines, companyProfile);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — never the slug words first. backlog:4cfa30c164ca: the same
     // ghost rule as the offer card — while the timeline or the listino are

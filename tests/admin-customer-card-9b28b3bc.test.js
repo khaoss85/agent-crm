@@ -55,7 +55,7 @@ const ENRICHED = {
   items: [],
 };
 
-function fakeClient({ card, onSchema = null } = {}) {
+function fakeClient({ card, onSchema = null, companyProfile = null } = {}) {
   const profile = noOfferProfile();
   return {
     async request(path, options = {}) {
@@ -63,6 +63,10 @@ function fakeClient({ card, onSchema = null } = {}) {
       if ((options?.method ?? 'GET') !== 'GET') return { ok: true };
       if (path.startsWith('/api/customer-hub/card/')) return card;
       if (path.startsWith('/api/customer-hub/timeline/')) return TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/company/')) {
+        if (companyProfile) return companyProfile;
+        throw Object.assign(new Error('Not Found'), { status: 404 });
+      }
       if (path.startsWith('/api/customer-data/profile/')) return profile;
       if (path === '/api/schema') {
         if (onSchema) return onSchema();
@@ -127,21 +131,61 @@ test('9b28b3bc6003: senza canali, le azioni dicono che non ce ne sono', async ()
 });
 
 test('9b28b3bc6003: senza offerte, niente scheletro Offerta mentre si aspetta solo lo schema', async () => {
+  // Voce 4ec1fe6d (supervisore 17/11): il contatto c1 non ha offerte proprie
+  // ma ha l'azienda collegata (co1), così il riquadro Offerta resta — non uno
+  // scheletro, il contenuto finale con il link alla scheda azienda — invece
+  // di sparire. Resta vero il contratto di questa voce: a profilo noto e
+  // schema in volo nessuno scheletro fantasma.
   let releaseSchema;
   const schemaGate = new Promise((resolve) => { releaseSchema = resolve; });
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createCustomerCardView({
-    doc, mount, client: fakeClient({ card: baseCard(), onSchema: () => schemaGate }), spaceId: 'presti',
+    doc,
+    mount,
+    client: fakeClient({
+      card: baseCard(),
+      onSchema: () => schemaGate,
+      companyProfile: {
+        customerProfileContract: 1,
+        subject: { resource: 'company', id: 'co1' },
+        opportunities: {
+          available: true, count: 1, countIsComplete: true, truncated: false,
+          items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+        },
+        quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      },
+    }),
+    spaceId: 'presti',
   });
   const opening = view.renderCard('contact', 'c1');
   await flush(20);
-  assert.equal(
-    offerCards(mount).length, 0,
-    'il profilo è letto e vuoto: nessuno scheletro Offerta mentre resta in volo solo lo schema',
+  assert.equal(offerCards(mount).length, 1, 'il profilo è letto: un riquadro Offerta con il link azienda');
+  assert.notEqual(
+    offerCards(mount)[0].getAttribute('data-loading'), 'true',
+    'a profilo noto niente scheletro, il contenuto finale anche con lo schema in volo',
+  );
+  assert.ok(
+    offerCards(mount)[0].textContent.includes('Palestra Esempio'),
+    'il riquadro nomina l’azienda collegata',
   );
   releaseSchema({ pipelines: [] });
   await opening;
   await flush();
-  assert.equal(offerCards(mount).length, 0, 'a lettura finita nessuna card offerta per chi non ne ha');
+  assert.equal(offerCards(mount).length, 1, 'a lettura finita resta il link alle offerte azienda');
+  const link = offerCards(mount)[0].findAll('a')[0] ?? null;
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'il link apre la scheda azienda');
+});
+
+test('review #1076 P1: «Scrivi al cliente» resta la finestra flottante bo-scheda-composer, mai il riquadro note in cima', async () => {
+  const mount = await open(fakeClient({
+    card: baseCard({ email: 'guido@palestra-esempio.it' }),
+  }));
+  byAction(mount, 'compose-email').dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'la finestra del composer si apre');
+  const classes = String(panel.getAttribute('class') ?? '').split(/\s+/);
+  assert.ok(classes.includes('bo-scheda-composer'), 'la finestra porta la sua classe flottante');
+  assert.ok(!classes.includes('bo-scheda-note-top'), 'mai la classe del riquadro note in cima');
 });
