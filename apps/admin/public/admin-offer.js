@@ -299,18 +299,49 @@ export function createOfferDetail(deps) {
   }
 
   /**
-   * backlog:d8175e1c3495: the offer page skeleton — the same frame the page
-   * paints (sheet with the hero and the facts strip, the quotes card, the
-   * history card) with grey bars where values arrive. Busy for assistive
-   * tech, with one spoken line; the real paint replaces it whole.
+   * backlog:bfc070243427 (seguito 19/11): the facts grid both paints share.
+   * The skeleton reads it from the reads landed so far, the final from them
+   * all; same inputs, same labels — the Preventivo block below never moves
+   * for a row that was always going to paint.
+   * @param {{ownerLabel: string | null, close: string | null, creator: string | null}} facts
    */
-  function offerSkeleton(record = null) {
+  function offerFactLabels({ ownerLabel, close, creator }) {
+    const labels = [];
+    if (ownerLabel !== null && ownerLabel !== '') labels.push('Referente');
+    labels.push('Stato');
+    if (close !== null) labels.push('Chiusura prevista');
+    if (creator !== null && creator !== '—') labels.push('Creata da');
+    labels.push('Creata il', 'Ultima modifica');
+    return labels;
+  }
+
+  /**
+   * backlog:d8175e1c3495: the offer page skeleton — the same frame the page
+   * paints (the way back, the sheet with the hero and the facts strip, the
+   * quotes card, the history card) with grey bars where values arrive. Busy
+   * for assistive tech, with one spoken line; the real paint replaces it
+   * whole.
+   * backlog:bfc070243427 (seguito 19/11): the way back and the «Apri il
+   * preventivo» action are reserved here too, with the final's classes, so
+   * the Preventivo block sits where the final paints it from the first
+   * frame. The href is best-effort until the reads land; the final corrects
+   * it. What it does not cover: the history grows with its events and an
+   * offer without quotes has no main action — content below the quotes head
+   * still reshapes; only the blocks above the Preventivo head are fixed.
+   * @param {any} record @param {{people: Array<any>, auditItems: Array<any>, auditTruncated: boolean} | null} [decoration]
+   */
+  function offerSkeleton(record = null, decoration = null) {
     const page = el('div', 'bo-offer bo-offer-skeleton');
     page.setAttribute('aria-busy', 'true');
     page.setAttribute('data-offer-skeleton', 'true');
     const spoken = el('p', 'sr-only', 'Carico l’offerta…');
     spoken.setAttribute('role', 'status');
     page.appendChild(spoken);
+    // The way back paints with the skeleton — same row, same height — so
+    // the sheet below never moves when the final names it.
+    const backRow = el('span', 'quote-back', origin !== null ? '← Scheda cliente' : '← Pipeline');
+    backRow.setAttribute('aria-hidden', 'true');
+    page.appendChild(backRow);
     const sheet = el('article', 'bo-offer-sheet');
     const hero = el('header', 'bo-offer-hero');
     const words = el('div', 'bo-offer-hero-words');
@@ -344,20 +375,32 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
     // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
-    // The skeleton keeps the final's grid: a row the final skips is skipped
-    // here with the same predicates on the data known so far. The trail
-    // never rides the skeleton, and an empty trail names nobody, so its row
-    // is never held; an empty team resolves exactly like an unknown name.
+    // The skeleton keeps the final's grid through the shared labels: with
+    // the trail and the team still in flight a non-empty owner may still be
+    // named by them, so its row is held; the trail itself never rides the
+    // skeleton, and an empty trail names nobody, so its row is never held
+    // until those reads land. The repaint after they land uses the exact
+    // final predicates.
     const known = record === null ? {} : {
       'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    const skeletonLabels = [];
-    if (record === null || personLabel(record.owner, []) !== null) skeletonLabels.push('Referente');
-    skeletonLabels.push('Stato');
-    if (record === null || close !== null) skeletonLabels.push('Chiusura prevista');
-    skeletonLabels.push('Creata il', 'Ultima modifica');
+    let skeletonLabels;
+    if (record === null) {
+      skeletonLabels = ['Referente', 'Stato', 'Chiusura prevista', 'Creata il', 'Ultima modifica'];
+    } else if (decoration === null) {
+      const ownerHeld = typeof record.owner === 'string' && record.owner.trim() !== '';
+      skeletonLabels = offerFactLabels({ ownerLabel: ownerHeld ? '…' : null, close, creator: null });
+    } else {
+      skeletonLabels = offerFactLabels({
+        ownerLabel: personLabel(record.owner, decoration.people),
+        close,
+        creator: decoration.auditTruncated
+          ? null
+          : offerCreatorLabel(decoration.auditItems, record, decoration.people, AUDIT_LIMIT),
+      });
+    }
     for (const label of skeletonLabels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
@@ -373,12 +416,22 @@ export function createOfferDetail(deps) {
     actionsHold.appendChild(uiSkeleton(doc, { width: '230px' }));
     sheet.appendChild(actionsHold);
     page.appendChild(sheet);
-    for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
-      const card = el('div', cls);
-      card.appendChild(el('h3', undefined, title));
-      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
-      page.appendChild(card);
-    }
+    // The Preventivo card reserves the main action's row too: the final
+    // paints «Apri il preventivo» beside the head, and without the hold the
+    // block drops when the action lands.
+    const quotesCard = el('div', 'offer-quotes');
+    const quotesHead = el('div', 'offer-quotes-head');
+    quotesHead.appendChild(el('h3', undefined, 'Preventivo'));
+    const openHold = el('span', 'offer-quote-open-wait', '');
+    openHold.setAttribute('aria-hidden', 'true');
+    quotesHead.appendChild(openHold);
+    quotesCard.appendChild(quotesHead);
+    for (const width of ['72%', '54%']) quotesCard.appendChild(uiSkeleton(doc, { width, block: true }));
+    page.appendChild(quotesCard);
+    const historyCard = el('div', 'offer-history');
+    historyCard.appendChild(el('h3', undefined, 'Cronologia'));
+    for (const width of ['72%', '54%']) historyCard.appendChild(uiSkeleton(doc, { width, block: true }));
+    page.appendChild(historyCard);
     return page;
   }
 
@@ -482,6 +535,10 @@ export function createOfferDetail(deps) {
     let bookRead = Promise.resolve({ books: null, error: null });
     /** @type {Array<any>} */
     let people = [];
+    // The route may name the offer by one of its quotes (the alias above):
+    // once the record lands, every quote origin rides the resolved id,
+    // never the raw route. Until then the raw route holds the skeleton.
+    let resolvedOfferId = offerId;
     try {
       // backlog:94eabbd4762f (pilota 13/11: 1,8-4 s dal clic, 4,6-5,9 s da
       // link diretto): every read of the page leaves at once, the offer
@@ -508,20 +565,12 @@ export function createOfferDetail(deps) {
       // is read, before the schema and the rest.
       record = await offerRead;
       if (token === renderToken && record && typeof record === 'object') {
+        if (typeof record.id === 'string' && record.id !== '') resolvedOfferId = record.id;
         clear();
         mount.appendChild(offerSkeleton(record));
         onTitle(offerCrumb(record));
         rememberCustomer(record);
         shareOfferName = typeof record.name === 'string' ? record.name : '';
-      }
-      // Review Muse #887 giro 2: the schema is decoration — a rejected
-      // `/api/schema` read leaves the page unnamed (neutral columns, no
-      // price-book action) instead of failing the whole detail.
-      try {
-        schema = await schemaRead;
-      } catch (error) {
-        logReadFailure('schema', error);
-        schema = null;
       }
       const sameId = String(record?.id ?? '') === offerId;
       // Review Muse #871 (P1): the page paints with the offer, its quotes
@@ -533,6 +582,27 @@ export function createOfferDetail(deps) {
         teamRead,
       ]);
       quotes = quotesAnswer;
+      auditItems = audit.items;
+      auditUnreadable = audit.unreadable;
+      auditTruncated = auditItems.length >= AUDIT_LIMIT;
+      people = team;
+      // backlog:bfc070243427 (seguito 19/11): with the trail and the team
+      // landed the skeleton uses the exact final predicates — same inputs,
+      // same labels — so no fact row appears or vanishes with the final.
+      // The schema still lands after; only the facts are exact here.
+      if (token === renderToken && record && typeof record === 'object') {
+        clear();
+        mount.appendChild(offerSkeleton(record, { people, auditItems, auditTruncated }));
+      }
+      // Review Muse #887 giro 2: the schema is decoration — a rejected
+      // `/api/schema` read leaves the page unnamed (neutral columns, no
+      // price-book action) instead of failing the whole detail.
+      try {
+        schema = await schemaRead;
+      } catch (error) {
+        logReadFailure('schema', error);
+        schema = null;
+      }
       // backlog:ea616e16ebac: the head opens the newest quote with the
       // main action («Apri il preventivo», painted with the page — never
       // waiting for the price books, which only gate «Crea preventivo»),
@@ -542,12 +612,9 @@ export function createOfferDetail(deps) {
       quoteCards = quotes.rows.map((quote) => paintQuote(quote, token, {
         hideOpen: Boolean(commercialBlock(schema))
           && quote?.id === latestQuote(quotes.rows)?.id,
-        offerId,
+        offerId: resolvedOfferId,
+        from: origin,
       }));
-      auditItems = audit.items;
-      auditUnreadable = audit.unreadable;
-      auditTruncated = auditItems.length >= AUDIT_LIMIT;
-      people = team;
       bookRead = booksRead;
     } catch (error) {
       if (token !== renderToken) return;
@@ -608,25 +675,25 @@ export function createOfferDetail(deps) {
     const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
     // backlog:bfc070243427: an unknown close date paints no row — never an
-    // empty «Chiusura prevista —» field.
-    // backlog:bfc070243427: like «Creata da» below, an owner the reads
-    // cannot name paints no row — never an empty «Referente —» field.
-    // personLabel returns null (never a dash) for an unknown owner.
+    // empty «Chiusura prevista —» field. Like «Creata da» below, an owner
+    // the reads cannot name paints no row — never an empty «Referente —»
+    // field; personLabel returns null (never a dash) for an unknown owner.
+    // Naming an existing-but-unresolved author stays with
+    // backlog:a2ea75f705fd and the person-identifier family
+    // (backlog:91f4e2f0d650); once they name them, the row paints.
+    // The labels are the shared ones the skeleton uses: same inputs, same
+    // grid, so the Preventivo block never moves for a fact row.
     const referente = personLabel(record.owner, people);
-    const factRows = [];
-    if (referente !== null && referente !== '') factRows.push(['Referente', referente]);
-    factRows.push(['Stato', stageLabel(schema, record)]);
-    if (close !== null) factRows.push(['Chiusura prevista', close]);
-    // backlog:bfc070243427: an author the reads cannot name paints no row —
-    // never an empty «Creata da —» field, named or not. Naming an
-    // existing-but-unresolved author stays with backlog:a2ea75f705fd and the
-    // person-identifier family (backlog:91f4e2f0d650); once they name them,
-    // the row paints.
-    if (creator !== null && creator !== '—') factRows.push(['Creata da', creator]);
-    factRows.push(
-      ['Creata il', italianDay(record.createdAt) ?? '—'],
-      ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
-    );
+    const factValues = {
+      'Referente': referente,
+      'Stato': stageLabel(schema, record),
+      'Chiusura prevista': close,
+      'Creata da': creator,
+      'Creata il': italianDay(record.createdAt) ?? '—',
+      'Ultima modifica': italianDay(record.updatedAt) ?? '—',
+    };
+    const factRows = offerFactLabels({ ownerLabel: referente, close, creator })
+      .map((label) => [label, factValues[label] ?? '—']);
     for (const [label, value] of factRows) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
@@ -656,7 +723,9 @@ export function createOfferDetail(deps) {
     // page, and the books fill only «Crea preventivo» afterwards.
     const newestFirst = latestQuote(quotes.rows);
     if (Boolean(commercialBlock(schema)) && newestFirst !== null) {
-      quotesHead.appendChild(openQuoteLink(offerId, newestFirst));
+      // The quote origins ride the resolved record id, never the raw
+      // route — through the quote-id alias the route names a quote.
+      quotesHead.appendChild(openQuoteLink(resolvedOfferId, newestFirst, origin));
       quotesHead.setAttribute('data-open-painted', 'true');
     }
     // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
@@ -1020,19 +1089,29 @@ export function createOfferDetail(deps) {
   /**
    * backlog:bfc070243427 (seguito): a quote opened from its offer names the
    * offer as the origin (`#/quotes/<id>/offerta/<offer>`), so the detail's
-   * «←» returns to the offer it came from, never to the scheda.
+   * «←» returns to the offer it came from, never to the scheda. Two levels
+   * deep (scheda → offer → quote) the scheda rides along too, so the offer
+   * page, reopened from the quote, still returns to the scheda.
    * @param {unknown} offerId @param {unknown} quoteId
+   * @param {{resource: string, subjectId: string} | null} [from] the scheda origin, if any
    */
-  function offerQuoteHref(offerId, quoteId) {
+  function offerQuoteHref(offerId, quoteId, from = null) {
     const quote = `#/quotes/${encodeURIComponent(typeof quoteId === 'string' ? quoteId : '')}`;
     if (typeof offerId !== 'string' || offerId === '' || typeof quoteId !== 'string' || quoteId === '') return quote;
-    return `${quote}/offerta/${encodeURIComponent(offerId)}`;
+    const origin = `${quote}/offerta/${encodeURIComponent(offerId)}`;
+    if (from === null || typeof from.resource !== 'string' || typeof from.subjectId !== 'string'
+      || from.resource === '' || from.subjectId === '') return origin;
+    return `${origin}/cliente/${encodeURIComponent(from.resource)}/${encodeURIComponent(from.subjectId)}`;
   }
 
-  /** The main action beside an existing quote: open it. @param {unknown} offerId @param {{id: string}} quote */
-  function openQuoteLink(offerId, quote) {
+  /**
+   * The main action beside an existing quote: open it.
+   * @param {unknown} offerId @param {{id: string}} quote
+   * @param {{resource: string, subjectId: string} | null} [from] the scheda origin, if any
+   */
+  function openQuoteLink(offerId, quote, from = null) {
     const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
-    open.setAttribute('href', offerQuoteHref(offerId, quote.id));
+    open.setAttribute('href', offerQuoteHref(offerId, quote.id, from));
     open.setAttribute('data-action', 'offer-open-quote');
     return open;
   }
@@ -1056,7 +1135,7 @@ export function createOfferDetail(deps) {
     // — never a second «Apri il preventivo» for the same quote.
     const paintHeadOpen = (parent) => {
       if (existing === null || head.getAttribute?.('data-open-painted') === 'true') return;
-      parent.appendChild(openQuoteLink(record.id, existing));
+      parent.appendChild(openQuoteLink(record.id, existing, origin));
       head.setAttribute('data-open-painted', 'true');
     };
     if (answer.books === null) {
@@ -1124,7 +1203,7 @@ export function createOfferDetail(deps) {
         const quoteId = created?.result?.quote?.id;
         if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
         toast('Preventivo creato: aggiungi le righe.');
-        navigate(offerQuoteHref(offerId, quoteId));
+        navigate(offerQuoteHref(offerId, quoteId, origin));
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
@@ -1387,7 +1466,7 @@ export function createOfferDetail(deps) {
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
-   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string}} [options]
+   * @param {any} quote @param {number} token @param {{hideOpen?: boolean, offerId?: string, from?: {resource: string, subjectId: string} | null}} [options]
    */
   async function paintQuote(quote, token, options = {}) {
     const panel = el('div', 'offer-quote');
@@ -1402,7 +1481,7 @@ export function createOfferDetail(deps) {
     // reachable exactly once.
     if (options.hideOpen !== true) {
       const link = el('a', 'offer-quote-open', 'Apri il preventivo');
-      link.setAttribute('href', offerQuoteHref(options.offerId, quote.id));
+      link.setAttribute('href', offerQuoteHref(options.offerId, quote.id, options.from ?? null));
       head.appendChild(link);
     }
     panel.appendChild(head);

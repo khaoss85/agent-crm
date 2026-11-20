@@ -456,18 +456,27 @@ export function parseModuleRoute(hash) {
   // its scheda origin under #/offerte/<id>/cliente/….
   // backlog:bfc070243427 (seguito): #/quotes/<id>/offerta/<offer> names the
   // offer as the origin — a quote opened from its offer goes back to the
-  // offer, never to the customer scheda.
+  // offer, never to the customer scheda. Opened two levels deep
+  // (scheda → offer → quote) the route keeps the scheda too —
+  // #/quotes/<id>/offerta/<offer>/cliente/<resource>/<id> — so the offer
+  // page, reopened from the quote, still returns to the scheda.
   if (rawParts.length && rawParts[0] === 'quotes') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    const seven = rawParts.length === 7 && rawParts[4] === 'cliente';
     if (rawParts.length === 1) return { view: 'quotes' };
-    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista') && !(rawParts.length === 4 && rawParts[2] === 'offerta')) return { view: 'invalid' };
+    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista') && !(rawParts.length === 4 && rawParts[2] === 'offerta') && !seven) return { view: 'invalid' };
     const quoteId = safeDecode(rawParts[1]);
     if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
     if (rawParts.length === 3) return { view: 'quote-detail', quoteId, from: 'quotes' };
-    if (rawParts.length === 4) {
+    if (rawParts.length === 4 || seven) {
       const offerId = safeDecode(rawParts[3]);
       if (offerId === null || offerId === '' || offerId.includes('/')) return { view: 'invalid' };
-      return { view: 'quote-detail', quoteId, from: { offer: offerId } };
+      if (!seven) return { view: 'quote-detail', quoteId, from: { offer: offerId } };
+      const resource = safeDecode(rawParts[5]);
+      const subjectId = safeDecode(rawParts[6]);
+      if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
+      if (subjectId === null || subjectId === '' || subjectId.includes('/')) return { view: 'invalid' };
+      return { view: 'quote-detail', quoteId, from: { offer: offerId, resource, subjectId } };
     }
     return { view: 'quote-detail', quoteId };
   }

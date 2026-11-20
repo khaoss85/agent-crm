@@ -277,16 +277,30 @@ export function createQuoteView(deps) {
     // backlog:bfc070243427 (seguito): from the offer the way back is the
     // offer page, never the scheda. DECISION (to be confirmed): the label
     // stays the generic «← Offerta», like «← Preventivi» — short beside the
-    // other two top links.
+    // other two top links. Two levels deep (scheda → offer → quote) the way
+    // back keeps the scheda too, so the offer page still returns to it.
     const fromOffer = typeof from === 'object' && from !== null && typeof from.offer === 'string' && from.offer !== '' ? from.offer : null;
+    const fromScheda = typeof from === 'object' && from !== null
+      && typeof from.resource === 'string' && /^[a-z][a-z0-9-]*$/.test(from.resource)
+      && typeof from.subjectId === 'string' && from.subjectId !== '' && !from.subjectId.includes('/')
+      ? { resource: from.resource, subjectId: from.subjectId } : null;
     const listBack = () => linkTo('#/quotes', '← Preventivi', 'quote-back');
-    const offerBack = () => linkTo(`#/offerte/${encodeURIComponent(fromOffer)}`, '← Offerta', 'quote-back');
+    const schedaHref = fromScheda !== null && fromOffer !== null
+      ? `#/offerte/${encodeURIComponent(fromOffer)}/cliente/${encodeURIComponent(fromScheda.resource)}/${encodeURIComponent(fromScheda.subjectId)}`
+      : null;
+    const schedaBack = () => linkTo(schedaHref ?? '#/quotes', '← Scheda cliente', 'quote-back');
+    // Called only with a verified fromOffer (the equality check below), so
+    // the href always names this quote's own offer.
+    const offerBack = () => linkTo(schedaHref ?? `#/offerte/${encodeURIComponent(/** @type {string} */ (fromOffer))}`, '← Offerta', 'quote-back');
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    // From the list (or the offer) the way back never depends on a read: it
-    // is the list (or the offer).
+    // A hand-typed offer origin is honored only behind the equality check
+    // below: with no (or an unreadable) opportunity the origin cannot be
+    // verified, so the way back is the list, the scheda it names, or
+    // nothing — never an «← Offerta» pointing at an unrelated deal.
     if (opportunityId === null) {
-      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
-      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
+      if (fromList) return { back: listBack(), opportunityName: null, customerName: null };
+      if (fromScheda !== null) return { back: schedaBack(), opportunityName: null, customerName: null };
+      return { back: null, opportunityName: null, customerName: null };
     }
     let opportunity;
     try {
@@ -294,8 +308,9 @@ export function createQuoteView(deps) {
       // surface never serves core modules and answered 404 here.
       opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
-      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
-      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
+      if (fromList) return { back: listBack(), opportunityName: null, customerName: null };
+      if (fromScheda !== null) return { back: schedaBack(), opportunityName: null, customerName: null };
+      return { back: null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
@@ -312,7 +327,10 @@ export function createQuoteView(deps) {
       const fromOfferContactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
       const fromOfferRawName = fromOfferContactId !== null ? opportunity?.contactName : opportunity?.companyName;
       const fromOfferCustomerName = typeof fromOfferRawName === 'string' && fromOfferRawName.trim() !== '' ? fromOfferRawName.trim() : null;
-      return { back: offerBack(), offer, opportunityName, customerName: fromOfferCustomerName };
+      // backlog:bfc070243427 (seguito 19/11): «← Offerta» and
+      // «Apri l’offerta →» land on the same address from here — one link,
+      // the way back. The title still names the customer like from the list.
+      return { back: offerBack(), offer: null, opportunityName, customerName: fromOfferCustomerName };
     }
     if (fromList) {
       // The title still names the customer when the offer knows them; only

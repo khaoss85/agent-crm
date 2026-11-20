@@ -275,7 +275,8 @@ test('bfc070243427 repro: the frozen version names the rule in words, never the 
   await createOfferDetail({ doc: createFakeDocument(), mount, client: reproClient({ record, quotes: [OCCASION_QUOTE()], versions }) }).renderOfferDetail('off1');
   await flushAll();
   assert.ok(!mount.textContent.includes('presti-sales-discount@2'), 'no raw rule id on screen');
-  assert.ok(mount.textContent.includes('Presti sales discount (v2)'), 'the rule reads as words with its version');
+  assert.ok(mount.textContent.includes('Presti sales discount'), 'the rule reads as words');
+  assert.ok(!mount.textContent.includes('Presti sales discount (v2)'), 'no internal version on screen');
 });
 
 /**
@@ -510,4 +511,260 @@ test('bfc070243427 repro: the offer skeleton reserves the actions row', async ()
   releaseHeld();
   await done;
   await flushAll();
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-19 (returns:3) + review muse
+ * rev-agent-crm-1049-dc17b566 (3 P2): on every hard reload the Preventivo
+ * block fell 81px (364/380px -> 445px, the «←» row missing), and the same
+ * cure carried three blocking bugs. Every test below is RED on the code
+ * before the cure and GREEN after it.
+ */
+
+const ALIAS_QUOTE = (overrides = {}) => OCCASION_QUOTE({ ...overrides });
+
+/** One offer behind the quote-id alias, its quotes, a readable team and trail. */
+function aliasClient({ record, quotes, team = [], audit = [] }) {
+  return {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path === '/api/opportunities/q9') throw Object.assign(new Error('Not Found'), { status: 404 });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path)) return { ...record };
+      if (path.startsWith('/api/opportunities?')) return { items: [{ ...record }] };
+      if (path === '/api/modules/quote/records/q9') return { ...ALIAS_QUOTE({ id: 'q9', opportunityId: 'off1' }) };
+      if (path.startsWith('/api/modules/quote/records')) return { items: quotes };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      if (path.startsWith('/api/modules/price-book/records')) {
+        return { items: [{ id: 'pb1', name: 'Listino', currency: 'EUR', active: true }] };
+      }
+      if (path.startsWith('/api/audit')) return { items: audit };
+      if (path === '/api/spine/memberships') return { items: team };
+      return { items: [] };
+    },
+  };
+}
+
+const hasClass = (node, name) => String(node.getAttribute?.('class') ?? '').split(/\s+/).includes(name);
+
+/**
+ * backlog:bfc070243427 review P2 (rev-agent-crm-1049-dc17b566): quote-origin
+ * links used the raw route offerId, so the alias #/offerte/<quote id>
+ * generated wrong #/quotes/<id>/offerta/<quote> hrefs. RED before the cure
+ * (every href names q9 as the offer), GREEN after (all name off1).
+ */
+test('bfc070243427 repro: quote origins ride the resolved offer id, never the raw alias route', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20', createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const quotes = [
+    ALIAS_QUOTE({ id: 'q-old', opportunityId: 'off1' }),
+    ALIAS_QUOTE({ id: 'q-new', opportunityId: 'off1' }),
+  ];
+  const mount = createMount();
+  await createOfferDetail({ doc: createFakeDocument(), mount, client: aliasClient({ record, quotes }) }).renderOfferDetail('q9');
+  await flushAll();
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the alias still opens its offer');
+  const hrefs = mount.findAll('a')
+    .filter((node) => hasClass(node, 'offer-quote-open') || hasClass(node, 'offer-quote-open-main'))
+    .map((node) => node.getAttribute('href'));
+  assert.ok(hrefs.length >= 2, 'head and card actions are on screen');
+  for (const href of hrefs) assert.ok(href.includes('/offerta/off1'), `the origin is the resolved offer: ${href}`);
+  assert.ok(!hrefs.some((href) => href.includes('/offerta/q9')), 'no href names the quote as its own offer');
+});
+
+/**
+ * backlog:bfc070243427 review P2 (rev-agent-crm-1049-dc17b566): a hand-typed
+ * offer origin was honored when the quote's opportunity was missing,
+ * inventing the exact back-link the page claims is impossible. RED before
+ * (an «← Offerta» to the hand-typed deal), GREEN after (no invented link).
+ */
+test('bfc070243427 repro: a hand-typed offer origin is ignored when the quote names no offer', async () => {
+  const record = OCCASION_QUOTE({ opportunityId: null });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: { offer: 'off-estranea' } });
+  await flushAll();
+  assert.ok(!mount.textContent.includes('← Offerta'), 'no invented way back to a hand-typed deal');
+  const hrefs = mount.findAll('a').map((node) => String(node.getAttribute('href') ?? ''));
+  assert.ok(!hrefs.some((href) => href.includes('off-estranea')), 'the hand-typed id lands in no link');
+});
+
+test('bfc070243427 repro: an unreadable offer never lends its back link to a hand-typed origin', async () => {
+  const record = OCCASION_QUOTE({ opportunityId: 'off1' });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      if (path === '/api/opportunities/off1') throw Object.assign(new Error('Server error'), { status: 500 });
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: { offer: 'off1' } });
+  await flushAll();
+  assert.ok(!mount.textContent.includes('← Offerta'), 'no way back to an offer the page could not read');
+});
+
+/**
+ * backlog:bfc070243427 VERIFIER_BACK 2026-11-19 + review P2: the skeleton
+ * used weaker predicates than the final (empty team, no trail), so a
+ * team-resolved «Referente» and a trail-named «Creata da» appeared only in
+ * the final paint — and the skeleton missed the «←» row and the
+ * «Apri il preventivo» hold, dropping the Preventivo block 81px. RED before
+ * the cure (fewer skeleton rows, no holds), GREEN after (same grid).
+ * fake-dom has no layout: equal rows under the same classes mean equal
+ * pixels under the same stylesheet; the live Mac measures the pixels.
+ */
+test('bfc070243427 repro: the skeleton holds the final frame — back row, facts grid and open action', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20', createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'user-12345',
+  };
+  const team = [{ subject: 'user-12345', displayName: 'Guido', email: 'guido@example.com' }];
+  const audit = [{ action: 'opportunity.created', actorId: 'user-12345', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z' }];
+  const held = [];
+  let releaseHeld = () => {};
+  const gate = new Promise((resolve) => { releaseHeld = resolve; });
+  const base = aliasClient({ record, quotes: [ALIAS_QUOTE()], team, audit });
+  const client = {
+    request(path, options = {}) {
+      if (path === '/api/schema') {
+        held.push(path);
+        return gate.then(() => base.request(path, options));
+      }
+      return base.request(path, options);
+    },
+  };
+  const labelsOf = () => mount.findAll('p')
+    .filter((node) => hasClass(node, 'offer-fact'))
+    .map((cell) => cell.childNodes[0]?.textContent ?? '');
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll(12);
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the refined skeleton (team and trail landed, schema in flight) is on screen');
+  const skeletonLabels = labelsOf();
+  assert.ok(skeletonLabels.includes('Referente'), 'the team-resolved owner is held, not skipped');
+  assert.ok(skeletonLabels.includes('Creata da'), 'the trail-named author is held, not skipped');
+  const skeletonBack = skeleton.childNodes.find((node) => hasClass(node, 'quote-back'));
+  assert.ok(skeletonBack, 'the skeleton reserves the way-back row with the final class');
+  const skeletonHead = skeleton.childNodes
+    .flatMap((node) => hasClass(node, 'offer-quotes') ? node.childNodes : [])
+    .find((node) => hasClass(node, 'offer-quotes-head'));
+  assert.ok(skeletonHead, 'the skeleton quotes card has its head');
+  assert.ok(skeletonHead.childNodes.some((node) => hasClass(node, 'offer-quote-open-wait')), 'the skeleton reserves the open-action row');
+  releaseHeld();
+  await done;
+  await flushAll();
+  const finalLabels = labelsOf();
+  assert.deepEqual(skeletonLabels, finalLabels, 'skeleton and final paint the same facts grid');
+  const page = mount.childNodes.find((node) => hasClass(node, 'bo-offer') && node.getAttribute('data-offer-skeleton') !== 'true');
+  assert.ok(page, 'the final page replaced the skeleton');
+  assert.ok(page.childNodes.some((node) => hasClass(node, 'quote-back')), 'the final keeps the same way-back row');
+  const finalHead = page.childNodes
+    .flatMap((node) => hasClass(node, 'offer-quotes') ? node.childNodes : [])
+    .find((node) => hasClass(node, 'offer-quotes-head'));
+  assert.ok(finalHead.childNodes.some((node) => hasClass(node, 'offer-quote-open-main')), 'the final paints the reserved open action');
+  assert.equal(finalHead.childNodes[0]?.textContent, 'Preventivo', 'the head title sits where the skeleton held it');
+});
+
+/**
+ * backlog:bfc070243427 (seguito 19/11, punto 1): scheda → offer → quote →
+ * «← Offerta» must return to the scheda-named offer, not to «← Pipeline».
+ * The origin rides two levels: the quote route keeps the scheda.
+ */
+test('bfc070243427: the quote route keeps the scheda two levels deep', () => {
+  assert.deepEqual(
+    parseModuleRoute('#/quotes/q1/offerta/off1/cliente/contact/c1'),
+    { view: 'quote-detail', quoteId: 'q1', from: { offer: 'off1', resource: 'contact', subjectId: 'c1' } },
+    'the scheda origin rides the quote route',
+  );
+  assert.deepEqual(
+    parseModuleRoute('#/quotes/q1/offerta/off1'),
+    { view: 'quote-detail', quoteId: 'q1', from: { offer: 'off1' } },
+    'the single level still parses',
+  );
+  assert.deepEqual(parseModuleRoute('#/quotes/q1/offerta/off1/cliente/c1'), { view: 'invalid' }, 'a short scheda suffix is invalid');
+});
+
+test('bfc070243427 repro: scheda → offer → quote → «← Offerta» returns to the scheda-named offer', async () => {
+  const record = OCCASION_QUOTE({ draftRevision: 3 });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+      if (path.startsWith('/api/modules/offer/records')) return { items: [] };
+      if (path === '/api/opportunities/off1') return { id: 'off1', name: 'Cucina', contactId: 'c1', contactName: 'Giulia Verdi' };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client })
+    .renderQuoteDetail('q1', { from: { offer: 'off1', resource: 'contact', subjectId: 'c1' } });
+  await flushAll();
+  const back = mount.findAll('a').find((node) => hasClass(node, 'quote-back'));
+  assert.ok(back, 'a way back is painted');
+  assert.equal(back.getAttribute('href'), '#/offerte/off1/cliente/contact/c1', 'it returns to the scheda-named offer');
+  assert.equal(back.textContent, '← Offerta', 'it says the offer');
+});
+
+test('bfc070243427: the offer page carries its scheda origin into every quote href', async () => {
+  const record = {
+    id: 'off1', name: 'Cucina per Giulia', contactName: 'Giulia Verdi', companyName: null,
+    pipelineKey: 'b2b-sales', pipelineStage: 'discovery', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: null, createdAt: '2026-10-02T09:15:00.000Z', updatedAt: '2026-10-28T18:40:00.000Z', owner: 'maria',
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: reproClient({ record, quotes: [OCCASION_QUOTE()] }) });
+  await view.renderOfferDetail('off1', { from: { resource: 'contact', subjectId: 'c1' } });
+  await flushAll();
+  const hrefs = mount.findAll('a')
+    .filter((node) => hasClass(node, 'offer-quote-open') || hasClass(node, 'offer-quote-open-main'))
+    .map((node) => node.getAttribute('href'));
+  assert.ok(hrefs.length >= 1, 'an open action is on screen');
+  for (const href of hrefs) assert.ok(href.endsWith('/offerta/off1/cliente/contact/c1'), `the scheda rides along: ${href}`);
+});
+
+/**
+ * backlog:bfc070243427 (seguito 19/11, punto 2): from the offer «← Offerta»
+ * and «Apri l’offerta →» land on the same address — one link, the way back.
+ */
+test('bfc070243427: from the offer a single «← Offerta» replaces the doubled top link', async () => {
+  const record = OCCASION_QUOTE({ draftRevision: 3 });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { ...SCHEMA, commercial: {} };
+      if (path.startsWith('/api/modules/quote/records/')) return { ...record };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+      if (path.startsWith('/api/modules/offer/records')) return { items: [] };
+      if (path === '/api/opportunities/off1') return { id: 'off1', name: 'Cucina', contactId: 'c1', contactName: 'Giulia Verdi' };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: { offer: 'off1' } });
+  await flushAll();
+  const back = mount.findAll('a').find((node) => hasClass(node, 'quote-back'));
+  assert.equal(back?.getAttribute('href'), '#/offerte/off1', 'the way back stays the offer');
+  assert.equal(mount.findAll('a').filter((node) => hasClass(node, 'quote-offer-link')).length, 0, 'no second link to the same address');
+  assert.ok(mount.findAll('a').some((node) => hasClass(node, 'quote-list-link')), 'the list exit stays');
 });

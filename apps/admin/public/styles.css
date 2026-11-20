@@ -424,6 +424,12 @@ button[aria-busy="true"] { opacity: .6; }
 /* backlog:bfc070243427 (seguito): the skeleton reserves the actions row, so
  * «Modifica» and «Cambia stato» land on a bar their own size. */
 .bo-offer-skeleton .bo-offer-actions .ui-skeleton { height: 34px; }
+/* backlog:bfc070243427 (seguito 19/11): the skeleton reserves the «Apri il
+ * preventivo» action beside the quotes head, with the final button's box, so
+ * the Preventivo block sits where the final paints it from the first frame.
+ * The live Mac verifies the pixels; the unit tests lock the structure. */
+.bo-offer-skeleton .offer-quote-open-wait { display: inline-flex; align-items: center; width: 172px; height: 46px; border-radius: 12px; background: var(--surface-soft); }
+.bo-offer-skeleton .offer-quote-open-wait::after { content: "Apri il preventivo"; font-size: 15px; font-weight: 750; color: transparent; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
