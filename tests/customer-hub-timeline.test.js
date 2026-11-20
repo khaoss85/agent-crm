@@ -164,6 +164,7 @@ async function seedCustomer(t, file) {
   await bookAppointment({ ...scope, moduleNames: {}, followUps: null }, {
     sourceKey: 'gym:book:2', subject, teamMemberId: 'coach-maria', serviceKey: 'pt-single',
     priceCents: 4000, currency: 'EUR', notes: 'prima visita',
+    location: 'Online', locationUrl: 'https://meet.example.com/abc-def',
     startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T17:00:00.000Z', source: SOURCE,
   });
 
@@ -205,6 +206,8 @@ test('the timeline shows every thread with its latest entry, every booking, ever
   assert.equal(timeline.appointments.items[0].teamMemberId, 'coach-maria');
   assert.equal(timeline.appointments.items[0].notes, 'prima visita');
   assert.equal(timeline.appointments.items[0].status, 'booked');
+  assert.equal(timeline.appointments.items[0].location, 'Online');
+  assert.equal(timeline.appointments.items[0].locationUrl, 'https://meet.example.com/abc-def');
 
   const points = [...timeline.contactPoints.items].sort((a, b) => a.channel.localeCompare(b.channel));
   assert.deepEqual(points, [
