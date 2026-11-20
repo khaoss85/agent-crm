@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pluralizeTableName } from '../../core/src/module-manifest.js';
 
 /**
@@ -306,30 +307,57 @@ export function topSegmentsWithManifests(rootDir) {
  * @param {{scratchRoot: string, rootDir: string, order: string[],
  *   projectManifests?: Array<{name: string, path: string}>}} params
  */
+/**
+ * The batch applier one `package test` run pays for instead of one `node`
+ * boot per manifest (backlog:fb0d1a35). It lives in the scratch copy's own
+ * `bin/` so the call below keeps pointing at the copy, never at the caller's
+ * checkout — the same rule the per-manifest child followed.
+ */
+const APPLY_PROBE = join(
+  dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'accordo-package-apply.js',
+);
+
 export function applyManifests({ scratchRoot, rootDir, order, projectManifests = [] }) {
-  /** @type {Array<{manifest: string, ok: boolean, output: string}>} */
-  const applied = [];
-  const apply = (manifestPath) => {
-    const result = spawnSync(
-      process.execPath,
-      [
-        '--no-warnings',
-        join(scratchRoot, 'packages', 'cli', 'bin', 'accordo.js'),
-        'module', 'create', manifestPath, '--apply', '--root', scratchRoot,
-      ],
-      { encoding: 'utf8', cwd: scratchRoot },
-    );
-    applied.push({
-      manifest: posix(relative(scratchRoot, manifestPath)),
-      ok: result.status === 0,
-      output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
-    });
-  };
-  for (const manifest of projectManifests) apply(join(scratchRoot, relative(rootDir, manifest.path)));
+  /** @type {string[]} */
+  const targets = [];
+  for (const manifest of projectManifests) targets.push(join(scratchRoot, relative(rootDir, manifest.path)));
   for (const relativeDir of order) {
-    for (const manifest of packageManifests(join(scratchRoot, relativeDir))) apply(manifest);
+    for (const manifest of packageManifests(join(scratchRoot, relativeDir))) targets.push(manifest);
   }
-  return applied;
+  if (targets.length === 0) return [];
+  // One process for every manifest, in the same order the per-manifest loop
+  // used, with the same `--root` and `cwd`. The probe reports one
+  // `{ manifest, ok, output }` per target; anything else — a probe crash, a
+  // truncated report, a reordered one — fails every manifest closed rather
+  // than trusting a partial list.
+  const result = spawnSync(
+    process.execPath,
+    ['--no-warnings', APPLY_PROBE, '--root', scratchRoot, ...targets],
+    { encoding: 'utf8', cwd: scratchRoot },
+  );
+  /** @type {Array<{manifest: string, ok: boolean, output: string}> | null} */
+  let items = null;
+  try {
+    const parsed = JSON.parse(result.stdout ?? '');
+    const names = targets.map((manifestPath) => posix(relative(scratchRoot, manifestPath)));
+    if (
+      Array.isArray(parsed) && parsed.length === targets.length
+      && parsed.every((entry, index) => entry?.manifest === names[index]
+        && typeof entry?.ok === 'boolean' && typeof entry?.output === 'string')
+    ) {
+      items = parsed.map((entry) => ({ manifest: entry.manifest, ok: entry.ok, output: entry.output }));
+    }
+  } catch { /* fail closed below */ }
+  if (!items) {
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
+      || `the batch applier exited ${result.status ?? 'unknown'} without a report`;
+    return targets.map((manifestPath) => ({
+      manifest: posix(relative(scratchRoot, manifestPath)),
+      ok: false,
+      output,
+    }));
+  }
+  return items;
 }
 
 /**
