@@ -2382,11 +2382,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.busy = false;
     render();
     const match = closestSuggestion(state.screenId, typed);
-    state.asked = { text: typed, matched: match ? match.title : null };
     if (match) {
+      state.asked = null;
       await runSuggestionById(match.id);
       return;
     }
+    state.asked = { text: typed, matched: null };
     render();
     // No local answer and no suggestion match: the queued #596 question
     // still starts — this path drains like every other busy exit.
@@ -2618,7 +2619,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     const list = el(doc, 'div', 'bo-assistant-suggestions');
     list.appendChild(el(doc, 'p', 'bo-assistant-heading', answer ? 'Altre domande' : 'Prova a chiedere'));
     const chips = el(doc, 'div', 'bo-assistant-chips');
-    for (const suggestion of suggestionsFor(state.screenId)) {
+    const currentId = typeof state.answer?.suggestionId === 'string' ? state.answer.suggestionId : null;
+    for (const suggestion of suggestionsFor(state.screenId).filter((item) => item.id !== currentId)) {
       const button = el(doc, 'button', 'bo-assistant-suggestion', suggestion.title);
       button.setAttribute('type', 'button');
       button.setAttribute('title', suggestion.detail);
