@@ -564,7 +564,10 @@ export function createReportingView(deps) {
     for (const kpi of model.kpis ?? []) {
       const card = el(doc, 'div', { class: 'metric' });
       card.appendChild(el(doc, 'span', { text: kpi.label }));
-      card.appendChild(el(doc, 'strong', { text: kpi.display }));
+      // Restyle 54b9a2a2706f: «2.596,50 € + 30 USD», like the Pipeline
+      // header — the other currencies are never hidden behind a note.
+      const also = typeof kpi.also?.display === 'string' && kpi.also.display !== '' ? kpi.also.display : null;
+      card.appendChild(el(doc, 'strong', { text: also === null ? kpi.display : `${kpi.display} + ${also}` }));
       card.appendChild(el(doc, 'span', { text: kpi.sub }));
       grid.appendChild(card);
     }
@@ -956,7 +959,9 @@ export function createReportingView(deps) {
     if ((model.currencies?.others ?? []).length > 0) {
       host.appendChild(el(doc, 'p', {
         class: 'lede',
-        text: `Solo ${model.currency} mostrati; presenti anche: ${model.currencies.others.join(', ')}.`,
+        // Restyle 54b9a2a2706f: the cards above already read «€ + USD»;
+        // this line only says where the other currencies are left out.
+        text: `Valore aperto e vinte contano anche ${model.currencies.others.join(', ')}; grafici, tasso e previsione sono in ${model.currency}.`,
       }));
     }
     kpiCards(host, model);

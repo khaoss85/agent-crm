@@ -494,6 +494,20 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   )].sort();
 
   const open = sumRows(stageRows, (row) => isOpenValue(row['opportunity.stage']));
+  // Restyle 54b9a2a2706f (verifica Mac 20/11): the other currencies are
+  // never hidden. The card keeps `display` in the chosen currency (CSV and
+  // every reader unchanged) and gains `also`: the same value in each other
+  // currency, summed on its own (never converted), or null.
+  const otherOpen = otherCurrencies.map((code) => ({
+    code,
+    ...sumRows(byStageRows, (row) => row['opportunity.currency'] === code && isOpenValue(row['opportunity.stage'])),
+  })).filter((entry) => entry.count > 0);
+  const alsoIn = (/** @type {{ code: string, minor: number, count: number }[]} */ others) => (others.length === 0
+    ? null
+    : Object.freeze({
+      display: others.map((entry) => formatMinor(entry.minor, entry.code)).join(' + '),
+      count: others.reduce((sum, entry) => sum + entry.count, 0),
+    }));
   const won = sumRows(stageRows, (row) => isWonValue(row['opportunity.stage']));
   const lost = sumRows(stageRows, (row) => isLostValue(row['opportunity.stage']));
   const closed = won.count + lost.count;
@@ -511,6 +525,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   const isOpen = (/** @type {Record<string, any>} */ row) => isOpenValue(row['opportunity.stage']);
   const openInPeriod = sumRows(dated, (row) => isOpen(row) && inPeriod(row));
   const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && closedInPeriod(row));
+  const otherWonInPeriod = otherCurrencies.map((code) => ({
+    code,
+    ...sumRows(scheduleRows, (row) => row['opportunity.currency'] === code
+      && isWonValue(row['opportunity.stage']) && closedInPeriod(row)),
+  })).filter((entry) => entry.count > 0);
   // The open value the month may still close: expected in the month, or
   // with no expected date at all (it can close any day). Past-dated rows
   // are stale, never «in attesa». Same window as the Pipeline forecast.
@@ -535,6 +554,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       id: 'open-value', label: 'Valore pipeline aperto',
       display: formatMinor(open.minor, query.currency),
       sub: plural(open.count, 'preventivo aperto', 'preventivi aperti'),
+      also: alsoIn(otherOpen),
     }),
     Object.freeze({
       id: 'open-count', label: 'Preventivi aperti',
@@ -545,6 +565,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       id: 'won-period', label: `Vinte in ${periodLabel}`,
       display: formatMinor(wonInPeriod.minor, query.currency),
       sub: plural(wonInPeriod.count, 'chiusura', 'chiusure'),
+      also: alsoIn(otherWonInPeriod),
     }),
     Object.freeze({
       id: 'win-rate', label: 'Tasso di chiusura',

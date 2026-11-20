@@ -1209,6 +1209,12 @@ test('Stato sync row carries the real fix-count badge, absent at zero', () => {
   assert.equal(inRow.length, 1);
   assert.equal(inRow[0].textContent, '2');
   assert.ok(inRow[0].parentNode.textContent.includes('Stato sync'));
+  // Restyle 454f1189ff97: «Apri» is the last thing on the row, after the
+  // badge, so it lines up at the right edge with every other row.
+  const rowKids = inRow[0].parentNode.children ?? inRow[0].parentNode.childNodes;
+  assert.equal(rowKids[rowKids.length - 1].textContent, 'Apri');
+  assert.ok(/\.bo-setting-label \{[^}]*flex: 1 1 auto/.test(readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8')),
+    'the label takes the free space, so «Apri» and the badge sit right');
 
   const zero = createMount();
   renderSettingsPanel({ doc, mount: zero, fixCount: 0, customerDataAvailable: true });

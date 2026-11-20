@@ -202,6 +202,9 @@ test('dashboard KPIs match hand-computed totals for 2026-10 EUR', (t) => {
   assert.equal(closing.display, formatMinor(14000, 'EUR'));
   assert.equal(closing.sub, '2 preventivi, 1 senza data attesa');
   assert.deepEqual(model.currencies.others, ['USD']);
+  // Restyle 54b9a2a2706f: the USD offer a6 (proposal, open) is never hidden.
+  assert.deepEqual(openValue.also, { display: formatMinor(5000, 'USD'), count: 1 });
+  assert.equal(wonPeriod.also, null, 'no USD won in the month: nothing added');
   assert.equal(model.truncated, false);
   assert.ok(Object.isFrozen(model) && Object.isFrozen(model.kpis) && Object.isFrozen(model.team));
 });

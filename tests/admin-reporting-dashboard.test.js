@@ -837,3 +837,17 @@ test('channelsLede with a malformed week never throws', async () => {
   );
   assert.equal(channelsLede({ total: 0, weeks: [] }), '0 primi contatti da un canale');
 });
+
+test('restyle 54b9a2a2706f: il valore aperto si legge «€ + USD», mai nascosto dietro «Solo EUR mostrati»', async () => {
+  const kpis = MODEL.kpis.map((kpi) => (kpi.id === 'open-value'
+    ? { ...kpi, also: { display: '30 USD', count: 1 } }
+    : kpi));
+  const { mount, view } = harness({ dashboard: { ...MODEL, kpis } });
+  await view.renderReporting();
+  const strong = mount.findAll('strong').map((node) => node.textContent);
+  assert.ok(strong.includes('26.000 € + 30 USD'), strong.join(' | '));
+  assert.ok(strong.includes('14.000 €'), 'a card without other currencies stays as it is');
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(!text.includes('Solo EUR mostrati'), text);
+  assert.ok(text.includes('Valore aperto e vinte contano anche USD'), text);
+});

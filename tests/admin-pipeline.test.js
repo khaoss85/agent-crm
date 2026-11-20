@@ -1,3 +1,4 @@
+import { formatAmount } from '../apps/admin/public/admin-core.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPipelineBoard } from '../apps/admin/public/admin-pipeline.js';
@@ -396,7 +397,7 @@ test('with several composed pipelines the board shows a selector instead of the 
   });
   await board.renderBoard('b2b-sales');
   assert.ok(!mount.textContent.includes('non mostrata'), 'no "non mostrata" line with a selector');
-  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'the count still names the other-board offer');
+  assert.ok(/1 offerta di un'altra pipeline( · .+ aperti)?\. /.test(mount.textContent), 'the count still names the other-board offer');
   const selects = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch');
   assert.equal(selects.length, 1, 'one pipeline selector');
   const labels = selects[0].childNodes.map((option) => option.textContent);
@@ -1753,7 +1754,7 @@ test('1e939a362c7c + 1cb4cc488340: the off-board disclosure lists every parked o
   assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
   const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
   assert.ok(toggle, 'the count is a button, not plain text');
-  assert.equal(toggle.textContent, '2 offerte di altre pipeline');
+  assert.equal(toggle.textContent, '2 offerte di altre pipeline · 1.000 € aperti', 'restyle e47da0d6655e: the count says the open value');
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   const list = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list');
   assert.ok((list.getAttribute('class') ?? '').includes('hidden'), 'folded until clicked');
@@ -1921,4 +1922,20 @@ test('48993bed7294: each currency forecasts with its own close rate', async () =
   assert.ok(box.textContent.includes('1.000 €'), `EUR: 100% of 1.000 € (${box.textContent})`);
   assert.ok(box.textContent.includes('0 USD'), `USD: 0% of 100 USD (${box.textContent})`);
   assert.match(box.textContent, /EUR 100% \(tasso di chiusura storico\); USD 0% \(tasso di chiusura storico\)/);
+});
+
+test('restyle e47da0d6655e: il richiamo «altre pipeline» dice il valore aperto per valuta, senza le chiuse', async () => {
+  const records = [
+    record('a', 'demo'),
+    { ...record('x', 'demo'), pipelineKey: null, pipelineStage: null, stage: 'proposal', valueCents: 1500, currency: 'EUR' },
+    { ...record('u', 'demo'), pipelineKey: null, pipelineStage: null, stage: 'proposal', valueCents: 3000, currency: 'USD' },
+    { ...record('w', 'demo'), pipelineKey: null, pipelineStage: null, stage: 'won', valueCents: 9900, currency: 'EUR' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createPipelineBoard({ doc, mount, client: stubClient(records) }).renderBoard('b2b-sales');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle);
+  assert.equal(toggle.textContent, `3 offerte di altre pipeline · ${formatAmount(1500, 'EUR')} + ${formatAmount(3000, 'USD')} aperti`);
+  assert.ok((toggle.getAttribute('class') ?? '').includes('pipeline-off-toggle'), 'a visible chip, not a bare link');
 });
