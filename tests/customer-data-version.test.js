@@ -9,9 +9,11 @@ import { createCustomerDataPackage } from '../packages/customer-data/src/index.j
 // Version 5: the erasure reason is a code from a closed list.
 // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
 // declared surface (propose-field-from-question, fill-ai-field-values).
-test('customer-data is version 6 since AI field proposal and fill joined the surface', () => {
+// Version 7 (backlog:1adf95307b31): listCustomerRecords reads the composed
+// opportunity pipeline (pipelines option) so Pagato is won.
+test('customer-data is version 7 since the pipeline-aware open-value rule joined the surface', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 6);
+  assert.equal(pkg.version, 7);
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),
     'the version-6 surface carries the AI field proposal operation (propose-field-from-question)');
   assert.ok(pkg.operations.some((operation) => operation.name === 'fill-ai-field-values'),

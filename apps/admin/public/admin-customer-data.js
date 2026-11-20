@@ -440,6 +440,21 @@ export function createCustomerDataView(deps) {
         });
         const counts = applied?.counts ?? countReceipts(applied?.receipts ?? []);
         let summary = `Importazione registrata: ${counts.accepted ?? 0} accettate, ${counts.rejected ?? 0} scartate, ${counts.skipped ?? 0} da decidere.`;
+        // Which rows did not make it, and why: counts alone send the
+        // operator back to the file to guess. The file line numbers are
+        // 1-based; a row kept out of the file mapping still names its batch
+        // position instead of vanishing (backlog:5bbf8bc9).
+        const leftOut = (applied?.receipts ?? []).filter((receipt) => receipt?.outcome !== 'accepted');
+        if (leftOut.length > 0) {
+          const names = leftOut.map((receipt) => {
+            const sent = built[receipt?.index];
+            const line = sent != null && Number.isInteger(sent.fileIndex)
+              ? sent.fileIndex + 1
+              : (receipt?.index ?? 0) + 1;
+            return `riga ${line} (${customerImportReasonLabel(receipt?.reasonCode)})`;
+          });
+          summary += ` Righe saltate: ${names.join('; ')} — le altre sono scritte.`;
+        }
         // Phones ride a second apply apart (the server row contract has no
         // phone field): only rows the main apply accepted can receive one. A
         // rejected or skipped row never lends its email to the phone batch,
