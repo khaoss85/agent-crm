@@ -597,3 +597,16 @@ test('9ff9a9ee1fea: the scheda window refuses a link without its place and sends
   assert.equal(client.confirms().length, 0, 'no write without the place label');
   assert.match(general(panel), /luogo/i, 'the note names the place in Italian');
 });
+
+test('verifica Mac 20/11: «Link riunione» nella finestra della scheda compare solo con Luogo Online', async () => {
+  const { panel } = await open();
+  const input = (name) => panel.findAll('input').find((node) => node.getAttribute('name') === name);
+  const wrapOf = (node) => node.parentNode;
+  assert.equal(wrapOf(input('appointment-locationUrl')).getAttribute('hidden'), '', 'senza luogo niente campo link');
+  input('appointment-location').value = 'Online';
+  input('appointment-location').dispatch('input');
+  assert.equal(wrapOf(input('appointment-locationUrl')).getAttribute('hidden'), null, 'Online: il link compare');
+  input('appointment-location').value = 'Via Roma 1';
+  input('appointment-location').dispatch('input');
+  assert.equal(wrapOf(input('appointment-locationUrl')).getAttribute('hidden'), '', 'in presenza: il link sparisce');
+});

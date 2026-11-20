@@ -2073,7 +2073,14 @@ export function createCustomerCardView(deps) {
       host: mount,
       customer: typeof card?.name === 'string' ? card.name : null,
       numbers,
-      ...(callAfterSave ? {} : { mode: 'save' }),
+      ...(callAfterSave ? {} : {
+        mode: 'save',
+        // backlog:28511aa43cc7: Annulla brings the composer back with the
+        // typed text — the draft survives through composerDrafts.
+        onCancel: typeof options.onCancel === 'function'
+          ? options.onCancel
+          : () => openComposer(card, navCtx, 'email'),
+      }),
       choose: async (number, held) => {
         if (held) {
           if (!callAfterSave) return null;
@@ -2994,16 +3001,26 @@ export function createCustomerCardView(deps) {
     // survives the window through composerDrafts, like through ✕.
     const missingPhone = channels.find((entry) => (entry.channel === 'whatsapp' || entry.channel === 'sms')
       && entry.recipient === null) ?? null;
+    // backlog:28511aa43cc7: the missing number reads on its own status
+    // line, never merged into the channels line below — one sentence per
+    // line, like the AI row reads them.
+    const offLines = [];
     if (missingPhone !== null) {
-      const line = el('span', undefined, `${missingPhone.label} manca perché il cliente non ha un numero. `);
+      const ownLine = el('p', 'bo-composer-off', `${missingPhone.label} manca perché il cliente non ha un numero. `);
       const add = el('button', 'bo-composer-add-phone', 'Aggiungi un numero');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'composer-add-phone');
       add.addEventListener('click', () => {
-        openNumberWindow(card, navCtx, [], { callAfterSave: false });
+        // backlog:28511aa43cc7: Annulla in the number window brings the
+        // composer back with the typed text — the draft survives through
+        // composerDrafts, like through ✕.
+        openNumberWindow(card, navCtx, [], {
+          callAfterSave: false,
+          onCancel: () => openComposer(card, navCtx, 'email'),
+        });
       });
-      line.appendChild(add);
-      offLine.appendChild(line);
+      ownLine.appendChild(add);
+      offLines.push(ownLine);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -3011,15 +3028,27 @@ export function createCustomerCardView(deps) {
     // collegato» line used to win — with nothing linked at all the one line
     // is the way to Connettori.
     const spaceUnlinked = !channels.some((entry) => entry.linked === true);
-    if (spaceUnlinked) {
-      offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
-    } else if (offLinked.length > 0) {
-      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
-      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+    if (missingPhone === null) {
+      if (spaceUnlinked) {
+        offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else if (offLinked.length > 0) {
+        offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      if (offLine.firstChild) offLines.push(offLine);
+    } else if (spaceUnlinked || offLinked.length > 0) {
+      const channelsLine = el('p', 'bo-composer-off', '');
+      if (spaceUnlinked) {
+        channelsLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else {
+        channelsLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        channelsLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      offLines.push(channelsLine);
     }
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
-    if (offLine.firstChild) body.appendChild(offLine);
+    for (const statusLine of offLines) body.appendChild(statusLine);
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
@@ -3027,7 +3056,7 @@ export function createCustomerCardView(deps) {
     // Collega when it links Connettori — the AI row then names it in words.
     const ai = composerAiRow({
       spaceId, navCtx, text,
-      connectorLink: Boolean(offLine.firstChild),
+      connectorLink: offLines.length > 0,
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
       restoreSubject: (value) => {
@@ -3263,16 +3292,35 @@ export function createCustomerCardView(deps) {
     offerMenu.setAttribute('role', 'menu');
     const offerMenuHidden = () => String(offerMenu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
     const syncOfferMenu = () => offer.setAttribute('aria-expanded', offerMenuHidden() ? 'false' : 'true');
-    const closeOfferMenu = () => {
+    // backlog:818092e31a15: opening the menu moves focus to its first
+    // voice; Freccia giù on the button enters that voice, Esc closes and
+    // gives focus back to the button.
+    const focusOfferFirstVoice = () => {
+      const first = offerMenu.querySelector('button');
+      if (typeof first?.focus === 'function') first.focus();
+    };
+    const openOfferMenu = () => {
+      offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu');
+      syncOfferMenu();
+      focusOfferFirstVoice();
+    };
+    const closeOfferMenu = (refocus = false) => {
       offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
       syncOfferMenu();
+      if (refocus && typeof offer.focus === 'function') offer.focus();
     };
     offer.addEventListener('click', () => {
-      offerMenu.setAttribute('class', offerMenuHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
-      syncOfferMenu();
+      if (offerMenuHidden()) openOfferMenu();
+      else closeOfferMenu();
     });
-    offer.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
-    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
+    offer.addEventListener('keydown', (event) => {
+      if (event?.key === 'ArrowDown') {
+        event.preventDefault?.();
+        if (offerMenuHidden()) openOfferMenu();
+        else focusOfferFirstVoice();
+      } else if (event?.key === 'Escape') closeOfferMenu(true);
+    });
+    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(true); });
     const offerAiName = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo cliente';
     const offerAi = uiAddOption(doc, {
       kind: 'ai', title: "Crea con l'AI", line: 'Descrivi l\u2019offerta all\u2019assistente',
@@ -3853,6 +3901,15 @@ export function createCustomerCardView(deps) {
     box.setAttribute('data-editing-field', String(def?.key ?? ''));
     const classes = String(box.getAttribute('class') ?? '');
     if (!classes.split(/\s+/).includes('bo-campo-editing')) box.setAttribute('class', `${classes} bo-campo-editing`.trim());
+    // Verifica Mac 20/11 07:29Z: Salva (200) or Annulla must close the
+    // editor. The repaint below re-reads open editors as drafts
+    // (readDrafts, review #835), so the editing marks go first — otherwise
+    // the repaint brings the same editor back and it never closes.
+    const closeEditor = () => {
+      box.removeAttribute('data-editing-field');
+      const now = String(box.getAttribute('class') ?? '').split(/\s+/).filter((name) => name !== '' && name !== 'bo-campo-editing');
+      box.setAttribute('class', now.join(' '));
+    };
     box.appendChild(el('h4', undefined, 'Campi personalizzati'));
     const rows = Array.isArray(ctx.values) ? ctx.values : [];
     const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
@@ -3878,6 +3935,7 @@ export function createCustomerCardView(deps) {
           resource: ctx.resource, id: ctx.id, key: def?.key, value: entry.read(),
         });
         toast('Campo salvato');
+        closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
         entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
@@ -3885,6 +3943,7 @@ export function createCustomerCardView(deps) {
       }
     }));
     cancel.addEventListener('click', async () => {
+      closeEditor();
       await renderCard(ctx.resource, ctx.id);
     });
   }
@@ -5546,16 +5605,35 @@ export function createCustomerCardView(deps) {
       const syncMenu = () => {
         button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
       };
-      const close = () => {
+      // backlog:818092e31a15: opening the menu moves focus to its first
+      // voice; Freccia giù on the button enters that voice, Esc closes
+      // and gives focus back to the button.
+      const focusStageFirstVoice = () => {
+        const first = menu.querySelector('button');
+        if (typeof first?.focus === 'function') first.focus();
+      };
+      const openStageMenu = () => {
+        menu.setAttribute('class', 'bo-scheda-stage-voices');
+        syncMenu();
+        focusStageFirstVoice();
+      };
+      const close = (refocus = false) => {
         if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
         syncMenu();
+        if (refocus && typeof button.focus === 'function') button.focus();
       };
       button.addEventListener('click', () => {
-        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-        syncMenu();
+        if (isClosed()) openStageMenu();
+        else close();
       });
-      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      button.addEventListener('keydown', (event) => {
+        if (event?.key === 'ArrowDown') {
+          event.preventDefault?.();
+          if (isClosed()) openStageMenu();
+          else focusStageFirstVoice();
+        } else if (event?.key === 'Escape') close(true);
+      });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(true); });
       const stageError = el('small', 'field-error', '');
       const stageStatus = el('small', 'bo-muted', '');
       stageStatus.setAttribute('role', 'status');
@@ -6034,7 +6112,11 @@ export function createCustomerCardView(deps) {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
           occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
-          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
+          // backlog:ece111d80305 / 9ff9a9ee1fea: the place rides the timeline
+          // read (#1092), so the row says where too — like the popover.
+          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot,
+            typeof item?.location === 'string' && item.location.trim() !== '' ? item.location.trim() : null]
+            .filter(Boolean).join(' · '),
           reason: null,
         };
       });
