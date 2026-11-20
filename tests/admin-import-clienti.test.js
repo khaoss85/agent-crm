@@ -217,6 +217,34 @@ test('applying registers the import and links the phones, then says so', async (
   assert.equal(mapping?.value, 'firstName');
 });
 
+test('the apply summary names which rows were skipped and why (backlog:5bbf8bc9)', async () => {
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Importazione registrata: 1 accettate, 1 scartate, 0 da decidere.'), text.slice(0, 600));
+  assert.ok(text.includes('Righe saltate: riga 2 (email non valida)'), `the skipped file row is named with its reason, got: ${text.slice(0, 600)}`);
+  assert.ok(text.includes('le altre sono scritte'), 'written rows are never called refused');
+});
+
+test('an apply that skips nothing names no skipped row', async () => {
+  const client = stubClient({
+    mainReceipts: [
+      { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+      { index: 1, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-bo' } },
+    ],
+  });
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  assert.ok(!mount.textContent.includes('Righe saltate'), 'no skipped-row line when everything was written');
+});
+
 test('a phone is never sent for a row the main import rejected', async () => {
   const csv = 'nome,email,telefono\nAda,ada@esempio.it,+39 333 1234567\nZed,zed@esempio.it,+39 333 9999999\n';
   const client = stubClient({

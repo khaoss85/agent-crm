@@ -239,6 +239,22 @@ test('backlog:6563edf41aab: Impostazioni conta anche il doppione del team', asyn
   assert.equal(warnings.length, 1);
   assert.ok(warnings[0].includes('bo-shell team count unreadable'));
   assert.ok(!warnings[0].includes('membri giù'));
+  // Review #1066 P2: the diagnostic names the workspace scope like the
+  // sync half — the selected space when known, the organization otherwise.
+  assert.ok(warnings[0].includes('spaceId=organizzazione'));
+
+  const scopedWarnings = [];
+  console.warn = (...args) => { scopedWarnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(membersDown, { spaceId: 'prova' }), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  // Due avvisi: team e sync, tutti e due con lo spazio selezionato.
+  const teamScoped = scopedWarnings.filter((line) => line.includes('bo-shell team count unreadable'));
+  assert.equal(teamScoped.length, 1);
+  assert.ok(teamScoped[0].includes('spaceId=prova'));
+  assert.ok(!teamScoped[0].includes('membri giù'));
 });
 
 test('the badge counts the session space first, the stored one only without a session', () => {
@@ -1053,6 +1069,12 @@ test('settings panel lists the four areas with honest availability', () => {
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
   assert.ok(empty.textContent.includes('Niente da sistemare.'));
+
+  // backlog:6563edf41aab: the singular agrees — «1 cosa», never «1 cose».
+  const single = createMount();
+  renderSettingsPanel({ doc, mount: single, fixCount: 1, customerDataAvailable: true });
+  assert.ok(single.textContent.includes('1 cosa da sistemare (vedi Stato sync).'));
+  assert.ok(!single.textContent.includes('1 cose da sistemare'));
 
   const unknown = createMount();
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });

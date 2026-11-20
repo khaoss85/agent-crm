@@ -15,8 +15,9 @@
 // What it reuses, never duplicates (MEM_ACC_REUSE):
 // - reads: the generic /api/modules/:module/records surface over the native
 //   record modules of packages/interactions (conversation, interaction-call,
-//   interaction-message), packages/intelligence (behavioral-signal) and
-//   packages/llm (llm-call-audit), plus /api/opportunities;
+//   interaction-message) and packages/intelligence (behavioral-signal), plus
+//   /api/opportunities and GET /api/space-permissions/effective (the space's
+//   real AI switches, server-resolved like the Spazi e accessi screen);
 // - writes: the same module action surface the handwritten views use
 //   (mark-read, close — both input-free, actor-derived, internal
 //   bookkeeping), and hash navigation for filtering/opening records;
@@ -34,6 +35,9 @@ import {
 } from './admin-agenti.js';
 import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
+// MEM_ACC_REUSE: gli interruttori veri stanno nella schermata Spazi e
+// accessi (stesse etichette, stesse funzioni di effettivo) — mai un doppione.
+import { SPAZI_AI_MASTER, effectiveSwitches, masterEnabled } from './admin-spazi-accessi.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -152,14 +156,14 @@ export const SUGGESTION_CATALOG = Object.freeze({
     { id: 'bo04:scheda:aggiungi-nota', title: 'Aggiungi una nota: …', detail: 'Le note del cliente, lette dalla scheda, e dove scriverne una.' },
   ]),
   impostazioni: Object.freeze([
-    { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Cosa fa da sola, cosa chiede, cosa dicono i registri.' },
+    { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Gli interruttori veri dell’AI in questo spazio: cosa fa da sola e cosa ti chiede.' },
   ]),
 });
 
 /** Generic fallback for screens outside the backoffice prototype. */
 const FALLBACK_SUGGESTIONS = Object.freeze([
   { id: 'bo04:oggi:urgenti', title: 'Cosa è più urgente oggi?', detail: 'Thread aperti e problemi di qualità, dai record reali.' },
-  { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Cosa fa da sola, cosa chiede, cosa dicono i registri.' },
+  { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Gli interruttori veri dell’AI in questo spazio: cosa fa da sola e cosa ti chiede.' },
 ]);
 
 /**
@@ -1101,23 +1105,40 @@ async function answerCallReport(client) {
 }
 
 /**
- * Cosa può fare l’AI: capability deterministiche + i registri reali di
- * packages/llm (llm-call-audit) come prova di cosa è stato fatto.
+ * Cosa può fare l’AI: gli interruttori veri dello spazio, letti da
+ * GET /api/space-permissions/effective (la stessa lettura della schermata
+ * Spazi e accessi, risolta lato server). A schermo solo etichette di
+ * prodotto con acceso/spento — mai nomi di modulo tecnici.
  */
-async function answerAiPuo(client) {
+async function answerAiPuo(client, spaceId = null) {
   const answer = emptyAnswer('bo04:impostazioni:ai-puo', 'Cosa può fare l’AI senza chiedermi?');
-  answer.lines.push('Da sola: leggere record, filtrare elenchi, segnare thread come letti.');
-  answer.lines.push('Chiede conferma prima di: chiudere un thread, aprire un thread per contattare un cliente, e di ogni invio verso un cliente.');
-  answer.lines.push('Le domande libere arrivano con la chiave (vedi sotto).');
-  const audit = await readRecords(client, 'llm-call-audit', 20, answer.trace.reads);
-  if (audit === null) {
-    answer.unavailable.push('Registri AI: modulo llm-call-audit non leggibile in questo spazio.');
+  const space = typeof spaceId === 'string' ? spaceId.trim() : '';
+  if (space === '') {
+    answer.unavailable.push('Gli interruttori AI di questo spazio stanno in Spazi e accessi: da qui non vedo lo spazio.');
     return answer;
   }
-  const dry = audit.filter((row) => row?.dryRun === true).length;
-  answer.lines.push(`Ultime ${audit.length} chiamate AI registrate: ${dry} dry-run, ${audit.length - dry} live.`);
-  const labelOf = (row) => `${shortText(row?.purpose, 24) || 'chiamata'} ${shortText(row?.model, 30) || ''} ${row?.dryRun === true ? '(dry-run)' : '(live)'}`.trim();
-  answer.sources.push(...takeSources(newestFirst(audit), 'llm-call-audit', labelOf, SUGGESTION_MAX_LISTED));
+  let body = null;
+  try {
+    body = await client.request(`/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`);
+  } catch {
+    body = null;
+  }
+  const overrides = body !== null && typeof body === 'object' && Array.isArray(body.overrides)
+    ? body.overrides
+    : null;
+  traceRead(answer.trace.reads, 'space-permissions/effective', null, overrides === null ? 'missing' : 'ok', overrides === null ? 0 : overrides.length);
+  if (overrides === null) {
+    answer.unavailable.push('I permessi AI non si sono potuti leggere. Riprova più tardi.');
+    return answer;
+  }
+  const masterOn = masterEnabled(space, overrides);
+  answer.lines.push(masterOn
+    ? `${SPAZI_AI_MASTER.label}: accesa.`
+    : `${SPAZI_AI_MASTER.label}: spenta: ogni azione diventa una proposta da approvare.`);
+  for (const entry of effectiveSwitches(space, overrides)) {
+    answer.lines.push(`• ${entry.label}: ${entry.enabled === true ? 'acceso' : 'spento'}.`);
+  }
+  answer.lines.push('Quello che è spento diventa una proposta da approvare.');
   return answer;
 }
 
@@ -1534,7 +1555,7 @@ export async function answerFreeLocal(client, title, context = null) {
   return null;
 }
 
-export async function runSuggestion(client, suggestionId, customer = null) {
+export async function runSuggestion(client, suggestionId, customer = null, spaceId = null) {
   if (client === null || typeof client !== 'object' || typeof client.request !== 'function') {
     throw new Error('L’assistente ha bisogno del client API per leggere i record.');
   }
@@ -1548,7 +1569,7 @@ export async function runSuggestion(client, suggestionId, customer = null) {
     case 'bo04:sequenze:lead-sito': return answerLeadSito(client);
     case 'bo04:reporting:call': return answerCallReport(client);
     case 'bo05:nuovo-modulo:crea-ai': return answerNuovoAi();
-    case 'bo04:impostazioni:ai-puo': return answerAiPuo(client);
+    case 'bo04:impostazioni:ai-puo': return answerAiPuo(client, spaceId);
     case 'bo04:scheda:cambia-telefono': return answerSchedaTelefono(client, customer);
     case 'bo04:scheda:aggiungi-nota': return answerSchedaNota(client, customer);
     default: throw new Error(`Suggerimento sconosciuto: ${shortText(suggestionId, 60) || '?'}`);
@@ -2191,7 +2212,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.pendingConfirmId = null;
     render();
     try {
-      state.answer = await runSuggestion(client, suggestionId, state.customerCtx);
+      state.answer = await runSuggestion(client, suggestionId, state.customerCtx, readSpace());
       pushHistory(state.answer);
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Suggerimento fallito.';

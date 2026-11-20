@@ -309,19 +309,73 @@ test('chiusura senza board: record come testo, nessun link morto', async () => {
   assert.ok(answer.lines.some((line) => line.includes('Prova costume')));
 });
 
-test('ai-puo: registri llm-call-audit reali + capability deterministiche', async () => {
+// Voce a66a6b0eb3e8 (repro): «Cosa può fare l'AI senza chiedermi?»
+// rispondeva con 3 frasi fisse e «modulo llm-call-audit» invece degli
+// interruttori veri dello spazio (i 6 di Spazi e accessi).
+test('ai-puo: elenca gli interruttori veri dello spazio, nessun nome di modulo', async () => {
   const client = stubClient({
-    '/api/modules/llm-call-audit/records?limit=20': {
-      items: [
-        { id: 'audit-1', purpose: 'assistant', model: 'gpt-6-luna', dryRun: true },
-        { id: 'audit-2', purpose: 'suggest', model: 'gpt-6-luna', dryRun: true },
-      ],
+    '/api/space-permissions/effective?spaceId=space-1': {
+      spaceId: 'space-1',
+      overrides: [{ spaceId: 'space-1', permission: 'send-without-approval', enabled: true }],
+      resolved: {
+        'merge-duplicates': true, drafts: true, 'send-without-approval': true,
+        'book-appointments': true, 'move-offers': true,
+      },
+      aiEnabled: true,
     },
   });
+  const answer = await runSuggestion(client, 'bo04:impostazioni:ai-puo', null, 'space-1');
+  const text = [...answer.lines, ...answer.unavailable].join('\n');
+  for (const label of [
+    'AI dello spazio',
+    'Unire i contatti duplicati',
+    'Scrivere bozze di risposta',
+    'Inviare risposte senza approvazione',
+    'Fissare appuntamenti negli slot liberi',
+    'Spostare offerte nella pipeline',
+  ]) {
+    assert.ok(text.includes(label), `manca l'interruttore: ${label}`);
+  }
+  assert.ok(text.includes('Inviare risposte senza approvazione: acceso'), 'override flipped wins');
+  assert.ok(!text.includes('llm-call-audit'), 'nome di modulo tecnico a schermo');
+  assert.ok(!text.includes('space-permission-override'), 'nome di modulo tecnico a schermo');
+  assert.ok(answer.trace.reads.some((read) => read.target === 'space-permissions/effective' && read.status === 'ok'));
+});
+
+test('ai-puo: master spento detto chiaro, interruttori comunque elencati', async () => {
+  const client = stubClient({
+    '/api/space-permissions/effective?spaceId=space-1': {
+      spaceId: 'space-1',
+      overrides: [{ spaceId: 'space-1', permission: 'ai-enabled', enabled: false }],
+      resolved: {
+        'merge-duplicates': true, drafts: true, 'send-without-approval': false,
+        'book-appointments': true, 'move-offers': true,
+      },
+      aiEnabled: false,
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:impostazioni:ai-puo', null, 'space-1');
+  const text = [...answer.lines, ...answer.unavailable].join('\n');
+  assert.ok(text.includes('AI dello spazio: spenta'), 'master off named');
+  assert.ok(text.includes('Inviare risposte senza approvazione: spento'), 'switches keep their own value');
+  assert.ok(text.includes('proposta da approvare'), 'off means proposal');
+  assert.ok(!text.includes('llm-call-audit'));
+});
+
+test('ai-puo: lettura fallita onesta, senza nomi di modulo', async () => {
+  const client = stubClient({});
+  const answer = await runSuggestion(client, 'bo04:impostazioni:ai-puo', null, 'space-1');
+  assert.deepEqual(answer.lines, []);
+  assert.ok(answer.unavailable.some((line) => line.includes('Riprova più tardi')));
+  assert.ok(!answer.unavailable.join('\n').includes('llm-call-audit'));
+});
+
+test('ai-puo: senza spazio rimanda a Spazi e accessi, senza nomi di modulo', async () => {
+  const client = stubClient({});
   const answer = await runSuggestion(client, 'bo04:impostazioni:ai-puo');
-  assert.deepEqual(sourceIds(answer), ['audit-1', 'audit-2']);
-  assert.ok(answer.lines.some((line) => line.includes('dry-run')));
-  assert.ok(answer.lines.some((line) => line.includes('conferma')));
+  assert.ok(answer.unavailable.some((line) => line.includes('Spazi e accessi')));
+  assert.ok(!answer.unavailable.join('\n').match(/llm-call-audit|space-permission-override/));
+  assert.equal(client.calls.length, 0, 'no request without a space');
 });
 
 test('suggerimento sconosciuto rifiuta, senza client rifiuta', async () => {

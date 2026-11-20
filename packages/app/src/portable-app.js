@@ -10,6 +10,7 @@ import {
   affineStorageFor,
   isSyncStorage,
   runWithAffineStorage,
+  settleStorageRead,
   storageMany,
   storageMaybeOne,
 } from '../../core/src/storage-runtime.js';
@@ -210,7 +211,10 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
           // on this, never on the name — same contract as the v1 adapters.
           placeholder: row.placeholder === true || row.placeholder === 1,
         }));
-      return storageMany(database, {
+      // storageMany maps per row: the array filter runs here, on the whole
+      // result, like the v1 adapters — never as the row mapper. The read
+      // settles through the shared storage helper (sync or async).
+      const rows = storageMany(database, {
         kind: 'select',
         table: 'companies',
         columns: ['id', 'name', 'domain', 'placeholder', 'created_at'],
@@ -218,7 +222,8 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
         ],
-      }, mapRows);
+      });
+      return settleStorageRead(database, rows, mapRows);
     },
     findContactByEmail(email) {
       if (typeof email !== 'string' || email.trim() === '') {

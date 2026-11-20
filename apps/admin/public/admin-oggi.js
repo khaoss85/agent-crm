@@ -35,7 +35,7 @@ import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials, isStaleRead } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
 import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
@@ -508,6 +508,65 @@ function badgeInitials(label) {
   return customerInitials(label);
 }
 
+/**
+ * One advisor action from a written commitment (backlog:df9e199eb4ef
+ * follow-up): a promise the team wrote, or a customer request left
+ * unanswered. The CTA opens the customer record the commitment is about —
+ * creating the reminder and the durable «Ignora» are the declared
+ * follow-up (no store for either exists yet), so the card navigates
+ * instead of inventing a write. The note says the extraction used no AI:
+ * it is synchronous by construction, identical with the AI off.
+ * Malformed commitments (no key, no quote) contribute nothing, never a
+ * crash — same contract as the advisor signals.
+ * @param {Record<string, any>} commitment an open commitment from the `/api/oggi/commitments` feed
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+/** Commitment kinds, mirrored from packages/agents (the feed carries them; the bundle cannot import the package). */
+const COMMITMENT_CUSTOMER_REQUEST = 'customer-request';
+
+function commitmentAction(commitment, names = {}, now = new Date()) {
+  const key = nonEmptyText(commitment?.key);
+  const quote = nonEmptyText(commitment?.quote);
+  if (!key || !quote) return null;
+  const customerRef = commitment?.customerRef ?? {};
+  const subjectResource = nonEmptyText(customerRef?.subjectResource);
+  const subjectId = nonEmptyText(customerRef?.subjectId);
+  const label = subjectName({ subjectResource, subjectId }, names) ?? APPOINTMENT_GUEST_LABEL;
+  const dueLabel = nonEmptyText(commitment?.dueLabel);
+  const written = romeDayPhrase(commitment?.occurredAt, now, 'il');
+  const when = dueLabel !== null ? `, scade ${dueLabel}` : '';
+  const wrote = written !== '' ? ` scritto${written}` : ' scritto';
+  const why = commitment?.kind === COMMITMENT_CUSTOMER_REQUEST
+    ? `Richiesta senza risposta${wrote}${when} — ${label}: «${quote}».`
+    : `Impegno scritto${wrote}${when} — ${label}: «${quote}».`;
+  const card = subjectResource && subjectId
+    ? cardHrefForSubject({ subjectOwner: 'host', subjectResource, subjectId })
+    : null;
+  const sourceKind = commitment?.source?.kind === 'note' ? 'work-activity' : 'interaction-message';
+  const sourceId = nonEmptyText(commitment?.source?.id);
+  const href = card ?? (sourceId !== null ? recordDetailHref(sourceKind, sourceId) : null);
+  return Object.freeze({
+    id: `bo04:commitment:${key}`,
+    kind: commitment?.kind === COMMITMENT_CUSTOMER_REQUEST ? 'commitment-request' : 'commitment-promise',
+    mono: '✦',
+    channel: null,
+    title: quote,
+    why,
+    note: 'Rilevato dagli scritti, senza AI.',
+    cta: card !== null ? 'Apri scheda' : 'Vedi fonte',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: sourceKind, id: sourceId, label: `Impegno di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      quote: commitment?.quote ?? null,
+      occurredAt: commitment?.occurredAt ?? null,
+      dueAt: commitment?.dueAt ?? null,
+    }),
+  });
+}
+
 function followupAction(task, now = new Date()) {
   const id = nonEmptyText(task?.id);
   if (!id) return null;
@@ -838,7 +897,7 @@ export function buildSignalActions({ appointments = [], messages = [], conversat
  * read — a card whose words depend on them says so (`namePending`).
  * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, ownAddresses?: Array<string>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false, commitments = [] } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -852,6 +911,13 @@ export function buildAdvisorActions({ tasks = [], appointments = [], messages = 
   const actions = [];
   for (const task of open) {
     const action = followupAction(task, now);
+    if (action) actions.push(action);
+  }
+  // backlog:df9e199eb4ef follow-up: the written commitments the fixed-rule
+  // signals cannot see — after the open follow-ups, before the signals.
+  for (const commitment of Array.isArray(commitments) ? commitments : []) {
+    if (commitment == null) continue;
+    const action = commitmentAction(commitment, names, now);
     if (action) actions.push(action);
   }
   // backlog:d08331558c50: the signals read their own records — a missed
@@ -1123,22 +1189,20 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): the
     // contact's own channel or address, never the team person holding the
-    // slot (VERIFIER_BACK 2026-11-17 on backlog:57e3d1685e58: live «Prova
-    // verifica 40» read «daniele pelleri», the roster name of the
-    // operator, instead of the contact's email). The contact's own address
-    // from the stored label reads first (a synced invitee keeps its email
-    // there); the team member's real name is only the fallback when no
-    // contact address exists, then a short honest cue from the notes.
-    // Never invented when nothing exists, and never a technical id
-    // (production 10/11 read «broker+…@accordo.invalid» and «google|…»
-    // here). A team mailbox is never a name either (backlog:57e3d1685e58:
-    // the operator's own address read under the contact).
-    const team = memberLabel(row?.teamMemberId, members);
-    const teamName = team !== null && !team.includes('@') ? team : null;
+    // slot (OWNER_ANSWER 2026-11-19 15:3xZ on backlog:57e3d1685e58: under
+    // the contact the screen read the coach name instead of the contact's
+    // channel/email). The contact's own address from the stored label
+    // reads first (a synced invitee keeps its email there); when the
+    // label holds the contact name with no address in it, a short honest
+    // cue from the notes reads instead — the roster name of the slot
+    // holder never does. Never invented when nothing exists, and never a
+    // technical id (production 10/11 read «broker+…@accordo.invalid» and
+    // «google|…» here). A team mailbox is never a name either
+    // (backlog:57e3d1685e58: the operator's own address read under the
+    // contact).
     const labelMail = memberText(row?.subjectLabel);
     const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
     const cue = contactMail
-      ?? teamName
       ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -2064,7 +2128,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     repliesPending: false,
     /** The names of «Da rispondere» are still reading (server view or profiles). */
     inboxNamesPending: false,
-    /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
+    /** Organization team (`GET /api/spine/memberships` items, fail-soft). */
     members: [],
     next: null,
   };
@@ -2167,7 +2231,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // the profile never holds the essentials paint. Voce 57994a8c7287: since
   // the pin red it no longer even starts beside the essentials — it joins
   // the second wave and lands with the names below.
-  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
+  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage, commitmentsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -2178,6 +2242,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(reads, 'conversation').catch(() => null) : skip,
     submissionsRead,
+    // backlog:df9e199eb4ef follow-up: the written-commitment feed for the
+    // advisor — fail-soft like every other read, never holding the paint.
+    reads.request('/api/oggi/commitments').then(
+      (answer) => answer,
+      (error) => { noteReadFailure('commitments', error); return null; },
+    ),
   ]);
   // Voce 57994a8c7287: the second wave starts only now that the essentials
   // are in — profile, roster and the two customer-data views, each
@@ -2224,6 +2294,14 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   if (submissionsPage != null) {
     outcome.submissions = submissionsPage.rows;
     outcome.submissionsPartial = submissionsPage.capped === true;
+  }
+  // backlog:df9e199eb4ef follow-up: the feed is optional — without it the
+  // advisor simply shows no written-commitment proposal, never a failure.
+  if (commitmentsPage != null) {
+    outcome.commitments = Array.isArray(commitmentsPage.open) ? commitmentsPage.open : [];
+    outcome.commitmentsPartial = commitmentsPage.partial === true;
+  } else {
+    outcome.commitments = [];
   }
   if (connectionsPage != null) {
     outcome.connections = connectionsPage.rows;
@@ -3011,9 +3089,10 @@ export function renderOggi({
       } else {
         cell.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
       }
-      // The prototype's "chi" line under every appointment: who holds the
-      // slot or what the appointment is about. A shared muted token (no new
-      // stylesheet); the supervisor dresses the exact spacing.
+      // The prototype's "chi" line under every appointment: the contact's
+      // own channel/email or what the appointment is about, never the slot
+      // holder. A shared muted token (no new stylesheet); the supervisor
+      // dresses the exact spacing.
       if (entry?.whoPending === true) {
         cell.appendChild(pendingText(doc, 'div', 'bo-muted', '', true, '45%'));
       } else if (typeof entry?.who === 'string' && entry.who !== '') {
@@ -3416,6 +3495,9 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       names: last.appointmentNames ?? {},
       pendingNames,
+      // backlog:df9e199eb4ef follow-up: without this the written-commitment
+      // feed loads but never paints — the verifier's 19/11 NON PASSA.
+      commitments: last.commitments ?? [],
     });
     lastBuilt = built;
     const merged = [...built.actions];
