@@ -121,6 +121,17 @@ export function openAppointmentPanel(deps) {
   locationUrl.setAttribute('name', 'appointment-locationUrl');
   locationUrl.setAttribute('placeholder', 'Solo se Online: https://…');
   field('locationUrl', 'Link riunione', locationUrl, true);
+  // Verifica Mac 20/11 08:4xZ: like the Calendario form, «Link riunione»
+  // shows only when the place says Online (or a link is already there).
+  const linkWrap = locationUrl.parentNode;
+  const syncLink = () => {
+    if (!linkWrap || typeof linkWrap.setAttribute !== 'function') return;
+    const online = /online/i.test(String(location.value ?? '')) || String(locationUrl.value ?? '').trim() !== '';
+    if (online) linkWrap.removeAttribute('hidden');
+    else linkWrap.setAttribute('hidden', '');
+  };
+  location.addEventListener('input', syncLink);
+  syncLink();
   const personHint = el('small', 'bo-muted', '');
   person.parentNode.appendChild(personHint);
   body.appendChild(fields);
