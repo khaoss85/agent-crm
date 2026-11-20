@@ -102,6 +102,14 @@ export const SETTINGS_AREAS = Object.freeze([
  */
 export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
 
+/**
+ * Reason shown by every schema-driven voice while the space's schema has
+ * not been read yet (backlog:312dd81f83ba, ritorno 1): the menu waits
+ * instead of claiming «non composto in questo spazio» for a space it has
+ * not seen. A space known to lack the package keeps the reason above.
+ */
+export const SCHEMA_LOADING_REASON = 'Spazio in caricamento…';
+
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
   oggi: 'Chiedi: «cosa è più urgente oggi?»',
@@ -431,8 +439,26 @@ export function mergeSpaces(primary, secondary) {
 }
 
 /**
+ * Canonical space order (backlog:8e1092b95c8a): spaces sorted by id, so the
+ * menu numbers (⌘N), the de-duplicated initials and the ⌘1/2/3 shortcuts all
+ * read from the same order no matter which source listed the spaces first.
+ * The same space keeps the same number and initials in every menu render.
+ * @param {unknown} spaces
+ */
+export function canonicalSpaceOrder(spaces) {
+  const list = Array.isArray(spaces) ? [...spaces] : [];
+  list.sort((left, right) => {
+    const a = left != null && typeof left.id === 'string' ? left.id : '';
+    const b = right != null && typeof right.id === 'string' ? right.id : '';
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return list;
+}
+
+/**
  * Resolve a ⌘1/2/3 (or Ctrl+1/2/3) keypress to a space id among the user's
- * spaces. Anything else — no modifier, another key, out of range — is null.
+ * spaces, in canonical order (see `canonicalSpaceOrder`). Anything else —
+ * no modifier, another key, out of range — is null.
  * @param {{ metaKey?: boolean, ctrlKey?: boolean, key?: string }} event
  * @param {Array<{ id: string }>} spaces
  */
@@ -440,9 +466,10 @@ export function resolveSpaceShortcut(event, spaces) {
   if (event == null || (event.metaKey !== true && event.ctrlKey !== true)) return null;
   const key = event.key;
   if (typeof key !== 'string' || !/^[1-9]$/.test(key)) return null;
+  const ordered = canonicalSpaceOrder(spaces);
   const index = Number(key) - 1;
-  if (!Array.isArray(spaces) || index < 0 || index >= spaces.length) return null;
-  const target = spaces[index];
+  if (index < 0 || index >= ordered.length) return null;
+  const target = ordered[index];
   return target != null && typeof target.id === 'string' ? target.id : null;
 }
 
@@ -555,7 +582,8 @@ export function spaceSwitcherLabel(spaces) {
 }
 
 /**
- * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
+ * Space-menu rows with the ⌘N hint, in canonical id order
+ * (backlog:8e1092b95c8a). Only the first nine spaces
  * get a hint; the rest render without one. Display initials never repeat
  * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
@@ -571,7 +599,9 @@ export function spaceSwitcherLabel(spaces) {
  * @param {Array<string> | null} [memberIds] ids the session profile names
  */
 export function spaceMenuItems(spaces, activeId, memberIds = null) {
-  const list = Array.isArray(spaces) ? spaces : [];
+  // backlog:8e1092b95c8a: canonical order, so number and initials never
+  // depend on which source listed the spaces first.
+  const list = canonicalSpaceOrder(spaces);
   const seen = new Set();
   const memberSet = memberIds == null ? null : new Set(
     (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
@@ -615,11 +645,15 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  * write the space's agents and sequences — left alone they would keep the
  * space just left behind. Calendario too (review #664): its week and its
  * queued phrase search belong to one space.
+ * Voce 5fc6709109fa: the dashboard is Oggi, the most space-scoped screen
+ * of all — after Cambia spazio it re-reads the new space in place instead
+ * of keeping the space just left behind. Unmounted the dashboard is the
+ * framework demo, so re-routing it is a no-op paint.
  * @param {unknown} view the routed view id
  * @param {{ mounted?: boolean }} [options]
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
-  if (view === 'dashboard') return mounted === true;
+  if (view === 'dashboard') return true;
   return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
@@ -637,12 +671,39 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
  * Squadre only when the same package serves squads (squadsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean }} input
+ * `schemaKnown: false` while the space's schema has not been read yet:
+ * every voice the schema drives waits with the loading reason instead of
+ * claiming the package is missing (backlog:312dd81f83ba, ritorno 1).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, schemaKnown?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, schemaKnown = true } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
+  if (schemaKnown !== false) {
+    return buildKnownShellNav({ pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, firstPipeline });
+  }
+  // The schema has not answered yet: schema-driven voices wait. Voices that
+  // need no schema (Oggi, Calendario, Reporting…) keep their shape, and
+  // Sequenze stays out until the schema says it is composed.
+  const items = SHELL_ITEMS.map((item) => {
+    if (item.id === 'clienti' || item.id === 'pipeline' || item.id === 'agenti' || item.id === 'squadre' || item.id === 'sequenze') {
+      return { ...item, route: null, available: false, disabledReason: SCHEMA_LOADING_REASON };
+    }
+    if (item.route === null) {
+      return { ...item, available: false, disabledReason: `In arrivo con ${item.story}` };
+    }
+    return { ...item, available: true, disabledReason: '' };
+  });
+  return items;
+}
+
+/**
+ * Build the sidebar model from a schema already read: generated modules are
+ * the "personalizzati" group, the first composed pipeline backs Pipeline.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, firstPipeline?: { name?: unknown, label?: unknown } }} input
+ */
+function buildKnownShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, firstPipeline = null } = {}) {
   const items = SHELL_ITEMS.map((item) => {
     if (item.id === 'clienti') {
       if (customerDataAvailable) {
@@ -1013,7 +1074,7 @@ export function createShellView({
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
     const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
-      line: 'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato' });
+      line: 'Descrivi il modulo, il tuo agente di coding lo prepara separato dal resto' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {

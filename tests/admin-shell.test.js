@@ -18,6 +18,7 @@ import {
   loadClientCount,
   loadFixCount,
   resolveBadgeSpaceId,
+  canonicalSpaceOrder,
   defaultSpaces,
   mergeSpaces,
   readSpaces,
@@ -641,6 +642,32 @@ test('Clienti is available only when the customer-data package is composed', () 
     assert.match(off.disabledReason, /non composto/);
     assert.equal(off.story, 'BO-F1');
   }
+});
+
+// backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): senza la
+// copia dello schema il menu mente — Clienti, Pipeline, Agenti e Squadre
+// «non composto» o «non attivi», Sequenze assente. Finché lo schema non è
+// letto davvero, le voci che dipendono da lui aspettano: mai un falso «non
+// composto». Red before the cure: no loading state exists.
+test('312dd81f83ba: before the schema arrives the menu waits instead of claiming «non composto»', () => {
+  const nav = buildShellNav({ schemaKnown: false });
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  for (const id of ['clienti', 'pipeline', 'agenti', 'squadre']) {
+    assert.equal(byId[id].available, false, `${id} still waits for the schema`);
+    assert.ok(!/non composto|non attiv/i.test(byId[id].disabledReason), `${id} never claims «non composto» before the schema`);
+    assert.match(byId[id].disabledReason, /caricamento/i, `${id} says it is loading`);
+  }
+  // Voices that need no schema keep their shape while the schema loads.
+  for (const [id, route] of [['oggi', '#/'], ['calendario', '#/calendario'], ['reporting', '#/reporting']]) {
+    assert.equal(byId[id].available, true, `${id} never waits for the schema`);
+    assert.equal(byId[id].route, route);
+  }
+  // Once the schema is known, the real composition paints as before: a
+  // space known to lack the package still says «non composto».
+  const known = buildShellNav({ customerDataAvailable: false, schemaKnown: true });
+  assert.match(known.find((item) => item.id === 'clienti').disabledReason, /non composto/);
+  const unknown = buildShellNav();
+  assert.match(unknown.find((item) => item.id === 'clienti').disabledReason, /non composto/, 'callers that never heard of the flag keep the old shape');
 });
 
 test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
@@ -1422,4 +1449,45 @@ test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in
     assert.equal(screen.label, label);
   }
   assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
+});
+
+test('backlog:8e1092b95c8a: stesso spazio, stesso numero e stesse iniziali nel menu', () => {
+  const spaces = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'test-2f07', name: 'Prova verifica' },
+  ];
+  const flipped = [...spaces].reverse();
+  // L'ordine canonico è per id, da qualunque fonte arrivi l'elenco.
+  assert.deepEqual(canonicalSpaceOrder(flipped).map((space) => space.id), ['presti-group', 'test-2f07']);
+  assert.deepEqual(canonicalSpaceOrder(null), []);
+  const rows = spaceMenuItems(spaces, 'test-2f07');
+  const rowsFlipped = spaceMenuItems(flipped, 'test-2f07');
+  assert.deepEqual(
+    rowsFlipped.map((row) => [row.id, row.keyHint, row.initials]),
+    rows.map((row) => [row.id, row.keyHint, row.initials]),
+    'numbers and initials never depend on the listing order',
+  );
+  assert.equal(rows[0].id, 'presti-group');
+  assert.equal(rows[0].keyHint, '⌘1');
+  assert.equal(rows[1].keyHint, '⌘2');
+  assert.equal(resolveSpaceShortcut({ metaKey: true, key: '1' }, flipped), 'presti-group');
+  // Sigle in collisione: vince sempre lo stesso spazio, in qualunque ordine.
+  const clash = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'prova', name: 'Prova' },
+  ];
+  const clashRows = spaceMenuItems(clash, 'prova');
+  const clashFlipped = spaceMenuItems([...clash].reverse(), 'prova');
+  assert.deepEqual(
+    clashFlipped.map((row) => [row.id, row.initials]),
+    clashRows.map((row) => [row.id, row.initials]),
+  );
+  assert.equal(clashRows.find((row) => row.id === 'presti-group').initials, 'PR');
+
+  // Il menu «+ Nuovo modulo» non mostra parole tecniche inglesi.
+  const { sidebar } = renderShell();
+  const addMenu = sidebar.findAll('div').find((node) => (node.className ?? '').split(/\s+/).includes('bo-add-menu'));
+  assert.ok(addMenu, 'the add menu renders');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('bundle'), 'no bundle in the add menu');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('manifest'), 'no manifest in the add menu');
 });

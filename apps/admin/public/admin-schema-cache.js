@@ -15,6 +15,10 @@
  * this tab. A renewed copy that differs (version or content) is kept and
  * `onChange(space)` tells the shell to repaint the screen.
  *
+ * A boot read dropped as stale (its screen moved on) proves nothing, so it
+ * is read again once with a fresh key; every wait has a timeout that
+ * re-reads, so a hung fetch never hangs the menu (backlog:312dd81f83ba).
+ *
  * The copy is kept per space — never one space's schema for another — in
  * memory and, when a storage is given, in the tab's sessionStorage, so a
  * reload of the same tab opens without waiting. The schema is the
@@ -32,6 +36,7 @@
  *   space?: () => string | null,
  *   storage?: { getItem: (key: string) => string | null, setItem: (key: string, value: string) => void } | null,
  *   onChange?: (space: string) => void,
+ *   timeoutMs?: number,
  * }} [options]
  */
 export function withSchemaCache(request, {
@@ -41,6 +46,7 @@ export function withSchemaCache(request, {
   storage = null,
   onChange = () => {},
   warn = defaultWarn,
+  timeoutMs = 10_000,
 } = {}) {
   // Review Muse #898: a swallowed failure leaves its cause — once per kind,
   // never a burst on every read.
@@ -85,12 +91,23 @@ export function withSchemaCache(request, {
       return null;
     }
   };
+  /**
+   * Whether a schema read failed only because its screen moved on
+   * (READ_STALE from admin-core.js): the drop proved nothing about the space,
+   * so the wait reads again with a fresh key instead of failing. Duck-typed
+   * by code so this module stays standalone and node-testable.
+   * @param {unknown} error
+   */
+  const isStaleDrop = (error) => error !== null
+    && typeof error === 'object'
+    && /** @type {any} */ (error).code === 'READ_STALE';
+
   /** @param {string} key @param {string} path @param {any} options */
   const renew = (key, path, options) => {
     const running = inFlight.get(key);
     if (running) return running;
     const before = copies.get(key) ?? null;
-    const promise = request(path, options).then((value) => {
+    const store = (value) => {
       let text;
       try {
         text = JSON.stringify(value);
@@ -115,7 +132,40 @@ export function withSchemaCache(request, {
         }
       }
       return value;
-    });
+    };
+    // backlog:312dd81f83ba (ritorno 1): the boot read without a copy is
+    // dropped as stale on purpose — route() moves the navigation token
+    // right after it leaves — and the drop proved nothing. It is read
+    // again once, with the fresh key; a drop that stays stale still fails.
+    let attempts = 0;
+    const attempt = () => {
+      attempts += 1;
+      return request(path, options).then(store, (error) => {
+        if (isStaleDrop(error) && attempts === 1) return attempt();
+        throw error;
+      });
+    };
+    // backlog:312dd81f83ba (ritorno 1): every wait has a timeout that
+    // re-reads — a hung fetch never hangs the menu. The timed-out flight
+    // leaves the map, so the next wait starts a fresh read; a late answer
+    // from the orphaned flight still lands as the copy (self-healing).
+    const limit = Number.isInteger(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0;
+    let timer = null;
+    const network = attempt();
+    const guarded = limit > 0 && typeof setTimeout === 'function' && typeof clearTimeout === 'function'
+      ? new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          timer = null;
+          if (inFlight.get(key) === promise) inFlight.delete(key);
+          reject(Object.assign(new Error('schema read timed out'), { code: 'SCHEMA_READ_TIMEOUT' }));
+        }, limit);
+        network.then(
+          (value) => { if (timer !== null) { clearTimeout(timer); timer = null; } resolve(value); },
+          (error) => { if (timer !== null) { clearTimeout(timer); timer = null; } reject(error); },
+        );
+      })
+      : network;
+    const promise = guarded;
     inFlight.set(key, promise);
     promise.then(
       () => { if (inFlight.get(key) === promise) inFlight.delete(key); },
