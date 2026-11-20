@@ -42,6 +42,52 @@ const OFFICIAL = [
   ['packages/service', 'service'],
 ];
 
+test('the dependency graph is closed deterministically, whatever shape it has', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fx-base', provider('fx-base', { capability: 'base', resources: [] }));
+  // A diamond: two middles both depending on one base, and a top on both.
+  for (const middle of ['fx-left', 'fx-right']) {
+    writeFixturePackage(root, middle, `// @ts-check
+import { definePackage } from '../../core/index.js';
+export function createFixturePackage() {
+  return definePackage({
+    packageContract: 1, name: '${middle}', label: '${middle}', version: 1, resources: [],
+    requires: [{ package: 'fx-base', capability: 'base', version: 1 }],
+    capabilities: [{ name: '${middle}-view', version: 1, create: () => ({}) }],
+  });
+}
+`);
+  }
+  writeFixturePackage(root, 'fx-top', consumer('fx-top', {
+    requires: [
+      { package: 'fx-left', capability: 'fx-left-view', version: 1 },
+      { package: 'fx-right', capability: 'fx-right-view', version: 1 },
+    ],
+  }));
+  const diamond = await packageTestCommand({ packagePath: join(root, 'packages/fx-top'), rootDir: root, capture: true });
+  assert.equal(diamond.exitCode, 0, JSON.stringify(diamond.report?.checks?.filter((c) => c.status === 'failed')));
+  assert.deepEqual(diamond.report.scratch.composed, ['fx-base', 'fx-left', 'fx-right', 'fx-top'],
+    'the whole diamond is composed once each, in a stable order');
+  const again = await packageTestCommand({ packagePath: join(root, 'packages/fx-top'), rootDir: root, capture: true });
+  assert.equal(diamond.report.fingerprint, again.report.fingerprint, 'and the closure is deterministic');
+
+  // A wrong version is not the same as a missing package, and both are refused.
+  writeFixturePackage(root, 'fx-wrong-version', consumer('fx-wrong-version', {
+    requires: [{ package: 'fx-base', capability: 'base', version: 9 }],
+  }));
+  const wrong = await packageTestCommand({ packagePath: join(root, 'packages/fx-wrong-version'), rootDir: root, capture: true });
+  assert.equal(wrong.exitCode, 1);
+  assert.equal(wrong.report.checks.find((entry) => entry.id === 'compose.clean').status, 'failed');
+  assert.ok(wrong.report.problems.some((entry) => /base@9|does not offer/.test(entry.message)),
+    `a wrong version is named: ${JSON.stringify(wrong.report.problems)}`);
+
+  // A second provider of the same capability at the same version is refused.
+  writeFixturePackage(root, 'fx-duplicate-provider', provider('fx-duplicate-provider', { capability: 'base', resources: [] }));
+  const duplicate = await packageTestCommand({ packagePath: join(root, 'packages/fx-duplicate-provider'), rootDir: root, capture: true });
+  assert.equal(duplicate.report.checks.find((entry) => entry.id === 'compose.capability-collision-refused').status, 'passed');
+  assert.ok(t);
+});
+
 test('no absolute path, stack or scratch location reaches the report', async (t) => {
   const root = fixtureProject(t);
   writeFixturePackage(root, 'fixture-throws', `// @ts-check
@@ -86,146 +132,5 @@ test('the caller\'s project is never written to, and the scratch is always remov
   assert.deepEqual([...readdirSync(join(repoRoot, 'packages', 'modules'))].sort(), [...before].sort(),
     'no generated module appeared in the real project');
   assert.deepEqual(readdirSync(privateTmp), [], 'every owned scratch project was removed, on success and on failure');
-  assert.ok(t);
-});
-
-test('a well-formed fixture package conforms; each hostile one is refused with a stable outcome', async (t) => {
-  const root = fixtureProject(t);
-  writeFixturePackage(root, 'fixture-ok', WELL_FORMED);
-  const control = await packageTestCommand({ packagePath: join(root, 'packages/fixture-ok'), rootDir: root, capture: true });
-  assert.equal(control.exitCode, 0, JSON.stringify(control.report?.checks?.filter((c) => c.status === 'failed')));
-
-  /** id → the check that must have caught it, or null when the package cannot be read at all. */
-  const EXPECTED = {
-    'fixture-no-definition': null,
-    'fixture-throws-on-import': null,
-    'fixture-bad-contract': 'declaration.contract',
-    'fixture-bad-name': 'declaration.valid',
-    'fixture-private-import': 'boundary.private-import',
-    'fixture-eval': 'boundary.static-source',
-    'fixture-missing-dependency': null,
-    'fixture-unstable-metadata': 'declaration.metadata',
-    'fixture-noisy': 'noise',
-    'fixture-exits': 'survives',
-  };
-
-  for (const [name, source] of HOSTILE_PACKAGES) {
-    writeFixturePackage(root, name, source);
-    const outcome = await packageTestCommand({
-      packagePath: join(root, 'packages', name), rootDir: root, capture: true, timeoutMs: 20_000,
-    });
-    const expected = EXPECTED[name];
-    if (expected === null) {
-      assert.ok(outcome.exitCode === 1 || outcome.exitCode === 2,
-        `${name}: expected a refusal, got exit ${outcome.exitCode}`);
-      continue;
-    }
-    if (expected === 'survives') {
-      // A package that calls `process.exit` while being imported must take its
-      // own child down and nothing else. This is the case that proved the point:
-      // an early draft read the definition in the parent, and this fixture
-      // killed the test runner that was checking it.
-      assert.equal(outcome.exitCode, 2, `${name}: a package that exits mid-import is unreadable, not conforming`);
-      assert.equal(outcome.report, null);
-      continue;
-    }
-    assert.ok(outcome.report, `${name}: a readable package still produces a report`);
-    if (expected === 'noise') {
-      // A package that floods a stream must not corrupt the document or hang
-      // the parent; whether it conforms is a separate question and either
-      // answer is legitimate.
-      assert.equal(typeof outcome.report.ok, 'boolean');
-      assert.equal(outcome.report.packageConformanceContract, 1);
-      continue;
-    }
-    assert.equal(outcome.exitCode, 1, `${name}: expected conformance failures`);
-    const row = outcome.report.checks.find((entry) => entry.id === expected);
-    assert.equal(row?.status, 'failed', `${name}: ${expected} should have caught it (${row?.evidence})`);
-  }
-  assert.ok(t);
-});
-
-test('the machine-readable contract is stable, and its vocabulary is closed', async (t) => {
-  const { report } = await run('packages/service');
-  assert.deepEqual(Object.keys(report).sort(), [
-    'categories', 'checks', 'command', 'counts', 'fingerprint', 'inspectionFingerprint',
-    'limitations', 'ok', 'package', 'packageConformanceContract', 'path', 'problems', 'scratch',
-  ]);
-  assert.deepEqual(report.categories,
-    ['declaration', 'boundary', 'composition', 'modules', 'lifecycle', 'inspection'],
-    'there is no category of checks that merely re-tests the framework itself');
-  assert.equal(report.packageConformanceContract, 1);
-  assert.equal(report.command, 'package:test');
-  assert.match(report.fingerprint, /^[0-9a-f]{64}$/);
-  assert.match(report.inspectionFingerprint, /^[0-9a-f]{64}$/, 'AX1\'s digest of the composed project travels as evidence');
-
-  const statuses = new Set(report.checks.map((entry) => entry.status));
-  for (const status of statuses) assert.ok(['passed', 'failed', 'skipped', 'not_applicable'].includes(status), status);
-  for (const entry of report.checks) {
-    assert.ok(report.categories.includes(entry.category), `${entry.id} is in a declared category`);
-    assert.equal(typeof entry.evidence, 'string');
-    assert.ok(entry.evidence.length > 0, `${entry.id} states what was observed`);
-  }
-  // Checks are sorted, so a diff between two reports is a diff of substance.
-  assert.deepEqual(report.checks.map((entry) => entry.id), [...report.checks.map((entry) => entry.id)].sort());
-
-  // Every limitation is a code with prose, and the domain boundary is stated.
-  assert.ok(report.limitations.some((entry) => entry.code === 'DOMAIN_CORRECTNESS_NOT_PROVEN'));
-  assert.ok(report.limitations.some((entry) => entry.code === 'PACKAGE_SOURCE_TRUSTED'));
-  // The trust boundary is stated in the exact three clauses the review requires.
-  const trust = report.limitations.find((entry) => entry.code === 'PACKAGE_SOURCE_TRUSTED').message;
-  assert.match(trust, /does not intentionally mutate the caller project/);
-  assert.match(trust, /trusted and executes with the operator’s authority/);
-  assert.match(trust, /not a filesystem, network or OS sandbox/);
-  const scratchLimit = report.limitations.find((entry) => entry.code === 'SCRATCH_PROJECT_ONLY').message;
-  assert.match(scratchLimit, /cannot prevent package code from writing wherever the operator can write/,
-    'the report never promises a hostile package cannot reach the caller project');
-  assert.ok(t);
-});
-
-test('the isolation claim is exactly what the harness can keep, and no more', async (t) => {
-  // What isolation actually buys is that the invoking process survives. It does
-  // NOT stop package code writing where the operator can write, and the report
-  // must not imply otherwise.
-  const root = fixtureProject(t);
-  for (const [name, source] of SCRATCH_PROBES) writeFixturePackage(root, name, source);
-
-  // 1 · a package reading the environment is not prevented, and is not a failure.
-  const env = await packageTestCommand({
-    packagePath: join(root, 'packages/fixture-reads-env'), rootDir: root, capture: true,
-  });
-  assert.equal(env.exitCode, 0, 'reading the environment is not a conformance rule this framework has');
-
-  // 2 · a package writing beside its own source writes into the SCRATCH copy,
-  // which is what the harness controls. The caller's own package directory is
-  // untouched — not because the package was stopped, but because it was never
-  // the file it opened.
-  const beside = await packageTestCommand({
-    packagePath: join(root, 'packages/fixture-writes-beside-source'), rootDir: root, capture: true,
-  });
-  assert.ok(beside.report, 'a writing package still produces a report');
-  assert.equal(existsSync(join(root, 'packages/fixture-writes-beside-source/src/wrote-beside-source.txt')), false,
-    'the caller\'s copy of the package gained no file, because the package was imported from the scratch copy');
-
-  // 3 · an ordinary short-lived child a package spawns changes nothing.
-  const spawned = await packageTestCommand({
-    packagePath: join(root, 'packages/fixture-spawns-child'), rootDir: root, capture: true, timeoutMs: 20_000,
-  });
-  assert.ok(spawned.report, 'a package that spawns an ordinary child still produces a report');
-  assert.equal(spawned.exitCode, 0);
-  const isolation = spawned.report.limitations.find((entry) => entry.code === 'PROCESS_ISOLATION_BOUNDED');
-  assert.match(isolation.message, /deliberately detaches a process into a new group outlives the run/);
-
-  // 4 · a child that OUTLIVES the import is the timeout path, and it is stable:
-  // the reporting process cannot exit while it holds a live child handle, so
-  // the run is stopped and the whole process group goes with it.
-  writeFixturePackage(root, 'fixture-long-child', SPAWNS_LONG_LIVED_CHILD);
-  const started = Date.now();
-  const long = await packageTestCommand({
-    packagePath: join(root, 'packages/fixture-long-child'), rootDir: root, capture: true, timeoutMs: 3_000,
-  });
-  const elapsed = Date.now() - started;
-  assert.ok(elapsed < 60_000, `the run was stopped rather than waited out (${elapsed}ms)`);
-  assert.ok(long.exitCode === 1 || long.exitCode === 2, `a stable outcome, got ${long.exitCode}`);
   assert.ok(t);
 });

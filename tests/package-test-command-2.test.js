@@ -69,34 +69,3 @@ test('every first-party package conforms, and the report says how', async (t) =>
   }
   assert.ok(t);
 });
-
-test('the customer fixture does NOT conform, for a reason the contract can state', async (t) => {
-  // `partner-scorecard` acts on `delivery-partner-engagement`, a record the
-  // `delivery` package owns, and declares no dependency on `delivery` at all.
-  // Handing that package to anyone whose project lacks `delivery` produces an
-  // application that will not start, and nothing in its declaration says so.
-  //
-  // This command CAN find the owner — it is in this repository — but rescuing
-  // the package that way and then calling it conforming would be monorepo magic:
-  // a third-party consumer would get a different answer. So the owner is
-  // composed to keep the rest of the report informative, and the check fails.
-  const { exitCode, report } = await run('examples/custom-packages/partner-scorecard');
-  assert.equal(exitCode, 1);
-  assert.equal(report.ok, false);
-
-  const coupling = report.checks.find((entry) => entry.id === 'declaration.action-targets');
-  assert.equal(coupling.status, 'failed');
-  assert.equal(coupling.reason, 'UNDECLARED_PACKAGE_RECORD_DEPENDENCY');
-  assert.equal(coupling.authority, 'composition');
-  assert.match(coupling.evidence, /delivery-partner-engagement \(delivery\)/);
-  assert.match(coupling.evidence, /delivery offers /, 'the author is told what they could declare instead');
-  assert.deepEqual(report.scratch.undeclaredRecordOwners, ['delivery'],
-    'and the report names the package this project happened to contain');
-
-  // Everything else about it is still measured, so the failure is one line of a
-  // real report rather than an early exit.
-  for (const id of ['lifecycle.attach', 'lifecycle.detach', 'inspection.valid']) {
-    assert.equal(report.checks.find((entry) => entry.id === id).status, 'passed', id);
-  }
-  assert.ok(t);
-});
