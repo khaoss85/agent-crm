@@ -171,7 +171,10 @@ export function createCustomerDataPackage(options = {}) {
     // declared surface (propose-field-from-question, fill-ai-field-values).
     // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the
     // composed opportunity pipeline (pipelines option) so Pagato is won.
-    version: 7,
+    // Version 8 (backlog:91c92940274c): archive/restore/remove joins the
+    // surface (archivedAt/deletedAt in the row shape and every view filter,
+    // tombstone-safe sync match, no recreate of archived rows).
+    version: 8,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
