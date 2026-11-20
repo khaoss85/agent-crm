@@ -613,9 +613,10 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
   async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
-    // backlog:1a96094db71d: the two reads start at once, beside the team
-    // and permission reads; only the statistic waits for the member count
-    // and the profile it formats with.
+    // Voce 785aeb28bd18: this runs in the second wave only (beginStatReads
+    // starts it after the team data lands), so the two reads below never
+    // start beside the roster. Only the statistic waits for the member
+    // count and the profile it formats with.
     const reads = Promise.allSettled([
       readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
       readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
