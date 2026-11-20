@@ -525,6 +525,29 @@ test('createSubjectForRow never derives a company from the email unless the impo
   assert.equal(made[3].name, 'acme.example', 'only an explicit companyFromEmail:true derives from the email');
 });
 
+test('voce 91c92940274c: new mail on an archived address stays undecided, never a silent reuse', async (t) => {
+  const { app } = await scene(t, 'sender-archived-reuse');
+
+  const first = await app.resolveChannelSender({
+    channel: 'email', handle: 'apple.reply@email.apple.com',
+    firstName: 'Apple', lastName: 'Reply', companyName: 'Presti Group', domain: 'email.apple.com', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  await app.services.contacts.archive(first.contact.id, { actor: ACTOR });
+
+  const second = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000099', email: 'apple.reply@email.apple.com', actor: ACTOR,
+  });
+  assert.equal(second.outcome, 'unresolved', 'new mail on the archived address never reuses the invisible contact');
+  assert.equal(second.contact, null);
+  assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
+    'the archived contact stays a candidate for a human');
+
+  assert.equal(contactsCount(app), 1, 'no duplicate contact was created');
+  assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the archived contact');
+});
+
 test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
   assert.deepEqual(leadNamesForEmail('mario.rossi@azienda.it'), { firstName: 'Mario', lastName: 'Rossi' });
   assert.deepEqual(leadNamesForEmail('guido@example.com'), { firstName: 'Guido', lastName: '—' });

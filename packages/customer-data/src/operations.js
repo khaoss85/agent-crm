@@ -864,7 +864,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
     && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
-    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE, ...(wantArchived ? { includeArchived: true } : {}) });
+    // Voce 91c92940274c (review P1 su #1077, giro 2): la scansione di
+    // ricerca della vista «Archiviati» chiede solo archiviati (predicato in
+    // SQL), come la list sopra — senza archivedOnly gli attivi affamano la
+    // pagina oltre il tetto e gli archiviati vecchi non tornano mai.
+    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE, ...(wantArchived ? { includeArchived: true, archivedOnly: true } : {}) });
     const scannedCompaniesAll = await companiesSvc.scan({
       limit: Math.max(
         CUSTOMER_SEARCH_COMPANY_RESERVE,
@@ -884,7 +888,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
           CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE,
           CUSTOMER_SEARCH_SCAN_LIMIT - scannedCompaniesAll.length,
         ),
-        ...(wantArchived ? { includeArchived: true } : {}),
+        ...(wantArchived ? { includeArchived: true, archivedOnly: true } : {}),
       });
     }
     const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle, query.spaceId, query.q ?? '');
