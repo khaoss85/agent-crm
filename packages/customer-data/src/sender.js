@@ -1,7 +1,7 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, normalizeActor, normalizeCompanyName,
+  AppError, ConflictError, NotFoundError, ValidationError, normalizeActor, normalizeCompanyName,
 } from '../../core/index.js';
 import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
@@ -222,16 +222,15 @@ export function createPolicyReader({ modules, names, core }) {
       return await core.findContactByEmail(email);
     },
     async contactById(id) {
-      // Voce 91c92940274c (review P1 giro 3): il ramo known-identity di
+      // Voce 91c92940274c (review P1 giro 3 e 5): il ramo known-identity di
       // decide() controlla qui il contatto nominato prima di riusarlo —
-      // get resta la verità sulla riga, tombstone comprese.
+      // get resta la verità sulla riga, tombstone comprese. Solo
+      // l'assenza del modulo/capability risponde null; un errore di
+      // lettura si propaga e il chiamante lo chiude in «da decidere»,
+      // mai in un riuso (fail closed, review giro 5 P1).
       const contacts = optional(modules, 'contact');
       if (!contacts || typeof contacts.get !== 'function') return null;
-      try {
-        return await contacts.get(id);
-      } catch {
-        return null;
-      }
+      return await contacts.get(id);
     },
     async companiesByName(name) {
       if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
@@ -691,7 +690,23 @@ export function createChannelSenderResolution({
         // eliminato — nasconderebbe posta viva in una riga che nessuna
         // vista mostra. Come il ramo email, risponde «da decidere» con il
         // contatto come candidato, senza collegare niente.
-        const named = await reader.contactById(knownContact.id);
+        // Voce 91c92940274c (review P1 giro 5): una lettura non riuscita
+        // — riga sparita (NotFound) o errore transitorio — lascia il
+        // mittente da decidere con il contatto come candidato, senza
+        // collegare niente (fail closed, mai un riuso).
+        let named = null;
+        try {
+          named = await reader.contactById(knownContact.id);
+        } catch (error) {
+          const gone = error instanceof NotFoundError || error?.code === 'NOT_FOUND';
+          return senderUnresolved(sender, actor, {
+            rule: 'external-identity',
+            candidates: [knownSubjectHere],
+            evidence: gone
+              ? `channel handle ${sender.system} names a contact that no longer exists: a human decides, never a silent reuse`
+              : `channel handle ${sender.system} names a contact that could not be read: a human decides, never a silent reuse`,
+          });
+        }
         if (named && (named.archivedAt != null || named.deletedAt != null)) {
           return senderUnresolved(sender, actor, {
             rule: 'external-identity',

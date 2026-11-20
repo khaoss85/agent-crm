@@ -597,6 +597,65 @@ test('voce 91c92940274c: the same handle on a removed contact stays undecided, n
   assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the removed contact');
 });
 
+test('voce 91c92940274c: the same handle stays undecided when the contact read fails, never a silent reuse (review giro 5, P1)', async (t) => {
+  const { app } = await scene(t, 'sender-same-handle-read-fails');
+
+  const first = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000073', email: 'same.handle.readfails@prestigroup.example',
+    firstName: 'Same', lastName: 'ReadFails', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  // A transient storage failure on the named-contact re-read: the handle
+  // must not fall through to the matched path.
+  const contacts = app.services.contacts;
+  const originalGet = contacts.get;
+  contacts.get = async () => { throw new Error('transient read failure'); };
+  let second;
+  try {
+    second = await app.resolveChannelSender({
+      channel: 'whatsapp', handle: '+393330000073', email: 'same.handle.readfails@prestigroup.example', actor: ACTOR,
+    });
+  } finally {
+    contacts.get = originalGet;
+  }
+  assert.equal(second.outcome, 'unresolved', 'a failed contact read never reuses the handle silently');
+  assert.equal(second.contact, null);
+  assert.equal(second.rule, 'external-identity');
+  assert.match(second.evidence, /could not be read/, 'the evidence names the failed read');
+  assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
+    'the named contact stays a candidate for a human');
+
+  assert.equal(contactsCount(app), 1, 'no duplicate contact was created');
+  assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked on a failed read');
+});
+
+test('voce 91c92940274c: the same handle stays undecided when the named contact is gone, never a silent reuse (review giro 5, P1)', async (t) => {
+  const { app } = await scene(t, 'sender-same-handle-gone');
+
+  const first = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000074', email: 'same.handle.gone@prestigroup.example',
+    firstName: 'Same', lastName: 'Gone', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  // The identity row dangles: its contact row is gone, so contacts.get
+  // throws NotFound and the handle must not be re-linked to thin air.
+  app.database.raw.prepare('DELETE FROM contacts WHERE id = ?').run(first.contact.id);
+
+  const second = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000074', email: 'same.handle.gone@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(second.outcome, 'unresolved', 'a gone named contact never reuses the handle silently');
+  assert.equal(second.contact, null);
+  assert.equal(second.rule, 'external-identity');
+  assert.match(second.evidence, /no longer exists/, 'the evidence names the missing contact');
+  assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
+    'the named contact stays a candidate for a human');
+
+  assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the missing contact');
+});
+
 test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
   assert.deepEqual(leadNamesForEmail('mario.rossi@azienda.it'), { firstName: 'Mario', lastName: 'Rossi' });
   assert.deepEqual(leadNamesForEmail('guido@example.com'), { firstName: 'Guido', lastName: '—' });
