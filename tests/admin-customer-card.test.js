@@ -8,6 +8,7 @@ import {
   mergeLinkedIdentities,
   observedDirections,
   offerStageTargets,
+  passageExpandedText,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   NO_COMPANY_NAME,
   shownCompanyName,
@@ -4042,6 +4043,30 @@ test('message text reads cleanly and a long one folds behind «Mostra tutto»', 
   more.dispatch('click');
   assert.equal(body.getAttribute('data-folded'), 'false');
   assert.equal(more.textContent, 'Mostra meno');
+});
+
+// Voce 0c24dc5b88b2: an expanded mail kept only the body and lost its
+// subject (live 18/11, Lia Marroni, mail del 14/11 «Certificato medico per
+// la prova (Prova E2E)»). The open mail reads subject and body.
+test('an expanded mail keeps its subject above the full body', async () => {
+  const subject = 'Certificato medico per la prova (Prova E2E)';
+  const bodyText = `Buongiorno, in allegato il certificato medico per la prova. ${'Resto del referto. '.repeat(20)}`;
+  const items = [{ entry: 'message', id: 'mail1', channel: 'email', direction: 'inbound', sync: 'received', subject, body: bodyText, remoteHandle: 'lia.marroni@esempio.it', occurredAt: '2026-11-14T10:00:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const body = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-entry-body');
+  assert.ok(body.textContent.includes(subject), 'the closed line names the subject');
+  const more = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'entry-expand');
+  assert.ok(more, 'a long mail folds behind «Mostra tutto»');
+  assert.equal(more.textContent, 'Mostra tutto');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'false');
+  assert.ok(body.textContent.includes(subject), 'the open mail keeps the subject');
+  assert.ok(body.textContent.includes('Resto del referto.'), 'the open mail reads the full body');
+  assert.equal(body.textContent, passageExpandedText(items[0]), 'the open mail reads the expanded passage');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'true');
+  assert.equal(more.textContent, 'Mostra tutto');
+  assert.ok(body.textContent.includes(subject), 'folding back keeps the subject line');
 });
 
 test('Annulla on Dettagli restores the card in place, without re-reading the scheda', async () => {

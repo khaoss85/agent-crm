@@ -764,6 +764,25 @@ export function passageFullText(item) {
 }
 
 /**
+ * The whole passage behind «Mostra tutto», like Gmail: the subject stays on
+ * top and the full body follows (voce 0c24dc5b88b2 — an expanded mail used
+ * to lose its subject and read body-only). Same subject rule as the preview
+ * line: a body that opens with its own subject does not repeat it. '' when
+ * there is nothing to show.
+ * @param {{ body?: unknown, subject?: unknown }} item
+ */
+export function passageExpandedText(item) {
+  const subject = cleanPreviewText(item?.subject);
+  const full = passageFullText(item);
+  if (subject === '') return full;
+  if (full === '') return subject;
+  const repeats = full.toLowerCase().startsWith(subject.toLowerCase())
+    && (full.length === subject.length || /[\s|•·:,;.!?–—-]/.test(full[subject.length]));
+  const rest = repeats ? full.slice(subject.length).replace(/^[\s|•·:,;.!?–—-]+/, '') : full;
+  return rest === '' ? subject : `${subject} — ${rest}`;
+}
+
+/**
  * One passage per real message (Dan 10/11): the same mail synced several
  * times — same channel, direction, sender, subject, text and minute — reads
  * once in the cronologia. Notes, calls and attachments are never folded; the first copy
@@ -1565,6 +1584,11 @@ export function createCustomerCardView(deps) {
       const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
         ? keptDraftWrap.getAttribute('data-structured-for') : null;
       if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      // Review #1065 (P2): the draft opened by «Scrivi tu» or by the AI-off
+      // answer stays open through a repaint, empty fields included.
+      if (typeof keptDraftWrap?.getAttribute === 'function' && keptDraftWrap.getAttribute('hidden') === null) {
+        keptVoice.draftShown = true;
+      }
       drafts.voice = keptVoice;
     }
     return Object.keys(drafts).length > 0 ? drafts : null;
@@ -3773,15 +3797,18 @@ export function createCustomerCardView(deps) {
       const row = el('p', 'bo-scheda-fact');
       row.appendChild(el('span', 'bo-scheda-fact-label', def?.label ?? def?.key ?? 'campo'));
       const shown = formatCustomValue(def, byKey.get(def?.key)?.value ?? null);
-      row.appendChild(el('span', undefined, shown ?? '—'));
-      const edit = el('button', undefined, 'Modifica');
+      // Restyle 19/11 (7de82665ac2a): the value itself opens the edit — no
+      // «Modifica» button per field; an empty field reads «Aggiungi».
+      const label = def?.label ?? def?.key ?? 'campo';
+      const edit = el('button', shown == null ? 'bo-campo-value is-empty' : 'bo-campo-value', shown ?? 'Aggiungi');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', `edit-field:${def?.key ?? ''}`);
+      edit.setAttribute('aria-label', shown == null ? `Aggiungi ${label}` : `Modifica ${label}: ${shown}`);
       edit.addEventListener('click', () => renderFieldForm(box, ctx, def));
       row.appendChild(edit);
       box.appendChild(row);
     }
-    const add = el('button', undefined, '+ Aggiungi campo');
+    const add = el('button', 'bo-campo-add-btn', '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
     const openAdd = (draft = null) => {
@@ -4108,6 +4135,11 @@ export function createCustomerCardView(deps) {
       : runKey !== null ? enrichmentProposals.get(runKey) ?? [] : [];
     if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
+      // Restyle 19/11 (7de82665ac2a): the empty state says what the AI does.
+      if (typeof extract === 'function') {
+        box.appendChild(el('p', 'bo-muted bo-scheda-enrich-hint',
+          'Con «Aggiorna» l’AI legge i messaggi di questo cliente e propone nome, ruolo, azienda e telefono, ognuno con la sua fonte.'));
+      }
       return;
     }
     for (const item of items) {
@@ -4264,6 +4296,12 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+    // Restyle 19/11 (7de82665ac2a): the note and the dictation sit on top of
+    // the cronologia, where the new note lands — no scrolling past every
+    // row to write one.
+    const composerSlot = noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string'
+      ? el('div', 'bo-scheda-note-top') : null;
+    if (composerSlot !== null) box.appendChild(composerSlot);
     // backlog:5346ab531538: a cancelled appointment reads in the cronologia
     // as its own row, under «Tutti» only (it has no channel), at the moment
     // it was cancelled — the slot left the calendar grid, not the history.
@@ -4708,13 +4746,13 @@ export function createCustomerCardView(deps) {
           // always clean. Never an empty line: «(nessun testo)» unless an
           // attachment is what the passage carries.
           const line = passagePreview(item);
-          const full = passageFullText(item);
+          const expanded = passageExpandedText(item);
           const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
           if (line !== '' || !hasAttachment) {
             const shown = line !== '' ? line : PASSAGE_NO_TEXT;
             const bodyNode = el('p', 'bo-scheda-entry-body', shown);
             bubble.appendChild(bodyNode);
-            if (full !== '' && full !== shown) {
+            if (expanded !== '' && expanded !== shown) {
               bodyNode.setAttribute('data-folded', 'true');
               const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
               more.setAttribute('type', 'button');
@@ -4722,7 +4760,7 @@ export function createCustomerCardView(deps) {
               more.addEventListener('click', () => {
                 const folded = bodyNode.getAttribute('data-folded') === 'true';
                 bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
-                bodyNode.textContent = folded ? full : shown;
+                bodyNode.textContent = folded ? expanded : shown;
                 more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
               });
               bubble.appendChild(more);
@@ -4918,7 +4956,7 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(noteError);
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
-      box.appendChild(noteForm);
+      composerSlot.appendChild(noteForm);
       // Voce 5036bc435465: «Detta nota vocale» — after a call from any
       // phone (CRM-logged or tel: fallback) the operator dictates how it
       // went. The browser transcribes on the device (the `dictate` seam,
@@ -4964,6 +5002,8 @@ export function createCustomerCardView(deps) {
       let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
       let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
       let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      // Review #1065 (P2): whether the draft fields were open, carried like the words.
+      let draftShownCarried = keptVoice?.draftShown === true;
       const stopDictation = () => {
         try {
           voiceDictation?.stop?.();
@@ -5066,6 +5106,11 @@ export function createCustomerCardView(deps) {
         composer.appendChild(voiceBar);
         voicePanel.appendChild(composer);
         const voiceError = el('small', 'field-error', '');
+        // Verifica Mac 19/11: «Detta o scrivi prima…» goes as soon as the
+        // operator writes, like the note form's own error.
+        voiceInput.addEventListener('input', () => {
+          if (voiceError.textContent === 'Detta o scrivi prima com’è andata la chiamata.') voiceError.textContent = '';
+        });
         const structureButton = el('button', 'ui-btn ui-btn-secondary bo-voice-ai', 'Ordina con l’AI');
         structureButton.setAttribute('type', 'button');
         structureButton.setAttribute('data-action', 'structure-voice-note');
@@ -5077,6 +5122,9 @@ export function createCustomerCardView(deps) {
         manualButton.setAttribute('type', 'button');
         manualButton.setAttribute('data-action', 'voice-draft-manual');
         const showDraft = (on) => {
+          draftShownCarried = on;
+          if (on) voicePanel.setAttribute('data-step', 'draft');
+          else voicePanel.removeAttribute('data-step');
           if (on) {
             draftWrap.removeAttribute('hidden');
             manualButton.setAttribute('hidden', '');
@@ -5106,12 +5154,15 @@ export function createCustomerCardView(deps) {
         if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
         if (carriedPassi !== '') passiField.value = carriedPassi;
         if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
-        showDraft(structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
+        showDraft(draftShownCarried || structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
         manualButton.addEventListener('click', () => {
           showDraft(true);
           riassuntoField.focus?.();
         });
-        const saveButton = el('button', 'ui-btn ui-btn-primary bo-voice-save', 'Salva in cronologia');
+        // Verifica Mac 19/11 (lente AI-native): before a draft the AI is the
+        // main action and «Salva» stays secondary; once a draft is on screen
+        // «Salva» takes the lead (data-step on the panel, CSS only).
+        const saveButton = el('button', 'ui-btn ui-btn-secondary bo-voice-save', 'Salva in cronologia');
         saveButton.setAttribute('type', 'button');
         saveButton.setAttribute('data-action', 'save-voice-note');
         structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
@@ -5143,6 +5194,11 @@ export function createCustomerCardView(deps) {
             if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
               voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
               showDraft(true);
+            } else if (Number(error?.status) === 400 || code === 'VALIDATION_ERROR') {
+              // Verifica Mac 19/11 14:57Z: a refused dictation is not a silent
+              // AI — say what the operator can do now, and open the draft.
+              voiceError.textContent = 'L’AI non è riuscita a ordinare questo testo: salvalo così com’è, oppure dividilo tu qui sotto.';
+              showDraft(true);
             } else {
               voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
             }
@@ -5156,9 +5212,12 @@ export function createCustomerCardView(deps) {
           const dictated = String(voiceInput.value ?? '').trim();
           // Without an AI draft the dictated text itself is the note, so the
           // AI-off path still saves — the option said why, it never blocks.
-          const body = riassunto !== '' || decisioni !== '' || passi !== ''
-            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
-            : dictated;
+          // Verifica Mac 19/11: only the parts written land — no empty
+          // «Decisioni:» in the cronologia.
+          const parts = [['Riassunto', riassunto], ['Decisioni', decisioni], ['Prossimi passi', passi]]
+            .filter(([, value]) => value !== '')
+            .map(([label, value]) => `${label}: ${value}`);
+          const body = parts.length > 0 ? parts.join('\n') : dictated;
           if (body === '') {
             voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
             return;
@@ -5236,7 +5295,7 @@ export function createCustomerCardView(deps) {
         buildVoicePanel();
       }
       voiceWrap.appendChild(voicePanel);
-      box.appendChild(voiceWrap);
+      composerSlot.appendChild(voiceWrap);
     }
   }
 
