@@ -540,7 +540,12 @@
       ],
       "tests": [
         "tests/delivery-handover-e2e.test.js",
-        "tests/delivery-execution-e2e.test.js",
+        "tests/delivery-execution-e2e-1.test.js",
+        "tests/delivery-execution-e2e-2.test.js",
+        "tests/delivery-execution-e2e-3.test.js",
+        "tests/delivery-execution-e2e-4.test.js",
+        "tests/delivery-execution-e2e-5.test.js",
+        "tests/delivery-execution-e2e-6.test.js",
         "tests/delivery-economics-e2e.test.js",
         "tests/delivery-change-acceptance-e2e.test.js",
         "tests/delivery-change-acceptance-evidence.test.js",
