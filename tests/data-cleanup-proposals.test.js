@@ -243,6 +243,56 @@ test('two strangers reading the same email-fallback label propose no merge', asy
   assert.equal(ghostMerges.length, 0, 'no merge pairs strangers sharing only the email-fallback label');
 });
 
+/**
+ * Ritorno del verificatore su backlog:088b639d96a2 (19/11): in Presti
+ * restano due clienti «Amazon.it»/«amazon.it» distinti senza nessuna
+ * proposta di doppione, e il supervisore chiede la prova che la scansione
+ * sia girata dopo il rilascio (riga di log del worker con spaceId, ora e
+ * numero di proposte). Rosso prima della cura (l'evento non porta né ora
+ * né ambito: la prova non si può scrivere), verde dopo. La coppia del Mac
+ * propone l'unione già dal confronto senza maiuscole di #1034.
+ */
+test('backlog:088b639d96a2: the scan run is observable (time, scope, counts) and the Mac pair proposes the merge', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+
+  const brand = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const upper = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'Amazon.it', lastName: '—',
+    email: 'assistenza@amazon.it',
+  });
+  const lower = await app.services.contacts.create({
+    companyId: brand.id, firstName: 'amazon.it', lastName: '—',
+    email: 'info@amazon.it',
+  });
+
+  const seen = [];
+  app.events.subscribe('customer-data.cleanup.proposed', async ({ payload }) => {
+    seen.push(payload);
+  });
+
+  const receipt = await app.proposeDataCleanup({ actor: AGENT });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const merge = receipt.proposals.find((proposal) => proposal.kind === 'merge'
+    && proposal.rule === 'cleanup-same-name'
+    && (proposal.subject?.id === upper.id || (proposal.evidence ?? '').includes(upper.id))
+    && (proposal.subject?.id === lower.id || (proposal.evidence ?? '').includes(lower.id)));
+  assert.ok(merge, 'the two senders differing only by case propose the merge');
+  assert.equal(receipt.counts.duplicatePairs, 1, 'exactly the Mac pair');
+  assert.equal(typeof receipt.at, 'string', 'the receipt says when the scan ran');
+  assert.ok(!Number.isNaN(Date.parse(receipt.at)), 'the time parses');
+
+  assert.equal(seen.length, 1, 'the scan emits exactly one proof event');
+  const proof = seen[0];
+  assert.equal(proof.operation, 'propose-data-cleanup');
+  assert.equal(proof.at, receipt.at, 'the event quotes the scan time');
+  assert.equal(proof.complete, true, 'the fixture fits in one scan window');
+  assert.equal(proof.scope.contacts, 2, 'the proof names the scanned contacts');
+  assert.equal(proof.scope.companies, 1, 'the proof names the scanned companies');
+  assert.equal(proof.counts.duplicatePairs, 1, 'the proof names the number of proposals');
+});
+
 test('a card with no phone proposes the completion, with the customer rows untouched', async (t) => {
   const { app, maria, snapshot } = await scene(t);
   const before = await snapshot();
