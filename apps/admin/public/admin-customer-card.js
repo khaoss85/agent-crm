@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -1791,6 +1791,16 @@ export function createCustomerCardView(deps) {
   }
 
 
+  /**
+   * Review Muse #1107 (P2): the archive / restore / delete write in flight,
+   * per contact, held by the view — every repaint (paintPartial,
+   * buildAndShow) builds new buttons, so the guard cannot live on a node.
+   * While a write flies all three actions paint disabled and a second
+   * click sends nothing.
+   * @type {Map<string, { action: string, key: string }>}
+   */
+  const contactWrites = new Map();
+
   function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
@@ -1882,6 +1892,9 @@ export function createCustomerCardView(deps) {
       else say.removeAttribute('hidden');
     };
     const refusal = (error, failed) => {
+      // Review Muse #1107 (P2): the cause is logged before any special
+      // wording (name, code, status only — never the payload).
+      logWriteFailure(error);
       const code = String(error?.code ?? error?.body?.error?.code ?? '');
       if (code === 'CONTACT_HAS_OPPORTUNITIES' || error?.status === 409) {
         return 'Questo contatto ha offerte collegate: si può archiviare, non eliminare.';
@@ -1891,31 +1904,56 @@ export function createCustomerCardView(deps) {
       }
       return humanWriteError(error, { failed });
     };
+    /** @type {any[]} */
+    const actionNodes = [];
     const busy = (node, on) => {
-      if (on) { node.setAttribute('disabled', ''); node.setAttribute('aria-busy', 'true'); }
-      else { node.removeAttribute('disabled'); node.removeAttribute('aria-busy'); }
+      for (const each of actionNodes) {
+        if (on) each.setAttribute('disabled', '');
+        else each.removeAttribute('disabled');
+      }
+      if (on) node.setAttribute('aria-busy', 'true');
+      else node.removeAttribute('aria-busy');
     };
-    const restore = async () => {
-      await client.request(`${path}/restore`, { method: 'POST', idempotencyKey: submissions.issueKey(), body: JSON.stringify({}) });
+    /**
+     * One write at a time per contact, across repaints.
+     * @param {string} action @param {(key: string) => Promise<any>} send
+     */
+    const write = async (action, send) => {
+      // A write already in flight for this contact (from this paint or an
+      // earlier one): never a second request.
+      if (contactWrites.has(id)) return { skipped: true };
+      const entry = { action, key: submissions.issueKey() };
+      contactWrites.set(id, entry);
+      try {
+        await send(entry.key);
+        return { ok: true };
+      } catch (error) {
+        return { error };
+      } finally {
+        if (contactWrites.get(id) === entry) contactWrites.delete(id);
+      }
     };
+    const restore = (key) => client.request(`${path}/restore`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) });
     const archivedAt = typeof card?.archivedAt === 'string' && card.archivedAt !== '' ? card.archivedAt : null;
     if (archivedAt !== null) {
       tools.setAttribute('data-archived', 'true');
       tools.appendChild(el('span', 'bo-scheda-archived-pill', 'Archiviato'));
       const back = button('Ripristina', 'contact-restore', 'ui-btn ui-btn-primary');
+      actionNodes.push(back);
       back.addEventListener('click', async () => {
         busy(back, true);
-        try {
-          await restore();
-        } catch (error) {
+        const result = await write('restore', restore);
+        if (result.skipped) return;
+        if (result.error) {
           busy(back, false);
-          tell(refusal(error, 'Contatto non ripristinato. Riprova più tardi.'));
+          tell(refusal(result.error, 'Contatto non ripristinato. Riprova più tardi.'));
           return;
         }
         toast('Contatto ripristinato');
         await renderCard('contact', id);
       });
       tools.appendChild(back);
+      if (contactWrites.has(id)) busy(back, true);
       tools.appendChild(say);
       return tools;
     }
@@ -1926,21 +1964,21 @@ export function createCustomerCardView(deps) {
     const doArchive = async () => {
       busy(archive, true);
       tell('');
-      try {
-        await client.request(`${path}/archive`, { method: 'POST', idempotencyKey: submissions.issueKey(), body: JSON.stringify({}) });
-      } catch (error) {
+      const result = await write('archive', (key) => client.request(`${path}/archive`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
         busy(archive, false);
-        tell(refusal(error, 'Contatto non archiviato. Riprova più tardi.'));
+        tell(refusal(result.error, 'Contatto non archiviato. Riprova più tardi.'));
         return;
       }
       toast(`${name} archiviato`, false, {
         action: {
           label: 'Annulla',
           run: async () => {
-            try {
-              await restore();
-            } catch (error) {
-              toast(refusal(error, 'Contatto non ripristinato: lo trovi in «Archiviati».'), true);
+            const undo = await write('restore', restore);
+            if (undo.skipped) return;
+            if (undo.error) {
+              toast(refusal(undo.error, 'Contatto non ripristinato: lo trovi in «Archiviati».'), true);
               return;
             }
             toast('Contatto ripristinato');
@@ -1970,22 +2008,25 @@ export function createCustomerCardView(deps) {
     });
     sure.addEventListener('click', async () => {
       busy(sure, true);
-      try {
-        await client.request(path, { method: 'DELETE', idempotencyKey: submissions.issueKey(), body: JSON.stringify({}) });
-      } catch (error) {
+      const result = await write('delete', (key) => client.request(path, { method: 'DELETE', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
         busy(sure, false);
         confirmRow.setAttribute('hidden', '');
         drop.removeAttribute('hidden');
-        tell(refusal(error, 'Contatto non eliminato. Riprova più tardi.'));
+        tell(refusal(result.error, 'Contatto non eliminato. Riprova più tardi.'));
         return;
       }
       toast(`${name} eliminato`);
       navigate('#/customer-data');
     });
+    actionNodes.push(archive, drop, sure);
     tools.appendChild(archive);
     tools.appendChild(drop);
     tools.appendChild(confirmRow);
     tools.appendChild(say);
+    // A write still in flight from an earlier paint keeps every action off.
+    if (contactWrites.has(id)) busy(archive, true);
     return tools;
   }
 

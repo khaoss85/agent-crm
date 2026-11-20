@@ -101,3 +101,42 @@ test('91c92940: un contatto archiviato mostra «Archiviato» e «Ripristina», n
   await settle();
   assert.deepEqual(api.writes[0], { path: '/api/contacts/c1/restore', method: 'POST' });
 });
+
+test('review Muse #1107 (P2): con un\'archiviazione in volo, un ridisegno non riabilita i bottoni e non parte un secondo POST', async () => {
+  let release;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const writes = [];
+  const api = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if ((options.method ?? 'GET') !== 'GET') {
+        writes.push(path);
+        await new Promise((resolve) => { release = resolve; });
+        return { ok: true };
+      }
+      if (path.includes('/api/customer-hub/card/')) return CARD;
+      if (path.includes('/api/customer-hub/timeline/')) return { entries: { items: [] } };
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    },
+  };
+  const view = createCustomerCardView({ doc, mount, client: api, navigate: () => {}, toast: () => {} });
+  await view.renderCard('contact', 'c1');
+  const button = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  button('contact-archive').dispatch('click');
+  await settle();
+  await view.renderCard('contact', 'c1');
+  assert.equal(button('contact-archive').getAttribute('disabled'), '', 'the repainted Archivia is still off');
+  assert.equal(button('contact-delete').getAttribute('disabled'), '', 'and so is Elimina');
+  button('contact-archive').dispatch('click');
+  await settle();
+  assert.equal(writes.length, 1, 'one POST only');
+  release();
+  await settle();
+});
+
+test('91c92940: la card senza archivedAt (prima della condizione su #1077) mostra Archivia ed Elimina', async () => {
+  const { button } = await open();
+  assert.ok(button('contact-archive'));
+  assert.equal(button('contact-restore'), undefined);
+});
