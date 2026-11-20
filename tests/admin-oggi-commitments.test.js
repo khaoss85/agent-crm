@@ -4,7 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { selectOpenCommitments } from '../packages/agents/src/commitments.js';
-import { buildAdvisorActions } from '../apps/admin/public/admin-oggi.js';
+import { buildAdvisorActions, createOggiView, loadOggiData } from '../apps/admin/public/admin-oggi.js';
+import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Commitment reminders (backlog:df9e199eb4ef), follow-up slice: the wiring
@@ -170,4 +172,64 @@ test('ogni proposta cita il record che la motiva e non chiama mai LLM', () => {
   assert.equal(proposal.record?.module, 'work-activity');
   assert.equal(proposal.record?.id, 'n-prova-1');
   assert.ok(typeof proposal.note === 'string' && proposal.note.includes('senza AI'), 'Oggi says it in one line');
+});
+
+/**
+ * The verifier's 19/11 NON PASSA at the shell seam: the feed loaded but the
+ * paint never received it, so the note produced no proposal on screen. These
+ * tests drive the real view — feed answer, load, paint — through the fake
+ * DOM: the quote must be readable on the painted day, and a refused feed
+ * must leave the day intact (fail-soft, never a failure).
+ */
+const FEED_PROPOSAL = {
+  key: 'commit:note:n-prova-1',
+  kind: 'team-promise',
+  quote: 'Prova Accordo: ci sentiamo giovedì',
+  dueLabel: 'giovedì',
+  occurredAt: '2026-11-16T08:00:00.000Z',
+  dueAt: '2026-11-19T00:00:00.000Z',
+  customerRef: { subjectResource: 'contact', subjectId: 'c-presti-1' },
+  source: { kind: 'note', id: 'n-prova-1' },
+};
+
+function commitmentsViewClient({ feed } = {}) {
+  return {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path === '/api/oggi/commitments') return feed();
+      if (path.startsWith('/api/modules/')) return { items: [] };
+      if (path.startsWith('/api/customer-data/')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+}
+
+test('la proposta del feed si legge nel giorno dipinto (nota → Oggi)', async () => {
+  const client = commitmentsViewClient({
+    feed: async () => ({ open: [FEED_PROPOSAL], messagesAvailable: true, notesAvailable: true, partial: false }),
+  });
+  const data = await loadOggiData(client, new Date('2026-11-16T09:00:00.000Z'));
+  assert.deepEqual(data.commitments, [FEED_PROPOSAL], 'the load carries the feed into the day');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-11-16T09:00:00.000Z') });
+  assert.ok(mount.textContent.includes('ci sentiamo giovedì'), 'the painted day cites the written phrase');
+  assert.ok(mount.textContent.includes('gioved'), 'the painted day names the Thursday deadline');
+});
+
+test('il feed rifiutato non rompe il giorno (fail-soft)', async () => {
+  const client = commitmentsViewClient({
+    feed: async () => { throw new Error('feed down'); },
+  });
+  const data = await loadOggiData(client, new Date('2026-11-16T09:00:00.000Z'));
+  assert.deepEqual(data.commitments, [], 'no proposal, never a failure');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-11-16T09:00:00.000Z') });
+  assert.ok(!mount.textContent.includes('ci sentiamo giovedì'), 'nothing invented without the feed');
 });

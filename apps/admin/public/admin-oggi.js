@@ -3377,6 +3377,9 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       names: last.appointmentNames ?? {},
       pendingNames,
+      // backlog:df9e199eb4ef follow-up: without this the written-commitment
+      // feed loads but never paints — the verifier's 19/11 NON PASSA.
+      commitments: last.commitments ?? [],
     });
     lastBuilt = built;
     const merged = [...built.actions];
