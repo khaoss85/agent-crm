@@ -113,8 +113,10 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   const mine = view === 'tuoi';
   const list = [];
   for (const entry of Array.isArray(units) ? units : []) {
-    if (!entry || typeof entry.name !== 'string' || entry.kind !== kind || !isCustomerUnit(entry)) continue;
+    if (!entry || typeof entry.name !== 'string' || entry.kind !== kind) continue;
     const row = active.get(entry.name) ?? null;
+    // Existing activations must retain their deactivation path.
+    if (!isCustomerUnit(entry) && !(mine && row)) continue;
     if (mine && !row) continue;
     if (!mine && row) continue;
     if (needle !== '') {
@@ -1008,9 +1010,11 @@ export function createPersonalizzazioneView(deps) {
     }
     const units = state.units ?? [];
     const rows = state.rows ?? [];
+    const known = activeByUnit({ units, rows });
     // An empty business catalog is not a failed search and offers no
     // fake activation. The next step opens the real agents already in UI.
-    if (state.tab === 'skill' && !units.some((entry) => entry?.kind === 'skill' && isCustomerUnit(entry))) {
+    if (state.tab === 'skill' && !units.some((entry) => entry?.kind === 'skill'
+      && (isCustomerUnit(entry) || (state.view === 'tuoi' && known.has(entry.name))))) {
       const empty = el(doc, 'div', { cls: 'bo-perso-empty' });
       empty.appendChild(el(doc, 'p', { text: 'Non ci sono skill disponibili per questo spazio.', cls: 'empty-title' }));
       empty.appendChild(el(doc, 'p', { text: 'Puoi vedere le attività disponibili nella pagina Agenti.', cls: 'empty' }));
@@ -1024,7 +1028,6 @@ export function createPersonalizzazioneView(deps) {
       mount.appendChild(box);
       return;
     }
-    const known = activeByUnit({ units, rows });
     const items = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort });
     if (items.length === 0) {
       const emptyTitle = state.view === 'tuoi'
@@ -1072,7 +1075,14 @@ export function createPersonalizzazioneView(deps) {
     table.appendChild(head);
     for (const { entry, row } of items) {
       const line = el(doc, 'tr');
-      line.appendChild(el(doc, 'td', { text: String(entry.label ?? entry.name) }));
+      const nameCell = el(doc, 'td', { text: String(entry.label ?? entry.name) });
+      if (!isCustomerUnit(entry)) {
+        nameCell.appendChild(el(doc, 'p', {
+          cls: 'muted',
+          text: 'Attivata in precedenza per lo sviluppo: non è un’automazione per il tuo lavoro. Puoi disattivarla.',
+        }));
+      }
+      line.appendChild(nameCell);
       const on = unitStatus({ entry, row }) === 'attiva';
       const stateCell = el(doc, 'td');
       stateCell.appendChild(el(doc, 'span', { cls: on ? 'bo-perso-state' : 'bo-perso-state is-off', text: on ? 'Attiva ✓' : 'Da attivare' }));
@@ -1457,7 +1467,8 @@ export function createPersonalizzazioneView(deps) {
       }).reduce((total, group) => total + group.cards.length, 0);
     }
     const noCustomerSkills = state.tab === 'skill' && Array.isArray(state.units)
-      && !state.units.some((entry) => entry?.kind === 'skill' && isCustomerUnit(entry));
+      && !state.units.some((entry) => entry?.kind === 'skill'
+        && (isCustomerUnit(entry) || known.has(entry.name)));
     if (!noCustomerSkills) renderToolbar(toolRow, count);
     mount.appendChild(box);
     renderList();

@@ -252,4 +252,4 @@ Execution: `docs/plans/traction-first-working-example.md`. Live publication rece
 
 - [ ] **MK1 recovery review:** opt-in funnel observation, complete-or-refused proposal and human approval implementation recovered with real HTTP/SDK and fault-injection evidence; final clean-clone verification and pre-merge review remain in `docs/plans/mk1-marketing-recovery.md`. No send, publish or spend path.
 
-- [ ] **Restyle: catalogo skill cliente (backlog:0e9f723da891, mano: mac).** Candidate UI excludes project-based coding skills from the owner catalog and points an empty catalog to Agenti. See `docs/plans/restyle-catalogo-skill-cliente.md`; design approval, merge and production verification remain pending.
+- [ ] **Restyle: catalogo skill cliente (backlog:0e9f723da891, mano: mac).** Candidate UI excludes project-based coding skills from discovery, preserves existing activations for deactivation, and points an empty catalog to Agenti. See `docs/plans/restyle-catalogo-skill-cliente.md`; design approval, merge and production verification remain pending.
