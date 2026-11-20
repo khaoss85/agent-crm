@@ -42,6 +42,7 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  textReferencesOf,
   touchedTestDistances,
   nearestFirst,
   fillNearest,
@@ -212,6 +213,100 @@ test('a re-exporting test is selected for its re-exported source', () => {
     }),
   );
   assert.deepEqual(selected, ['tests/re-export.test.js']);
+});
+
+test('an app.js-only diff selects the test reading app.js as text (backlog:bdfa2aa54a78)', () => {
+  // tests/admin-navigation-loading.test.js never imports
+  // apps/admin/public/app.js: it reads it with readFileSync(new URL(...)).
+  // The 19/11 main reddened on that file while app.js-only PRs stayed
+  // green, because the import mapping selected nothing.
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/admin-navigation-loading.test.js':
+        "import { paintScreenLoading } from '../apps/admin/public/admin-navigation.js';\n"
+        + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, ['tests/admin-navigation-loading.test.js']);
+});
+
+test('textReferencesOf maps readFileSync and new URL literals, never dynamics', () => {
+  const refs = textReferencesOf(
+    'tests/admin-navigation-loading.test.js',
+    "import test from 'node:test';\n"
+    + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');\n"
+    + "const css = readFileSync(join(root, 'apps/admin/public/styles.css'), 'utf8');\n"
+    + 'const live = readFileSync(file, \'utf8\');\n'
+    + 'const walked = readFileSync(new URL(file, PUBLIC_DIR), \'utf8\');\n',
+  );
+  assert.deepEqual(
+    [...refs].sort(),
+    ['apps/admin/public/app', 'apps/admin/public/styles.css'],
+  );
+  // Bare variables and interpolated templates are not fixed references.
+  assert.deepEqual(
+    [...textReferencesOf('tests/x.test.js', 'const t = `${root}/apps/a.js`;\nreadFileSync(t);\n')],
+    [],
+  );
+  // Absolute URLs and non-repository literals are not references either.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'tests/x.test.js',
+      "await fetch(new URL('https://example.invalid/hook'));\nassert.equal(kind, 'text/plain');\n",
+    )],
+    [],
+  );
+});
+
+test('a doc example naming a path selects nothing: comments are not code', () => {
+  // The gate's own script documents readFileSync(new URL('../x')) shapes in
+  // its header: without comment-stripping those examples would edge the
+  // script to every named path, and every test importing the script would
+  // run on unrelated diffs.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'scripts/ci-touched-tests.js',
+      '// readFileSync(new URL(\'../apps/admin/public/app.js\', import.meta.url))\n'
+      + '/* join(root, \'apps/admin/public/styles.css\') */\n'
+      + "import test from 'node:test';\n",
+    )],
+    [],
+  );
+  // A `//` inside a string is not a comment: the read on the same line
+  // still maps.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'tests/x.test.js',
+      "const url = 'https://example.invalid/hook'; // probe\n"
+      + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8'); // text\n",
+    )],
+    ['apps/admin/public/app'],
+  );
+});
+
+test('a text read through a helper selects the importing test', () => {
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/via-helper.test.js': "import { readApp } from './helpers/read-app.js';\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+    new Map([
+      ['tests/helpers/read-app', new Set([
+        ...relativeImportsOf(
+          'tests/helpers/read-app.js',
+          "import { readFileSync } from 'node:fs';\n",
+        ),
+        ...textReferencesOf(
+          'tests/helpers/read-app.js',
+          "const app = readFileSync(new URL('../../apps/admin/public/app.js', import.meta.url), 'utf8');\n",
+        ),
+      ])],
+    ]),
+  );
+  assert.deepEqual(selected, ['tests/via-helper.test.js']);
 });
 
 test('hasCodeChange is true for source, false for docs-only changes', () => {
@@ -601,7 +696,7 @@ const forwardSelect = (changedFiles, testContents, fileImports = new Map()) => {
     if (extra) return extra;
     const content = testContents.get(file);
     if (content === undefined) return new Set();
-    return relativeImportsOf(file, content);
+    return new Set([...relativeImportsOf(file, content), ...textReferencesOf(file, content)]);
   };
   const reachesOf = (/** @type {string} */ testPath) => {
     const reached = new Set();
@@ -752,6 +847,14 @@ test('the declared list holds the acceptance guards', () => {
     REPO_WIDE_GUARDS.includes('tests/tour-claim.test.js'),
     'a composition-only PR must run tests/tour-claim.test.js (nightly main run 43665590178)',
   );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-client-only PR must run tests/admin-client-noslash-regex.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only PR must run tests/admin-navigation-loading.test.js (main run 44453039304)',
+  );
 });
 
 test('a payments-only change runs the guards on top of its selection', () => {
@@ -792,6 +895,53 @@ test('a CSS-only admin change runs the authority-token guard on top of its selec
   assert.ok(
     guarded.includes('tests/admin-authority-tokens.test.js'),
     'a styles.css-only change must run tests/admin-authority-tokens.test.js',
+  );
+});
+
+test('an admin-client-only change runs the noslash regex guard on top of its selection', () => {
+  // admin-calendario.js is a browser script, not relatively imported by the
+  // guard: tests/admin-client-noslash-regex.test.js reads every
+  // apps/admin/public/*.js file with readFileSync instead — so without the
+  // guard list a client-only PR would run that screen's own tests while a
+  // reintroduced `//` regex breaks the served /bo shell
+  // (b545aca18b8f, agent-crm#890).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/admin-calendario.js'],
+    contents({
+      'tests/admin-client-noslash-regex.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/admin-calendario.js']);
+  assert.ok(
+    guarded.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-calendario.js-only change must run tests/admin-client-noslash-regex.test.js',
+  );
+});
+
+test('an app.js-only change runs the navigation-loading guard on top of its selection', () => {
+  // apps/admin/public/app.js is a browser script no test relatively
+  // imports: tests/admin-navigation-loading.test.js reads it with
+  // readFileSync instead — so without the guard list an app.js-only PR
+  // would run nothing of it while the scheduled full suite fails on the
+  // router catch (main run 44453039304, #1009).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/admin-navigation-loading.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/app.js']);
+  assert.ok(
+    guarded.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only change must run tests/admin-navigation-loading.test.js',
   );
 });
 

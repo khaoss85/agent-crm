@@ -97,7 +97,7 @@ const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapt
 /** The production pilot: channels composed, no channel adapter at all. */
 const schemaNoAdapters = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
-function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null } = {}) {
+function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null, members = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -127,6 +127,7 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
         if (failCandidates !== null) throw failCandidates;
         return { items: candidates };
       }
+      if (path === '/api/spine/memberships') return { items: members };
       throw new Error(`unexpected GET ${path}`);
     },
   };

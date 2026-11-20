@@ -97,7 +97,7 @@ test('the /bo client says the wake once per screen, on both the module and the d
   assert.match(app, /if \(isMutation\(method\)\) return withWakeRetry\(run, \{ method, onWaking: wakingNotice \}\);/, 'dashboard api(): writes keep the single retry');
   assert.match(app, /return readWhileWaking\(run, \{ method, stale: \(\) => navToken !== navSeq, onWaking: spaceWakingNotice \}\);/, 'dashboard api(): reads poll until the space answers, and die with the screen');
   assert.match(app, /const navToken = navSeq;/, 'both readers capture the navigation token at call time');
-  assert.match(app, /if \(isStaleRead\(error\)\) return;/, 'the router drops a stale read silently: no toast, no failure paint');
+  assert.match(app, /console\.warn\('bo-nav stale read dropped:'/, 'the router logs a dropped stale read (backlog:f268787b): no toast, no failure paint, still diagnosable');
   assert.match(app, /if \(wakingReads === 1 && elements\.toast\) toast\(WAKING_TEXT\)/, 'one notice for the parallel reads; no toast, no throw');
   assert.match(app, /if \(spaceWakingReads === 1 && elements\.toast\) toast\(SPACE_WAKING_TEXT, false, \{ duration: 65000, scope: 'space-waking' \}\)/, 'the long wait names itself once and outlives the 3.2 s toast clock (backlog:0d25ed7dc34f)');
   assert.match(app, /if \(spaceWakingReads === 0 && toaster !== null\) toaster\.hideScope\('space-waking'\)/, 'the wait leaves with the last waiting read, only when it still shows ours');

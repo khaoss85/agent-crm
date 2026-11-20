@@ -108,10 +108,12 @@ export function customAgentSourceKey(spaceId, key) {
 
 /**
  * Whether a source key belongs to a hand-written agent. `update-agent`
- * and `set-agent-status` only touch these: a catalogue key
- * (`agent:<space>:<slug>`) is refused, so a direct POST can never rename,
- * pause or resume a catalogue agent the card gates keep read-only
- * (review #879 giro 2). Mirrored by `isHandAgentKey` in the backoffice.
+ * only touches these: a catalogue key (`agent:<space>:<slug>`) is
+ * refused, so a direct POST can never rename a catalogue agent the card
+ * keeps read-only (review #879 giro 2). Backlog 8605b6f520c0:
+ * `set-agent-status` runs for every team row instead, so a direct POST
+ * can pause or resume a catalogue agent, by sourceKey like the card.
+ * Mirrored by `isHandAgentKey` in the backoffice.
  * @param {unknown} key
  */
 export function isCustomAgentSourceKey(key) {
