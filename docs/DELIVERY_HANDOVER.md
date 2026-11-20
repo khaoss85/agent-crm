@@ -172,7 +172,7 @@ plan payload carries its own list.
 
 ## Evidence
 
-`tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e-1.test.js`, `tests/delivery-execution-e2e-2.test.js`, `tests/delivery-execution-e2e-3.test.js`, `tests/delivery-execution-e2e-4.test.js`, `tests/delivery-execution-e2e-5.test.js`, `tests/delivery-execution-e2e-6.test.js`,
+`tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`,
 `tests/admin-delivery.test.js`, `tests/package-contract.test.js`,
 `packages/delivery/README.md`,
 `examples/starters/b2b-lead-qualification/install.mjs`,
