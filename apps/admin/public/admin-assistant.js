@@ -2387,7 +2387,9 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     render();
     const match = closestSuggestion(state.screenId, typed);
     if (match) {
-      state.asked = null;
+      // backlog:419166e7ee75: the typed words stay on screen and the panel
+      // names the suggestion it runs — without the «non attive» bubble.
+      state.asked = { text: typed, matched: match.title };
       await runSuggestionById(match.id);
       return;
     }
@@ -2584,7 +2586,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       // backlog:1968c3320cd3: the system's reply is its own bubble, never
       // a line inside the person's question.
       scroll.appendChild(el(doc, 'p', 'bo-assistant-reply', state.asked.matched
-        ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
+        ? `rispondo con «${state.asked.matched}».`
         : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
     }
     if (state.queued !== null) {
