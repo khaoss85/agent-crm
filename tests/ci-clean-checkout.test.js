@@ -35,6 +35,40 @@ const FILES = [
   '.github/workflows/nightly-tool-selection.yml',
 ];
 
+// backlog:a6def994 — the single cache contract: one key and one path shared
+// by the nightly writer and every PR reader, so the restore always hits the
+// entry the nightly saved. A restore with a different key prefix silently
+// misses (the 20/11 failure: readers asked npm-* while the setup-node
+// producer saved node-cache-*), so the key is part of the contract, not just
+// the step shape.
+const CACHE_PATH = '~/.npm';
+const CACHE_KEY = "npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}";
+const CACHE_RESTORE_KEYS = 'npm-${{ runner.os }}-';
+
+// A read-only reader: actions/cache/restore with the contract key, prefix
+// and path. The only cache shape allowed in ci.yml (no save post step).
+function cacheReader(step) {
+  return (
+    step.uses !== null &&
+    step.uses.startsWith('actions/cache/restore@') &&
+    step.options.path === CACHE_PATH &&
+    step.options.key === CACHE_KEY &&
+    step.options['restore-keys'] === CACHE_RESTORE_KEYS
+  );
+}
+
+// A save-capable writer: the full actions/cache (restores at step time, its
+// post step saves only on an exact-key miss) or an explicit save, with the
+// contract key and path. Lives only in the scheduled nightly workflow.
+function cacheWriter(step) {
+  return (
+    step.uses !== null &&
+    (step.uses.startsWith('actions/cache/save@') || /^actions\/cache@v\d+/.test(step.uses)) &&
+    step.options.path === CACHE_PATH &&
+    step.options.key === CACHE_KEY
+  );
+}
+
 function read(name) {
   return readFileSync(join(root, name), 'utf8');
 }
@@ -153,19 +187,19 @@ test('jobs that install dependencies restore the verified npm cache first', () =
     for (const inst of steps.filter((s) => s.uses === null && /(^|[^\w-])npm ci([^\w-]|$)/.test(runText(s)))) {
       // An unconditional cache restore covers a conditional install in the same
       // job; the reverse would leave the install without a cache.
-      // Two restore shapes count (backlog:a6def994): setup-node with the npm
-      // cache (restores and saves, kept only by the scheduled nightly job) and
-      // the read-only actions/cache/restore of the npm dir outside the work
-      // dir (no post step, no slow save). Either way npm itself verifies every
-      // tarball against the lockfile on read.
+      // Two shapes count (backlog:a6def994): the read-only actions/cache/restore
+      // with the contract key and path (the only shape allowed in ci.yml: no
+      // post step, no slow save) and, in the scheduled nightly workflow only,
+      // the save-capable writer (full actions/cache, which restores at step
+      // time) or the legacy setup-node npm cache. Either way npm itself
+      // verifies every tarball against the lockfile on read.
       const cache = steps.find(
         (s) =>
           s.job === inst.job &&
           s.uses !== null &&
-          ((s.uses.startsWith('actions/setup-node@') && s.options.cache === 'npm') ||
-            (s.uses.startsWith('actions/cache/restore@') &&
-              typeof s.options.path === 'string' &&
-              /(^|\/)(\.npm|npm-cache)\/?$/.test(s.options.path))) &&
+          (cacheReader(s) ||
+            (name === '.github/workflows/nightly-tool-selection.yml' &&
+              (cacheWriter(s) || (s.uses.startsWith('actions/setup-node@') && s.options.cache === 'npm')))) &&
           (s.iff === null || s.iff === inst.iff) &&
           s.line < inst.line,
       );
@@ -191,6 +225,40 @@ test('ci.yml never saves the npm cache (backlog:6cc2b44b stays fixed)', () => {
       !s.uses.startsWith('actions/cache/save@') && !/^actions\/cache@v\d+/.test(s.uses),
       `ci.yml:${s.line} saves the cache: only actions/cache/restore (read-only) is allowed here; ` +
         `the scheduled nightly workflow is the one that keeps the entry fresh`,
+    );
+  }
+});
+
+test('nightly writer and ci readers share one cache key and path (backlog:a6def994)', () => {
+  // The restore only hits when the reader asks for exactly what the writer
+  // saved: same key, same path. This is the 20/11 regression net — readers
+  // on npm-* with a setup-node producer on node-cache-* passed every shape
+  // check and missed every restore.
+  const writers = stepsOf(read('.github/workflows/nightly-tool-selection.yml')).filter(cacheWriter);
+  assert.equal(
+    writers.length,
+    1,
+    `nightly must have exactly one cache writer with key ${CACHE_KEY} and path ${CACHE_PATH}, ` +
+      `found ${writers.length}: the scheduled workflow is the one that keeps the entry fresh`,
+  );
+  const readers = stepsOf(read('.github/workflows/ci.yml')).filter(cacheReader);
+  assert.equal(
+    readers.length,
+    3,
+    `ci.yml must keep exactly three cache readers (fast, verify, public-claims), found ${readers.length}`,
+  );
+  for (const r of readers) {
+    assert.equal(
+      r.options.key,
+      writers[0].options.key,
+      `ci.yml:${r.line} restores key ${r.options.key} but the nightly writer saves ${writers[0].options.key}: ` +
+        `the restore would miss`,
+    );
+    assert.equal(
+      r.options.path,
+      writers[0].options.path,
+      `ci.yml:${r.line} restores path ${r.options.path} but the nightly writer saves ${writers[0].options.path}: ` +
+        `the restore would miss`,
     );
   }
 });
