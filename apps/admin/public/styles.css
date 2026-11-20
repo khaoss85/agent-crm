@@ -949,13 +949,15 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-voice-panel button.ui-btn.bo-voice-mic::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--human); }
 .bo-voice-composer[data-state="recording"] button.ui-btn.bo-voice-mic { border-color: var(--human-ink); background: var(--human-soft); color: var(--human-ink); }
 .bo-voice-composer[data-state="recording"] button.ui-btn.bo-voice-mic::before { border-radius: 2px; background: var(--human-ink); }
-.bo-scheda-voice-panel button.ui-btn.bo-voice-ai { margin-left: auto; padding: 7px 14px; border-radius: 999px; border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); font-size: 13px; }
+.bo-scheda-voice-panel button.ui-btn.bo-voice-ai { margin-left: auto; padding: 8px 16px; border-radius: 999px; border-color: var(--agent-ink); background: var(--agent-ink); color: var(--paper); font-size: 13.5px; }
+/* Once a draft is on screen the AI step is done: it steps back, «Salva» leads. */
+.bo-scheda-voice-panel[data-step="draft"] button.ui-btn.bo-voice-ai { border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
 .bo-scheda-voice-panel button.ui-btn.bo-voice-ai::before { content: "✦ "; }
-.bo-scheda-voice-panel button.ui-btn.bo-voice-ai:hover { border-color: var(--agent-ink); }
-.bo-scheda-voice-draft { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 12px; border: 1px solid var(--agent-line); border-radius: 12px; background: var(--surface); }
+.bo-scheda-voice-panel button.ui-btn.bo-voice-ai:hover { border-color: var(--agent-ink); opacity: .92; }
+.bo-scheda-voice-draft { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 0; border: 0; background: transparent; }
 .bo-scheda-voice-draft:empty, .bo-scheda-voice-draft[hidden], .bo-scheda-voice-panel [hidden] { display: none; }
 .bo-voice-draft-field { display: flex; flex-direction: column; gap: 4px; }
-.bo-scheda-voice-panel .bo-voice-draft-label { margin: 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--agent-ink); }
+.bo-scheda-voice-panel .bo-voice-draft-label { margin: 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .bo-scheda-voice-panel .bo-scheda-voice-draft textarea, .bo-scheda-voice-panel .bo-scheda-voice-draft textarea.ui-field { width: 100%; box-sizing: border-box; min-height: 40px; max-height: 200px; padding: 9px 11px; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--paper); font: inherit; font-size: 14px; line-height: 1.45; color: var(--ink); resize: vertical; field-sizing: content; }
 .bo-scheda-voice-panel .bo-scheda-voice-draft textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; background: var(--surface); }
 .bo-scheda-voice-panel button.ui-btn.bo-voice-manual { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12.5px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
@@ -963,6 +965,7 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-voice-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; padding-top: 2px; }
 .bo-voice-foot-hint { flex: 1 1 200px; margin: 0; font-size: 12px; }
 .bo-scheda-voice-panel button.ui-btn.bo-voice-save { padding: 10px 18px; border-radius: 10px; font-size: 14px; }
+.bo-scheda-voice-panel[data-step="draft"] button.ui-btn.bo-voice-save { border-color: var(--ink); background: var(--ink); color: var(--paper); }
 @media (prefers-reduced-motion: no-preference) {
   .bo-voice-composer[data-state="recording"] button.ui-btn.bo-voice-mic::before { animation: bo-sync-pulse 1.2s ease-in-out infinite; }
 }
@@ -975,7 +978,18 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
-.bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
+.bo-scheda-refresh.ui-btn { align-self: flex-start; height: 34px; padding: 0 14px; border-radius: 999px; border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); font-size: 13px; font-weight: 700; }
+/* Restyle 19/11 (7de82665ac2a): «Aggiorna» is an AI action — the agent pill, like «✦ Chiedi all'AI». */
+.bo-scheda-refresh.ui-btn::before { content: "✦ "; }
+.bo-scheda-refresh.ui-btn:hover { border-color: var(--agent-ink); }
+.bo-scheda-enrich-hint { margin: 0; font-size: 12.5px; line-height: 1.45; }
+/* Campi personalizzati: the value is the edit control — no «Modifica» per field. */
+.bo-scheda-fact > button.bo-campo-value.ui-btn { min-width: 0; height: auto; margin: -4px -8px -4px 0; padding: 4px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font-size: 14px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.bo-scheda-fact > button.bo-campo-value.ui-btn:hover, .bo-scheda-fact > button.bo-campo-value.ui-btn:focus-visible { border-color: var(--line); background: var(--surface-soft); transform: none; }
+.bo-scheda-fact > button.bo-campo-value.ui-btn.is-empty { color: var(--accent); font-weight: 600; }
+.bo-scheda-fact > button.bo-campo-value.ui-btn.is-empty::before { content: "+ "; }
+button.bo-campo-add-btn.ui-btn { align-self: flex-start; height: auto; margin-top: 4px; padding: 4px 0; border: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
+button.bo-campo-add-btn.ui-btn:hover { color: var(--ink); transform: none; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
 /* backlog:f32824784d04: below 1280 px three columns no longer fit with the
@@ -1234,14 +1248,22 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
 /* backlog:1f7cb20d3c30: a hand-written agent nothing runs yet — waiting, never «Attivo». */
 .bo-agent-status-waiting { background: var(--pending-soft); color: var(--pending-ink); }
-.bo-agent-noengine { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agent-noengine { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--pending-soft); color: var(--pending-ink); font-size: 12.5px; line-height: 1.45; }
 .bo-agenti-sectionhead > .ui-btn { margin-left: auto; }
-.bo-agent-talk .bo-agent-cost { flex: 0 0 96px; min-width: 0; }
+.bo-agent-talk .bo-agent-cost-wrap { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.bo-agent-talk .bo-agent-cost-wrap .bo-agent-cost { width: 84px; flex: none; padding: 9px 10px; }
+.bo-agent-paused-note { margin: 0; font-size: 13px; }
 .bo-agent-new-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
-.bo-agent-new { display: flex; flex-direction: column; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+/* Restyle 19/11 (ac104d4ff904): Nome and «Di cosa si occupa» side by side,
+ * the rest full width — no half-empty panel. */
+.bo-agent-new { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; padding: 18px 20px; border-radius: 16px; border: 1px solid var(--agent-line); background: var(--surface); }
+.bo-agent-new > * { grid-column: 1 / -1; }
+.bo-agent-new > .bo-agent-new-name, .bo-agent-new > .bo-agent-new-role { grid-column: auto; }
 .bo-agent-new > h3 { margin: 0 0 12px; font-size: 17px; }
 .bo-agent-new .bo-seq-create-error { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--danger); }
-.bo-agent-new .bo-seq-field { max-width: 640px; gap: 4px; }
+.bo-agent-new .bo-seq-field { gap: 4px; }
+/* The hint repeats the error's own sentence: only one line under a refused field. */
+.bo-agent-new .bo-seq-field:has([aria-invalid="true"]) .bo-agent-new-hint { display: none; }
 .bo-agent-new textarea.ui-field { width: 100%; resize: vertical; font-family: inherit; line-height: 1.45; }
 /* One metric per line: small label, clear value, never a broken word. */
 .bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
@@ -1262,9 +1284,12 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-run-date { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
 .bo-agent-runs-toggle.ui-btn { align-self: flex-start; height: auto; margin: -4px 0 0; padding: 2px 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
 .bo-agent-noassign { margin: 0; }
-.bo-agent-talk { display: flex; gap: 8px; align-items: center; }
-.bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
-.bo-agent-talk .ui-btn { flex: none; }
+.bo-agent-talk { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Restyle 19/11: the incarico gets the whole row, never a cut sentence. */
+.bo-agent-talk .bo-agent-input { flex: 1 1 260px; min-width: 0; }
+.bo-agent-talk .ui-btn { flex: none; margin-left: auto; padding: 10px 18px; }
+/* With a spending cap the sentence takes the row; cost and Affida share the next one. */
+.bo-agent-talk--cost .bo-agent-input { flex-basis: 100%; }
 .bo-agent-unclear { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--pending-soft); color: var(--pending-ink); font-size: 13px; line-height: 1.45; }
 .bo-agent-unclear p { margin: 0; }
 .bo-agent-done { margin: 0; font-size: 13px; font-weight: 700; color: var(--accent); }
@@ -1285,8 +1310,10 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line-faint); }
 .bo-agent-team-link { font-size: 12px; color: var(--muted); }
 @media (max-width: 420px) {
-  .bo-agent-talk { flex-wrap: wrap; }
   .bo-agent-talk .ui-btn { flex: 1 1 100%; }
+}
+@media (max-width: 640px) {
+  .bo-agent-new > .bo-agent-new-name, .bo-agent-new > .bo-agent-new-role { grid-column: 1 / -1; }
 }
 
 /*
@@ -3033,5 +3060,17 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
 .pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
 .pipeline-off-list .pipeline-off-meta { color: var(--muted); }
+
+/* Restyle 19/11 (7de82665ac2a): note and dictation on top of the cronologia. */
+.bo-scheda-note-top { display: flex; flex-direction: column; border-bottom: 1px solid var(--line-faint); }
+.bo-scheda-note-top .bo-scheda-note-form { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 14px 20px 8px; }
+.bo-scheda-note-top .bo-scheda-note-form > textarea { flex: 1 1 100%; }
+.bo-scheda-note-top .bo-scheda-note-form > button.ui-btn { padding: 8px 14px; border-radius: 10px; font-size: 13.5px; }
+.bo-scheda-note-top .bo-scheda-note-form > .field-error { flex: 1 1 100%; }
+.bo-scheda-note-top .bo-scheda-note-form > .field-error:empty { display: none; }
+.bo-scheda-note-top .bo-scheda-note-form > p.bo-muted { flex: 1 1 220px; margin: 0; font-size: 12px; }
+.bo-scheda-note-top .bo-scheda-voice-note { padding: 0 20px 14px; }
+/* «Storia stati» reads like the other small section titles of the scheda. */
+.bo-scheda-offer-history-title { margin: 6px 0 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 /* ece111d80305: «Link riunione» appears only for an Online place. */
 .cal-field[hidden] { display: none; }
