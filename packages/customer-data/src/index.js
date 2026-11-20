@@ -171,7 +171,10 @@ export function createCustomerDataPackage(options = {}) {
     // declared surface (propose-field-from-question, fill-ai-field-values).
     // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the
     // composed opportunity pipeline (pipelines option) so Pagato is won.
-    version: 7,
+    // Version 8 (backlog:d547f65e): unlinking a wrong merge writes one
+    // cronologia note per separated member through the declared work
+    // follow-up@1 edge, never into work's storage directly.
+    version: 8,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -191,7 +194,7 @@ export function createCustomerDataPackage(options = {}) {
       createChannelSenderCapability({ config, policy }),
       createChannelOriginsCapability(config),
     ],
-    actions: buildCustomerDataActions(config),
+    actions: buildCustomerDataActions(config, { timelineNotes: offeredFollowUp }),
 
     // The match policy is a declared, fingerprinted definition (ADR-015), so a
     // changed rule is a changed fingerprint on every receipt it produced.

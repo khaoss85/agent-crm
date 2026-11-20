@@ -76,6 +76,8 @@ test('dalla scheda si annulla un\u2019unione sbagliata: le due schede tornano se
   });
   assert.equal(undone.result.candidate.status, 'unresolved');
   assert.equal(undone.result.withdrawn, 2);
+  assert.equal(undone.result.timelineNotes, 0, 'no work composed: no timeline row, the undo still holds');
+  assert.equal(undone.result.timelineUnavailable, true, 'no work composed: reported, never silent');
 
   const links = app.modules.get('canonical-link').service.list({ limit: 10 });
   assert.equal(links.length, 2, 'undoing withdraws, never deletes');
@@ -309,6 +311,76 @@ test('d547f65e799a: unire due contatti e separarli — ognuno ritrova le sue ide
   assert.equal(both, 2, 'both contacts survive the merge and its undo');
 
   void ROWS;
+});
+
+test('d547f65e799a P1: la nota di annullamento passa dalla capability, mai dal nome del modulo', async () => {
+  // Work renamed its activity record: the registry answers nothing for the
+  // old name, exactly the rename the old hard-coded lookup turned into a
+  // silent timelineUnavailable. The undo must still write both notes through
+  // the declared edge.
+  const active = [
+    { id: 'link-1', decisionId: 'dec-9', status: 'active', subjectResource: 'contact', subjectId: 'c1', subjectOwner: 'host' },
+    { id: 'link-2', decisionId: 'dec-9', status: 'active', subjectResource: 'contact', subjectId: 'c2', subjectOwner: 'host' },
+  ];
+  const linkSvc = {
+    createManaged: async () => { throw new Error('no creates in this test'); },
+    listWhere: async () => active.map((row) => ({ ...row })),
+    applyManaged: async (id, patch) => {
+      const row = active.find((entry) => entry.id === id);
+      Object.assign(row, patch);
+      return { ...row };
+    },
+  };
+  const modules = {
+    get: (name) => {
+      if (name === 'canonical-link') return { service: linkSvc };
+      const error = new Error(`Module not found: ${name}`);
+      error.name = 'NotFoundError';
+      error.status = 404;
+      throw error;
+    },
+  };
+  const written = [];
+  let openedWith = null;
+  const timelineNotes = {
+    create: async (context) => {
+      openedWith = context;
+      return {
+        recordTimelineNote: async (request) => {
+          written.push(request);
+          return { id: `note-${written.length}` };
+        },
+      };
+    },
+  };
+  const actions = buildCustomerDataActions({}, { timelineNotes });
+  const unlink = actions.find((entry) => entry.name === 'unlink-canonical-identity');
+  const steps = [];
+  const result = await unlink.execute({
+    record: { id: 'cand-9', decisionId: 'dec-9' },
+    input: { reason: 'due Mario diversi' },
+    actor: ACTOR,
+    modules,
+    managed: async (id, patch) => ({ id, ...patch }),
+    now: () => '2026-11-20T20:00:00.000Z',
+    step: (name, details) => steps.push([name, details]),
+  });
+  assert.equal(result.withdrawn, 2);
+  assert.equal(result.timelineNotes, 2, 'both members get their cronologia row even with the record renamed away');
+  assert.equal(result.timelineUnavailable, false);
+  assert.equal(openedWith?.consumer, 'customer-data', 'the edge opens for this package');
+  assert.equal(openedWith?.modules, modules, 'the edge opens on the runtime modules');
+  assert.equal(written.length, 2);
+  assert.deepEqual(written.map((note) => note.subject), [
+    { resource: 'contact', id: 'c1' },
+    { resource: 'contact', id: 'c2' },
+  ]);
+  for (const note of written) {
+    assert.ok(String(note.body).includes('due Mario diversi'), 'the row names why');
+    assert.deepEqual(note.source, { package: 'customer-data', action: 'unlink-canonical-identity' });
+    assert.equal(note.occurredAt, '2026-11-20T20:00:00.000Z');
+  }
+  assert.ok(active.every((row) => row.status === 'withdrawn'), 'the links still withdraw');
 });
 
 test('unire di nuovo la stessa coppia dopo averla separata: nessun conflitto sulla chiave', async (t) => {
