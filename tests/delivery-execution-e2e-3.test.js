@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project.js';
+import { DELIVERY_POLICY, activatedContract, boot } from './helpers/contracts-project.js';
+import { primedProject } from './helpers/contracts-prime.js';
 
 /**
  * Milestone 14a e2e: a planned delivery project is **executed** — started, its
@@ -17,7 +18,7 @@ const WINDOW = { targetStartDate: '2026-09-20', targetEndDate: '2026-12-20' };
 const PARTNER = { partnerRef: 'partner:abc-consulting', partnerName: 'ABC Consulting', reason: 'they run our migrations' };
 
 const setup = async (t, file) => {
-  const root = project(t, { withDelivery: true });
+  const root = primedProject(t, { withDelivery: true });
   const context = await boot(root, join(root, 'data', file));
   t.after(() => context.close());
   return { root, context };
