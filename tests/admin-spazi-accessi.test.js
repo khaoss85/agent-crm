@@ -2243,3 +2243,72 @@ test('785aeb28bd18: the card statistic reads start only after the team data land
   await flush();
   assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });
+
+// Voce 785aeb28bd18 (verifica Mac 20/11 sul live c089949 con #1086: NON
+// PASSA, peggio di prima — roster 2,5-5,0 s dopo lo scheletro su 5
+// caricamenti perché aspetta /api/space-permissions/effective, che da sola
+// sta in 0,2-0,6 s ma con le 7 letture della prima ondata arriva sempre
+// ultima a 2,5-5 s; dopo le statistiche ogni caricamento rilegge le stesse
+// risorse): il roster si dipinge appena arriva il team, senza aspettare gli
+// interruttori né il conteggio «da sistemare», e un caricamento legge ogni
+// percorso una sola volta.
+test('785aeb28bd18: the roster paints while the switches read is still out, each path read once', async () => {
+  const pending = [];
+  const calls = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+    needsBySpace: { [SPACE]: 5 },
+    calls,
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
+  const releaseWhere = (wanted) => {
+    const keep = [];
+    for (const entry of pending.splice(0)) {
+      if (wanted(entry.path)) entry.release();
+      else keep.push(entry);
+    }
+    pending.push(...keep);
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // Only the team answers: the roster must already be on screen while the
+  // switches, the badge count and the agents are still out.
+  releaseWhere((path) => path === '/api/spine/context' || path === '/api/spine/memberships');
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the team data replaces the skeleton before effective lands');
+  assert.match(text(mount), /Team dell\u2019organizzazione/, 'the roster paints while the switches read is still out');
+  assert.ok(pending.some((entry) => entry.path.startsWith('/api/space-permissions/effective')), 'effective is still out when the roster paints');
+  assert.ok(!pending.some((entry) => isStat(entry.path)), 'the statistic still waits for the data');
+  // The switches and the badge fill in beside the roster, from the same
+  // load's reads — no reread of anything. Late followers (the badge's
+  // activity read starts only after its first two land) are released too.
+  for (let round = 0; round < 8 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    releaseWhere((path) => !isStat(path));
+    await flush();
+  }
+  assert.doesNotMatch(text(mount), /Leggo i permessi AI/, 'the switches fill their panel once effective lands');
+  assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-switch')), 'the AI switches are on screen');
+  assert.ok(pending.some((entry) => isStat(entry.path)), 'the statistic reads start once the data is in');
+  releaseWhere(() => true);
+  await done;
+  await flush();
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
+  const count = (wanted) => calls.filter((entry) => wanted(entry.path)).length;
+  assert.equal(count((path) => path === '/api/spine/memberships'), 1, 'the team is read once per load, badge included');
+  assert.equal(count((path) => path.startsWith('/api/space-permissions/effective')), 1, 'effective is read once per load');
+  assert.equal(count((path) => path === '/api/profile'), 1, 'the profile is read once per load');
+  assert.equal(count((path) => path.startsWith('/api/connectors?')), 1, 'the connectors are read once per load');
+  assert.equal(count((path) => path.startsWith('/api/customer-data/customers?')), 1, 'the customers are read once per load');
+});
