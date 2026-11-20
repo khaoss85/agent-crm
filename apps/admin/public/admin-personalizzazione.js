@@ -6,7 +6,7 @@
 // Ref "02 Personalizzazione" del prototipo: schede Skill/Connettori/
 // Pacchetti, viste I tuoi/Scopri, ricerca, filtri e ordinamento, card con
 // "Prova" e +/✓, tabella degli stati, stato vuoto Pacchetti,
-// "Sviluppa per Accordo".
+// Catalogo orientato al titolare; le istruzioni per sviluppatori restano fuori.
 //
 // La schermata riusa quello che esiste già e non duplica nulla:
 // - il catalogo unità (pacchetti + skill) lo pubblica il server su
@@ -59,7 +59,7 @@ export function isPersonalizzazioneTab(tab) {
  * @param {unknown} tab
  */
 export function bannerFor(tab) {
-  if (tab === 'skill') return 'Le skill insegnano all\u2019AI come lavorare nel tuo studio: la Prova non scrive nulla.';
+  if (tab === 'skill') return 'Scegli le skill disponibili per il tuo lavoro: la Prova non scrive nulla.';
   // backlog:34672b9f5a1f: the prototype's Connettori shows no line under
   // the toolbar — the hero carries the message — so the tab has no banner.
   if (tab === 'connettori') return '';
@@ -92,6 +92,17 @@ export function unitStatus({ entry, row } = {}) {
 }
 
 /**
+ * Restyle 0e9f723da891: project prerequisites identify coding-agent
+ * instructions, not runtime automations for the space owner. Use catalog
+ * metadata, never a blacklist of names. Their activation rows and the
+ * server catalog remain untouched.
+ * @param {any} entry
+ */
+function isCustomerUnit(entry) {
+  return entry?.kind !== 'skill' || !['repository', 'generated-project', 'any-project'].includes(entry?.requires?.tier);
+}
+
+/**
  * Filter and sort one tab. `view` is the prototype's I tuoi/Scopri filter;
  * `query` matches label, blurb and unit name case-insensitively; `sort` is
  * `nome` or `stato` (active first, then name).
@@ -102,7 +113,7 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   const mine = view === 'tuoi';
   const list = [];
   for (const entry of Array.isArray(units) ? units : []) {
-    if (!entry || typeof entry.name !== 'string' || entry.kind !== kind) continue;
+    if (!entry || typeof entry.name !== 'string' || entry.kind !== kind || !isCustomerUnit(entry)) continue;
     const row = active.get(entry.name) ?? null;
     if (mine && !row) continue;
     if (!mine && row) continue;
@@ -997,6 +1008,22 @@ export function createPersonalizzazioneView(deps) {
     }
     const units = state.units ?? [];
     const rows = state.rows ?? [];
+    // An empty business catalog is not a failed search and offers no
+    // fake activation. The next step opens the real agents already in UI.
+    if (state.tab === 'skill' && !units.some((entry) => entry?.kind === 'skill' && isCustomerUnit(entry))) {
+      const empty = el(doc, 'div', { cls: 'bo-perso-empty' });
+      empty.appendChild(el(doc, 'p', { text: 'Non ci sono skill disponibili per questo spazio.', cls: 'empty-title' }));
+      empty.appendChild(el(doc, 'p', { text: 'Puoi vedere le attività disponibili nella pagina Agenti.', cls: 'empty' }));
+      const agents = el(doc, 'button', {
+        text: 'Vai agli agenti', cls: 'ui-btn ui-btn-secondary ui-btn-small',
+        attrs: { type: 'button', 'data-action': 'perso-agents' },
+      });
+      agents.addEventListener('click', () => go('#/agenti'));
+      empty.appendChild(agents);
+      box.appendChild(empty);
+      mount.appendChild(box);
+      return;
+    }
     const known = activeByUnit({ units, rows });
     const items = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort });
     if (items.length === 0) {
@@ -1156,15 +1183,6 @@ export function createPersonalizzazioneView(deps) {
       card.appendChild(actions);
       box.appendChild(card);
     }
-    const dev = el(doc, 'article', { cls: 'card dev bo-perso-card bo-perso-dev' });
-    dev.appendChild(el(doc, 'h3', { text: 'Sviluppa per Accordo' }));
-    dev.appendChild(el(doc, 'p', { text: 'Hai un settore con esigenze sue? Impacchetta capacità esistenti.', cls: 'muted' }));
-    const go = el(doc, 'button', { text: 'Come pubblicare un pacchetto', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
-    go.addEventListener('click', () => {
-      say(PACKAGE_AUTHORING_MESSAGE);
-    });
-    dev.appendChild(go);
-    box.appendChild(dev);
   }
 
   /** @param {any} box */
@@ -1438,7 +1456,9 @@ export function createPersonalizzazioneView(deps) {
         query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
-    renderToolbar(toolRow, count);
+    const noCustomerSkills = state.tab === 'skill' && Array.isArray(state.units)
+      && !state.units.some((entry) => entry?.kind === 'skill' && isCustomerUnit(entry));
+    if (!noCustomerSkills) renderToolbar(toolRow, count);
     mount.appendChild(box);
     renderList();
   }

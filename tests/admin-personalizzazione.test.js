@@ -1097,3 +1097,40 @@ test('6d0df351: with the pilot adapters Connettori offers Collega only where ser
   assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
     'unknown adapters: the previous answer stays');
 });
+
+test('owner catalog excludes project-based coding skills even when they are active', async () => {
+  const { SPACE_PACKAGE_CATALOG } = await import('../packages/space-permissions/src/composition.js');
+  const units = [...SPACE_PACKAGE_CATALOG];
+  const active = activeByUnit({ units, rows: units.filter((u) => u.kind === 'skill').map((u) => ({ unit: u.name, status: 'active' })) });
+  assert.deepEqual(filterUnits({ units, tab: 'skill' }), [], 'the shipped coding catalog is not a business automation catalog');
+  assert.deepEqual(filterUnits({ units, active, tab: 'skill', view: 'tuoi' }), [], 'activation does not turn a coding instruction into a runtime skill');
+  assert.ok(filterUnits({ units, tab: 'pacchetti' }).length > 0, 'packages stay available');
+  const customerSkill = { name: 'skill:reply-draft', kind: 'skill', label: 'Bozze di risposta', blurb: 'Prepara una risposta da rileggere.' };
+  assert.deepEqual(filterUnits({ units: [...units, customerSkill], tab: 'skill', query: 'risposta' }).map((x) => x.entry.name), [customerSkill.name]);
+});
+
+test('a customer space with only coding skills has an honest empty state and a working route to Agenti, without writes', async () => {
+  const { SPACE_PACKAGE_CATALOG } = await import('../packages/space-permissions/src/composition.js');
+  for (const viewName of ['tuoi', 'scopri']) {
+    const doc = createFakeDocument(); const mount = createMount(); const calls = []; const routes = [];
+    const view = createPersonalizzazioneView({ doc, mount, client: stubClient({ catalog: [...SPACE_PACKAGE_CATALOG], calls }), spaceId, navigate: (route) => routes.push(route) });
+    await view.render();
+    view.test.state.tab = 'skill'; view.test.state.view = viewName;
+    await view.render();
+    assert.match(mount.textContent, /Non ci sono skill disponibili per questo spazio/);
+    assert.doesNotMatch(mount.textContent, /Revisione pre-merge|Nuovi oggetti|Sviluppa per Accordo|Come pubblicare|Attiva le tue prime skill|copia il prompt/);
+    const action = mount.findAll('button').find((n) => n.getAttribute('data-action') === 'perso-agents');
+    assert.ok(action, 'one useful next step');
+    action.dispatch('click');
+    assert.deepEqual(routes, ['#/agenti']);
+    assert.ok(calls.every((c) => c.method === 'GET'), 'rendering and navigation never change composition');
+  }
+});
+
+test('owner package cards do not advertise developer publishing', async () => {
+  const doc = createFakeDocument(); const mount = createMount();
+  const view = createPersonalizzazioneView({ doc, mount, client: stubClient(), spaceId });
+  await view.render(); view.test.state.tab = 'pacchetti'; view.test.state.view = 'scopri'; await view.render();
+  assert.match(mount.textContent, /Canali/);
+  assert.doesNotMatch(mount.textContent, /Sviluppa per Accordo|Come pubblicare un pacchetto/);
+});
