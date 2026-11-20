@@ -1159,11 +1159,14 @@ export function createPersonalizzazioneView(deps) {
     const dev = el(doc, 'article', { cls: 'card dev bo-perso-card bo-perso-dev' });
     dev.appendChild(el(doc, 'h3', { text: 'Sviluppa per Accordo' }));
     dev.appendChild(el(doc, 'p', { text: 'Hai un settore con esigenze sue? Impacchetta capacità esistenti.', cls: 'muted' }));
-    const go = el(doc, 'button', { text: 'Come pubblicare un pacchetto', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
-    go.addEventListener('click', () => {
+    // Verifica Mac 20/11 11:56Z (fdc711253dbd): this button was named `go`
+    // and shadowed the view's go(hash) for the whole function, so every
+    // «Dettagli» click threw (TDZ) and opened nothing.
+    const howTo = el(doc, 'button', { text: 'Come pubblicare un pacchetto', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
+    howTo.addEventListener('click', () => {
       say(PACKAGE_AUTHORING_MESSAGE);
     });
-    dev.appendChild(go);
+    dev.appendChild(howTo);
     box.appendChild(dev);
   }
 
