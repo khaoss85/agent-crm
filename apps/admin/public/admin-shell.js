@@ -254,14 +254,22 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
  * read counts 0 instead of failing the badge — the screen shows its own
  * honest note for that half.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @param {{ spaceId?: unknown }} [options] the selected workspace, for the
+ * diagnostic line — the team itself is one per organization.
  * @returns {Promise<number>}
  */
-export async function loadTeamDuplicateCount(client) {
+export async function loadTeamDuplicateCount(client, options = {}) {
+  // Review #1066 P2: a swallowed team failure must name the workspace scope
+  // like the sync half does — the team is org-wide, so an unknown space
+  // reads as the organization, never as a missing scope.
+  const scope = typeof options?.spaceId === 'string' && options.spaceId.trim() !== ''
+    ? options.spaceId.trim()
+    : 'organizzazione';
   try {
     const membersRead = await client.request('/api/spine/memberships');
     if (!Array.isArray(membersRead?.items)) {
       try {
-        console.warn('bo-shell team count unreadable: shapeless memberships');
+        console.warn('bo-shell team count unreadable: shapeless memberships', `spaceId=${scope}`);
       } catch {
         // Logging must never break the badge read.
       }
@@ -270,10 +278,10 @@ export async function loadTeamDuplicateCount(client) {
     return duplicateTeamHints(buildTeamRows(membersRead.items)).length;
   } catch (error) {
     // Review gate (AGENTS.md): a swallowed failure must leave its cause
-    // diagnosable. Only the error name is logged — never record bodies,
-    // cookies or personal data here.
+    // diagnosable. Only the error name and the workspace scope are logged —
+    // never record bodies, cookies or personal data here.
     try {
-      console.warn('bo-shell team count unreadable:', error instanceof Error ? error.name : 'unknown');
+      console.warn('bo-shell team count unreadable:', error instanceof Error ? error.name : 'unknown', `spaceId=${scope}`);
     } catch {
       // Logging must never break the badge read.
     }
@@ -306,9 +314,9 @@ export async function loadFixCount(client, options = {}) {
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
-    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items })
-      + await loadTeamDuplicateCount(client);
     const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
+    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items })
+      + await loadTeamDuplicateCount(client, { spaceId });
     if (spaceId === '') return base;
     try {
       const activity = await client.request(
@@ -1396,10 +1404,13 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     unknown
       // backlog:1d33b335fba0: say what was not read, in plain words, with
       // a way to try again — never «leggerle» with nothing it refers to.
+      // backlog:6563edf41aab: singular agrees — «1 cosa», never «1 cose».
       ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
-        : `${badgeText} cose da sistemare (vedi Stato sync).`,
+        : fixCount === 1
+          ? '1 cosa da sistemare (vedi Stato sync).'
+          : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
   panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {

@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from '
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { buildTeamRows, duplicateTeamHints, isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
@@ -2961,6 +2961,13 @@ export function createCalendarioView(deps) {
           : 'Nello spazio non risulta ancora nessuna persona: quando il titolare invita il team, la settimana si riempie da sé.',
       }));
       return panel;
+    }
+    // backlog:6563edf41aab: the same duplicate warning Spazi e accessi
+    // paints, from the same roster rows through the same hints — «Daniele
+    // Pelleri (1)» and «daniele pelleri (2)» stay two toggles until the
+    // pilot merges them, but never again without an explanation.
+    for (const hint of duplicateTeamHints(buildTeamRows(Array.isArray(state.members) ? state.members : []))) {
+      panel.appendChild(el(doc, 'p', { className: 'bo-muted cal-team-duplicate', text: `Possibile doppione: ${hint.text}` }));
     }
     for (const row of rows) {
       const toggle = el(doc, 'button', {
