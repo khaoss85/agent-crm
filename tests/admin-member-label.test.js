@@ -8,11 +8,12 @@ import { teamName } from '../apps/admin/public/admin-customer-card.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
- * Team members by name, never a technical id (production 10/11): Oggi ›
- * Agenda printed «broker+adopted-…@accordo.invalid» under the customer
- * (and «google|1049…» in the test space), Spazi e accessi listed the team
- * as broker mailboxes. One filter (`memberText`) and one label
- * (`memberLabel`) in admin-labels.js serve every team screen.
+ * Team members by name, never a technical id (production 10/11): Spazi e
+ * accessi listed the team as broker mailboxes («broker+adopted-…@accordo.invalid»,
+ * «google|1049…»). One filter (`memberText`) and one label (`memberLabel`)
+ * in admin-labels.js serve every team screen. Oggi › Agenda no longer
+ * paints roster names at all (backlog:57e3d1685e58, owner 19/11): the chi
+ * line is the contact's own address or the notes cue, never the slot holder.
  * The ids below have the production shape; the digits are invented.
  */
 
@@ -48,10 +49,10 @@ test('memberLabel names the subject from the roster, or nothing', () => {
   assert.equal(memberLabel('marco@esempio.it', []), 'marco@esempio.it', 'a real address outside the roster reads as itself, like personLabel (backlog:e52c5e0dd49f)');
 });
 
-test('Oggi › Agenda: the chi line is the member name, never the raw id', () => {
+test('Oggi › Agenda: the chi line is never the member name, never the raw id', () => {
   const roster = [{ subject: BROKER, displayName: 'Giulia Verdi', email: BROKER }];
   const named = buildTodayAgenda([{ ...APPT, teamMemberId: BROKER }], NOW, {}, roster);
-  assert.equal(named[0].who, 'Giulia Verdi');
+  assert.equal(named[0].who, null, 'no contact address: nothing, never the roster name');
   const unnamed = buildTodayAgenda([
     { ...APPT, id: 'a', teamMemberId: BROKER },
     { ...APPT, id: 'b', teamMemberId: GOOGLE, notes: 'Vuole il listino.' },
@@ -79,7 +80,7 @@ test('loadOggiData reads the roster with the profile, even when no slot names a 
   });
   const data = await loadOggiData(client([{ ...APPT, teamMemberId: BROKER }]), NOW);
   assert.deepEqual(data.members, [{ subject: BROKER, displayName: 'Giulia Verdi' }]);
-  assert.equal(buildTodayAgenda(data.appointments, NOW, data.appointmentNames, data.members)[0].who, 'Giulia Verdi');
+  assert.equal(buildTodayAgenda(data.appointments, NOW, data.appointmentNames, data.members)[0].who, null, 'the roster still reads, but its names never paint the chi line');
   seen.length = 0;
   const none = await loadOggiData(client([APPT]), NOW);
   // 785aeb28bd18: the roster rides the first wave beside the profile, so the

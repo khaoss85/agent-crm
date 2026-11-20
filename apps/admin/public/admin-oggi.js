@@ -35,7 +35,7 @@ import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials, isStaleRead } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
 import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
@@ -1123,22 +1123,20 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): the
     // contact's own channel or address, never the team person holding the
-    // slot (VERIFIER_BACK 2026-11-17 on backlog:57e3d1685e58: live «Prova
-    // verifica 40» read «daniele pelleri», the roster name of the
-    // operator, instead of the contact's email). The contact's own address
-    // from the stored label reads first (a synced invitee keeps its email
-    // there); the team member's real name is only the fallback when no
-    // contact address exists, then a short honest cue from the notes.
-    // Never invented when nothing exists, and never a technical id
-    // (production 10/11 read «broker+…@accordo.invalid» and «google|…»
-    // here). A team mailbox is never a name either (backlog:57e3d1685e58:
-    // the operator's own address read under the contact).
-    const team = memberLabel(row?.teamMemberId, members);
-    const teamName = team !== null && !team.includes('@') ? team : null;
+    // slot (OWNER_ANSWER 2026-11-19 15:3xZ on backlog:57e3d1685e58: under
+    // the contact the screen read the coach name instead of the contact's
+    // channel/email). The contact's own address from the stored label
+    // reads first (a synced invitee keeps its email there); when the
+    // label holds the contact name with no address in it, a short honest
+    // cue from the notes reads instead — the roster name of the slot
+    // holder never does. Never invented when nothing exists, and never a
+    // technical id (production 10/11 read «broker+…@accordo.invalid» and
+    // «google|…» here). A team mailbox is never a name either
+    // (backlog:57e3d1685e58: the operator's own address read under the
+    // contact).
     const labelMail = memberText(row?.subjectLabel);
     const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
     const cue = contactMail
-      ?? teamName
       ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -2064,7 +2062,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     repliesPending: false,
     /** The names of «Da rispondere» are still reading (server view or profiles). */
     inboxNamesPending: false,
-    /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
+    /** Organization team (`GET /api/spine/memberships` items, fail-soft). */
     members: [],
     next: null,
   };
@@ -3011,9 +3009,10 @@ export function renderOggi({
       } else {
         cell.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
       }
-      // The prototype's "chi" line under every appointment: who holds the
-      // slot or what the appointment is about. A shared muted token (no new
-      // stylesheet); the supervisor dresses the exact spacing.
+      // The prototype's "chi" line under every appointment: the contact's
+      // own channel/email or what the appointment is about, never the slot
+      // holder. A shared muted token (no new stylesheet); the supervisor
+      // dresses the exact spacing.
       if (entry?.whoPending === true) {
         cell.appendChild(pendingText(doc, 'div', 'bo-muted', '', true, '45%'));
       } else if (typeof entry?.who === 'string' && entry.who !== '') {
