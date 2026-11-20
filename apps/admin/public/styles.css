@@ -3102,3 +3102,6 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .bo-scheda-offer-history-title { margin: 6px 0 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 /* ece111d80305: «Link riunione» appears only for an Online place. */
 .cal-field[hidden] { display: none; }
+
+/* Verifica Mac 20/11: «Link riunione» nella finestra appuntamento solo con Luogo Online. */
+.bo-offer-field[hidden] { display: none; }

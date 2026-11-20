@@ -6101,7 +6101,11 @@ export function createCustomerCardView(deps) {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
           occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
-          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
+          // backlog:ece111d80305 / 9ff9a9ee1fea: the place rides the timeline
+          // read (#1092), so the row says where too — like the popover.
+          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot,
+            typeof item?.location === 'string' && item.location.trim() !== '' ? item.location.trim() : null]
+            .filter(Boolean).join(' · '),
           reason: null,
         };
       });
