@@ -224,6 +224,7 @@ export function createToolRegistry({ app, rootDir, publicStorage = null }) {
           agentSourceKey: { type: 'string', description: 'The agent this assignment belongs to.' },
           phrase: { type: 'string', description: 'The human phrase, e.g. ogni lunedi il report vendite.' },
           plan: { type: 'object', description: 'Optional explicit schedule (cadence, weekday, timeOfDay, runAt). Without it the built-in Italian parser places the phrase.' },
+          costPerRunCents: { type: 'integer', minimum: 1, description: 'Cost of one run in cents — required on every assignment to an agent with a monthly spending cap.' },
           actorId: { type: 'string', description: 'Identity of the external agent giving the assignment. Required: the tool never invents it.' },
         },
         required: ['spaceId', 'sourceKey', 'agentSourceKey', 'phrase', 'actorId'],
@@ -237,6 +238,9 @@ export function createToolRegistry({ app, rootDir, publicStorage = null }) {
         agentSourceKey: args.agentSourceKey,
         phrase: args.phrase,
         ...(args.plan === undefined ? {} : { plan: args.plan }),
+        // backlog:1f7cb20d3c30 — the framework's single cost name: a capped
+        // agent refuses an assignment without it (AGENT_COST_ESTIMATE_REQUIRED).
+        ...(args.costPerRunCents === undefined ? {} : { costPerRunCents: args.costPerRunCents }),
       }),
     },
     {

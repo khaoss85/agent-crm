@@ -67,7 +67,9 @@ export function createAgentsPackage(options = {}) {
     // resumed through update-agent and set-agent-status.
     // 5: backlog:0d2d8f2e — squads: create-squad (template, brief or plan)
     // and the per-squad overview (backlog A, routines, backlog B, metrics).
-    version: 5,
+    // 6: backlog:1f7cb20d3c30 — costPerRunCents on create-assignment and MCP:
+    // a capped agent takes assignments with the run cost on the request.
+    version: 6,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
@@ -113,6 +115,7 @@ export function createAgentsPackage(options = {}) {
           { name: 'sourceKey', type: 'string', hint: 'Caller-supplied idempotency identity for the assignment.' },
           { name: 'agentSourceKey', type: 'string', hint: 'The agent this assignment belongs to.' },
           { name: 'phrase', type: 'string', hint: 'The human phrase, e.g. ogni lunedi il report vendite.' },
+          { name: 'costPerRunCents', type: 'integer', hint: 'Cost of one run in cents — required when the agent has a monthly spending cap.' },
         ],
         create(runtime) {
           const ops = opsFor(runtime);
