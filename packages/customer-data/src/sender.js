@@ -9,7 +9,7 @@ import {
 import { assertMatchResult } from './policy.js';
 import { isTechnicalLocalPart, labelFromEmail, nameWithoutAddressEchoes, readableName } from './display-name.js';
 import {
-  deciding, orderedPair, subjectFields, subjectKey, trusted,
+  deciding, optional, orderedPair, subjectFields, subjectKey, trusted,
 } from './store.js';
 
 /**
@@ -220,6 +220,18 @@ export function createPolicyReader({ modules, names, core }) {
       // Delegated: core owns email uniqueness and its normalization.
       if (!core || typeof core.findContactByEmail !== 'function') return null;
       return await core.findContactByEmail(email);
+    },
+    async contactById(id) {
+      // Voce 91c92940274c (review P1 giro 3): il ramo known-identity di
+      // decide() controlla qui il contatto nominato prima di riusarlo —
+      // get resta la verità sulla riga, tombstone comprese.
+      const contacts = optional(modules, 'contact');
+      if (!contacts || typeof contacts.get !== 'function') return null;
+      try {
+        return await contacts.get(id);
+      } catch {
+        return null;
+      }
     },
     async companiesByName(name) {
       if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
@@ -674,6 +686,19 @@ export function createChannelSenderResolution({
         });
       }
       if (knownContact) {
+        // Voce 91c92940274c (review P1 giro 3): lo stesso handle già
+        // associato non riaggancia in silenzio un contatto archiviato o
+        // eliminato — nasconderebbe posta viva in una riga che nessuna
+        // vista mostra. Come il ramo email, risponde «da decidere» con il
+        // contatto come candidato, senza collegare niente.
+        const named = await reader.contactById(knownContact.id);
+        if (named && (named.archivedAt != null || named.deletedAt != null)) {
+          return senderUnresolved(sender, actor, {
+            rule: 'external-identity',
+            candidates: [knownSubjectHere],
+            evidence: `channel handle ${sender.system} names an archived or eliminated contact: a human decides, never a silent reuse`,
+          });
+        }
         // A second sighting refreshes lastObserved, never a second row —
         // the recorded promise in the package metadata and README.
         const identity = await database.transactionAsync(async () => recordExternalIdentityRow({

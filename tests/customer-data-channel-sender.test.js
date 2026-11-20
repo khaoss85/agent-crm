@@ -548,6 +548,55 @@ test('voce 91c92940274c: new mail on an archived address stays undecided, never 
   assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the archived contact');
 });
 
+test('voce 91c92940274c: the same handle on an archived contact stays undecided, never a silent reuse (review giro 3, P1)', async (t) => {
+  const { app } = await scene(t, 'sender-same-handle-archived');
+
+  const first = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000071', email: 'same.handle.archived@prestigroup.example',
+    firstName: 'Same', lastName: 'Handle', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  await app.services.contacts.archive(first.contact.id, { actor: ACTOR });
+
+  const second = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000071', email: 'same.handle.archived@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(second.outcome, 'unresolved', 'the same handle never reuses the archived contact silently');
+  assert.equal(second.contact, null);
+  assert.equal(second.rule, 'external-identity');
+  assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
+    'the archived contact stays a candidate for a human');
+
+  assert.equal(contactsCount(app), 1, 'no duplicate contact was created');
+  assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the archived contact');
+});
+
+test('voce 91c92940274c: the same handle on a removed contact stays undecided, never a silent reuse (review giro 3, P1)', async (t) => {
+  const { app } = await scene(t, 'sender-same-handle-deleted');
+
+  const first = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000072',
+    firstName: 'Same', lastName: 'Deleted', companyName: 'Presti Group', domain: 'prestigroup.example',
+    email: 'same.handle.deleted@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  await app.services.contacts.remove(first.contact.id, { actor: ACTOR });
+
+  const second = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000072', actor: ACTOR,
+  });
+  assert.equal(second.outcome, 'unresolved', 'the same handle never reuses the removed contact silently');
+  assert.equal(second.contact, null);
+  assert.equal(second.rule, 'external-identity');
+  assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
+    'the removed contact stays a candidate for a human');
+
+  assert.equal(contactsCount(app), 1, 'no duplicate contact was created');
+  assert.equal(identitiesOf(app, first.contact.id).length, 1, 'no new identity was linked to the removed contact');
+});
+
 test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
   assert.deepEqual(leadNamesForEmail('mario.rossi@azienda.it'), { firstName: 'Mario', lastName: 'Rossi' });
   assert.deepEqual(leadNamesForEmail('guido@example.com'), { firstName: 'Guido', lastName: '—' });
