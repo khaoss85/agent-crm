@@ -485,6 +485,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
       signatureTimeoutMs: options.signatureTimeoutMs,
     },
     core: coreAdapters,
+    pipelines,
   });
   const { aliases: operationAliases } = composePackageOperations({
     registry: domains,

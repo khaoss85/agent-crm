@@ -294,7 +294,8 @@ test('the combined record keeps the ledger shape and names the piecemeal runner'
  * `scripts/measure-suite.js` (`--plan` prints a canned dealing, `--shard`
  * writes a canned report, `--combine` records and succeeds) and a stub `npm`
  * first on PATH (the check child). The driver logic under test — the serial
- * loop, the declared maxima, the fail-fast — is the repository's own: the
+ * loop, the declared maxima, the continue-past-red shards with a final
+ * summary — is the repository's own: the
  * stubs only make it observable in seconds.
  *
  * MEASURE_TEST_DRIVER overrides which driver runs (default: the repository's
@@ -324,7 +325,9 @@ function writeShadowTree(shadow) {
     'waiters=$(ls "$lockdir"/wait-* 2>/dev/null | wc -l | tr -d " ")',
     'printf \'end %s waiters=%s\\n\' "$name" "$waiters" >> "$log"',
     'rm -f "$lockdir/wait-$name"',
-    'if [ "${MEASURE_TEST_FAIL_PIECE:-}" = "$name" ]; then exit 1; fi',
+    'case " ${MEASURE_TEST_FAIL_PIECE:-} " in',
+    '  *" $name "*) exit 1 ;;',
+    'esac',
     'exec "$@"',
     '',
   ].join('\n'));
@@ -377,6 +380,7 @@ function runDriver(shadow, { shards = 6, failPiece = null } = {}) {
   writeFileSync(log, '');
   let status = 0;
   let stdout = '';
+  let stderr = '';
   try {
     stdout = execFileSync('bash', [driver], {
       cwd: shadow,
@@ -395,8 +399,9 @@ function runDriver(shadow, { shards = 6, failPiece = null } = {}) {
   } catch (error) {
     status = /** @type {{ status?: number }} */ (error).status ?? 1;
     stdout = /** @type {{ stdout?: string }} */ (error).stdout ?? '';
+    stderr = /** @type {{ stderr?: string }} */ (error).stderr ?? '';
   }
-  return { status, stdout, log: readFileSync(log, 'utf8') };
+  return { status, stdout, stderr, log: readFileSync(log, 'utf8') };
 }
 
 /**
@@ -471,17 +476,46 @@ test('fewer than six pieces refuse before taking any lock: two oracle slices wou
   }
 });
 
-test('a red piece reddens the measure: the driver exits non-zero and never combines', () => {
+test('a red piece no longer stops the later pieces: all run, the measure stays red, no combine', () => {
+  // Backlog:e98e66c2adf7: run 44578241261 stopped at red piece 2 of 6, so
+  // pieces 3-6 never ran and the rest of main stayed unmeasured.
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
-    const { status, log } = runDriver(shadow, { shards: 6, failPiece: 'measure-2-of-6' });
+    const { status, stdout, stderr, log } = runDriver(shadow, { shards: 6, failPiece: 'measure-2-of-6' });
     assert.notEqual(status, 0, `a red piece must redden the measure, got status ${status}:\n${log}`);
     assert.ok(!log.split('\n').some((line) => line.startsWith('combine ')), `no combine after a red piece:\n${log}`);
-    assert.ok(
-      !log.split('\n').some((line) => line.startsWith('start measure-3-of-6 ')),
-      `pieces after the red one must not run:\n${log}`,
-    );
+    for (let i = 1; i <= 6; i += 1) {
+      assert.ok(
+        log.split('\n').some((line) => line.startsWith(`start measure-${i}-of-6 `)),
+        `piece ${i} after the red one must still run:\n${log}`,
+      );
+    }
+    assert.match(stderr, /piece 2 of 6 RED/, `the red piece must be named red:\n${stderr}`);
+    assert.match(stderr, /1 of 6 pieces red/, `the final summary must count the reds:\n${stderr}`);
+    assert.equal(stdout, '', `stdout stays empty on red (parsable JSON or nothing): ${stdout}`);
+  } finally {
+    rmSync(shadow, { recursive: true, force: true });
+  }
+});
+
+test('several red pieces are all listed in the final summary', () => {
+  const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+  try {
+    writeShadowTree(shadow);
+    const { status, stderr, log } = runDriver(shadow, { shards: 6, failPiece: 'measure-2-of-6 measure-5-of-6' });
+    assert.notEqual(status, 0, `red pieces must redden the measure, got status ${status}:\n${log}`);
+    assert.ok(!log.split('\n').some((line) => line.startsWith('combine ')), `no combine after red pieces:\n${log}`);
+    for (let i = 1; i <= 6; i += 1) {
+      assert.ok(
+        log.split('\n').some((line) => line.startsWith(`start measure-${i}-of-6 `)),
+        `piece ${i} must still run past the reds:\n${log}`,
+      );
+    }
+    assert.match(stderr, /piece 2 of 6 RED/, `red piece 2 must be named:\n${stderr}`);
+    assert.match(stderr, /piece 5 of 6 RED/, `red piece 5 must be named:\n${stderr}`);
+    assert.match(stderr, /2 of 6 pieces red/, `the final summary must count both reds:\n${stderr}`);
+    assert.match(stderr, /pieces: 2 5/, `the final summary must list every red piece:\n${stderr}`);
   } finally {
     rmSync(shadow, { recursive: true, force: true });
   }
