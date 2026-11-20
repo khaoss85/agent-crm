@@ -261,6 +261,15 @@ test('nightly writer and ci readers share one cache key and path (backlog:a6def9
         `the restore would miss`,
     );
   }
+  // The actions/cache save post step needs `actions: write` (backlog:a6def994
+  // review 20/11: with `actions: read` the save is denied warning-only, the
+  // job stays green and no entry is ever written, so every PR restore misses).
+  const nightly = read('.github/workflows/nightly-tool-selection.yml');
+  assert.ok(
+    /(^|\n)\s*actions:\s*write/m.test(nightly),
+    `nightly-tool-selection.yml grants no actions:write: the single cache writer ` +
+      `cannot save, the entry is never warmed and every ci.yml restore misses`,
+  );
 });
 
 test('no repo code runs before its job checkout', () => {
