@@ -176,3 +176,16 @@ test('9b28b3bc6003: senza offerte, niente scheletro Offerta mentre si aspetta so
   const link = offerCards(mount)[0].findAll('a')[0] ?? null;
   assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'il link apre la scheda azienda');
 });
+
+test('review #1076 P1: «Scrivi al cliente» resta la finestra flottante bo-scheda-composer, mai il riquadro note in cima', async () => {
+  const mount = await open(fakeClient({
+    card: baseCard({ email: 'guido@palestra-esempio.it' }),
+  }));
+  byAction(mount, 'compose-email').dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'la finestra del composer si apre');
+  const classes = String(panel.getAttribute('class') ?? '').split(/\s+/);
+  assert.ok(classes.includes('bo-scheda-composer'), 'la finestra porta la sua classe flottante');
+  assert.ok(!classes.includes('bo-scheda-note-top'), 'mai la classe del riquadro note in cima');
+});
