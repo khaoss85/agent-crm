@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { createAccordoApp } from '../packages/app/src/index.js';
 import { ROWS, boot, project } from './helpers/customer-data-project.js';
 import { stripGeneratedModules } from './helpers/apply-module.js';
 import { buildCustomerDataActions } from '../packages/customer-data/src/actions.js';
@@ -217,6 +218,95 @@ test('disciplina delle sourceKey: una tabella per ogni caso deciso nei round', a
   assert.ok(rowsOf(decision1).every((row) => !row.sourceKey.endsWith(decision1)
     && !row.sourceKey.endsWith(decision2), 'riga 8: le basi non prendono suffissi'));
   assert.equal(rowsOf(decision2).filter((row) => row.status === 'withdrawn').length, 2);
+
+  void ROWS;
+});
+
+test('d547f65e799a: unire due contatti e separarli — ognuno ritrova le sue identità, la cronologia e l\u2019audit', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+
+  const applied = await app.applyCustomerImport({
+    system: 'crm-export',
+    rows: [
+      { externalId: 'WA-11', email: 'mario@palestra-esempio.it', firstName: 'Mario', lastName: 'Rossi' },
+      { externalId: 'WA-22', email: 'm.rossi@palestra-esempio.it', firstName: 'Mario', lastName: 'Rossi' },
+    ],
+    actor: ACTOR,
+  });
+  assert.equal(applied.counts.accepted, 2, 'two imports are two contacts, never an auto-merge');
+
+  const contacts = app.services.contacts.list({ limit: 10 });
+  assert.equal(contacts.length, 2);
+  const [mario, omonimo] = contacts[0].id < contacts[1].id ? [contacts[0], contacts[1]] : [contacts[1], contacts[0]];
+
+  const before = (subject) => app.modules.get('external-identity').service
+    .listWhere({ subjectResource: 'contact', subjectId: subject.id, status: 'active' });
+  assert.equal(before(mario).length, 1, 'each contact holds its own channel identity');
+  assert.equal(before(omonimo).length, 1);
+  assert.notEqual(before(mario)[0].externalId, before(omonimo)[0].externalId);
+
+  const candidate = await app.modules.get('duplicate-candidate').service.createManaged({
+    sourceKey: 'duplicate:contact:d547f65e-mario|contact:d547f65e-omonimo',
+    leftResource: 'contact', leftId: mario.id, leftOwner: 'host', leftOwnerPackage: null, leftLabel: 'Mario Rossi',
+    rightResource: 'contact', rightId: omonimo.id, rightOwner: 'host', rightOwnerPackage: null, rightLabel: 'Mario Rossi',
+    policy: 'test-overlap', policyVersion: 1, policyFingerprint: 'test', rule: 'test-overlap',
+    evidence: '{}', status: 'unresolved', detectedByRunId: 'test', detectedAt: new Date().toISOString(),
+  }, { actor: ACTOR });
+
+  const linked = await app.runAction({
+    module: 'duplicate-candidate', action: 'link-canonical-identity', recordId: candidate.id,
+    input: { canonicalResource: 'contact', canonicalId: mario.id, reason: 'stesso Mario, due import' }, actor: ACTOR,
+  });
+  assert.equal(linked.result.candidate.status, 'linked');
+
+  for (const subject of [mario, omonimo]) {
+    const merged = await app.readCustomerProfile({ resource: 'contact', id: subject.id });
+    assert.equal(merged.canonicalIdentity.linked, true);
+    assert.equal(merged.externalIdentities.length, 2, 'merged cards read both channel identities');
+  }
+
+  const undone = await app.runAction({
+    module: 'duplicate-candidate', action: 'unlink-canonical-identity', recordId: candidate.id,
+    input: { reason: 'due Mario diversi, stesso nome' }, actor: ACTOR,
+  });
+  assert.equal(undone.result.candidate.status, 'unresolved');
+  assert.equal(undone.result.withdrawn, 2);
+  assert.equal(undone.result.timelineUnavailable, false, 'work is composed, so the timeline row is written');
+  assert.equal(undone.result.timelineNotes, 2, 'one cronologia row per separated card');
+
+  // Ogni conversazione torna alla persona giusta: each card reads only its own identity.
+  const mine = await app.readCustomerProfile({ resource: 'contact', id: mario.id });
+  const other = await app.readCustomerProfile({ resource: 'contact', id: omonimo.id });
+  assert.equal(mine.canonicalIdentity.linked, false);
+  assert.equal(other.canonicalIdentity.linked, false);
+  assert.equal(mine.externalIdentities.length, 1);
+  assert.equal(other.externalIdentities.length, 1);
+  assert.equal(mine.externalIdentities[0].externalId, before(mario)[0].externalId);
+  assert.equal(other.externalIdentities[0].externalId, before(omonimo)[0].externalId);
+
+  // L'audit resta: withdrawn rows keep reason and who decided.
+  const links = app.modules.get('canonical-link').service.list({ limit: 10 });
+  assert.equal(links.length, 2, 'undoing withdraws, never deletes');
+  assert.ok(links.every((row) => row.status === 'withdrawn'));
+  assert.ok(links.every((row) => row.withdrawnReason === 'due Mario diversi, stesso nome'));
+  assert.ok(links.every((row) => row.decidedById === 'a3'), 'the decider stays on record');
+
+  // La cronologia: one work-note per card, with reason and actor.
+  const activities = app.modules.get('work-activity').service;
+  for (const subject of [mario, omonimo]) {
+    const notes = (await activities.listWhere({ subjectResource: 'contact', subjectId: subject.id }))
+      .filter((row) => row?.kind === 'note');
+    assert.equal(notes.length, 1, 'exactly one undo row on each card');
+    assert.ok(String(notes[0].body ?? '').includes('due Mario diversi, stesso nome'), 'the row names why');
+    assert.ok(String(notes[0].body ?? '').includes('Unione annullata'), 'the row reads in Italian');
+    assert.equal(notes[0].sourcePackage, 'customer-data');
+    assert.equal(notes[0].sourceAction, 'unlink-canonical-identity');
+    assert.equal(notes[0].actorId, 'a3');
+  }
+
+  const both = app.database.raw.prepare('SELECT COUNT(*) AS n FROM contacts').get().n;
+  assert.equal(both, 2, 'both contacts survive the merge and its undo');
 
   void ROWS;
 });

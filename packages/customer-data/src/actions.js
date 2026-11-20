@@ -2,7 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { safeString } from './normalize.js';
-import { deciding, orderedPair, resolvedNames, subjectFields, subjectKey, subjectOf, trusted } from './store.js';
+import { deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, subjectOf, trusted } from './store.js';
 
 /**
  * **The human decisions — the only writes in this package a person makes.**
@@ -223,7 +223,9 @@ export function buildCustomerDataActions(config) {
      * stays where it was written, and the two schede read separate again
      * because the profile only aggregates `active` links. The candidate
      * returns to `unresolved` with its decision cleared, so a human can
-     * decide again. Human-only, with confirmation like every merge.
+     * decide again. Each separated member also gets one `work-activity` note
+     * row, so the undo reads in the scheda cronologia with its reason and
+     * actor. Human-only, with confirmation like every merge.
      */
     {
       module: names.candidate,
@@ -271,10 +273,48 @@ export function buildCustomerDataActions(config) {
         step('customer-data.canonical-identity-unlinked', {
           candidateId: candidate.id, decisionId, withdrawn: active.length,
         });
+        // The scheda cronologia reads work-activity notes on the subject, so
+        // the undo leaves one row per separated member: each card shows what
+        // happened and why, with the same actor the withdrawn rows audit.
+        // Written in this action's own transaction, like every work-activity
+        // row. Without a composed work package there is no timeline to feed,
+        // so the unlink still holds and the result says so.
+        const activitySvc = optional(modules, 'work-activity');
+        let timelineNotes = 0;
+        let timelineUnavailable = false;
+        if (activitySvc && typeof activitySvc.createManaged === 'function' && typeof activitySvc.listWhere === 'function') {
+          const siblings = (await activitySvc.listWhere({ taskId: null })) ?? [];
+          let seq = 1;
+          for (const sibling of siblings) {
+            if (Number.isInteger(sibling.seq) && sibling.seq >= seq) seq = sibling.seq + 1;
+          }
+          for (const row of active) {
+            const member = subjectOf(row);
+            await activitySvc.createManaged({
+              sourceKey: null,
+              kind: 'note',
+              subjectResource: member.resource,
+              subjectId: member.id,
+              taskId: null,
+              body: `Unione annullata: questa scheda torna a leggere da sola. Motivo: ${reason}`,
+              occurredAt: withdrawnAt,
+              actorType: 'user',
+              actorId,
+              sourcePackage: 'customer-data',
+              sourceAction: 'unlink-canonical-identity',
+              seq: seq++,
+            }, { actor });
+            timelineNotes += 1;
+          }
+        } else {
+          timelineUnavailable = true;
+        }
         return {
           candidate: { id: updated.id, status: updated.status },
           withdrawn: active.length,
           decidedById: actorId,
+          timelineNotes,
+          timelineUnavailable,
           semantics: 'unmerged — the links are withdrawn, both records still exist, each card reads its own again',
         };
       },
