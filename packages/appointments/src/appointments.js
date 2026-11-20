@@ -1701,8 +1701,8 @@ export async function readSchedule({ appointments }, subject) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
-    // backlog:9ff9a9ee1fea: la scheda mostra il luogo, quindi la sua
-    // lettura porta gli stessi due campi della scrittura.
+    // backlog:ece111d80305: the meeting place rides the read, so the
+    // popover and the scheda history show the place the booking stored.
     location: row.location ?? null,
     locationUrl: row.locationUrl ?? null,
     // backlog:5346ab531538: a cancelled slot keeps its reason and the
@@ -1762,8 +1762,8 @@ function projectTeamWeekRow(row) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
-    // backlog:9ff9a9ee1fea: popover e cronologia leggono la settimana,
-    // quindi il luogo viaggia nella riga come il resto della prenotazione.
+    // backlog:ece111d80305: the meeting place rides the week, so the
+    // popover and the cronologia show the place the booking stored.
     location: row.location ?? null,
     locationUrl: row.locationUrl ?? null,
     sourceKey: row.sourceKey,
