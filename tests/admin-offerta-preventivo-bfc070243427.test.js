@@ -188,7 +188,9 @@ test('bfc070243427: inactive commercial functions speak plain words without «pr
   const src = readFileSync(new URL('../apps/admin/public/admin-quotes.js', import.meta.url), 'utf8');
   assert.ok(!src.includes('non è attiva in questo progetto'), 'no «progetto» in inactive messages');
   assert.ok(src.includes('La parte commerciale non è attiva qui.'), 'commercial off message is plain');
-  assert.ok(src.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'), 'signature off message says what to do');
+  assert.ok(src.includes('signatureOffNotice'), 'signature off message says what to do through the owner-aware helper');
+  const signatureSrc = readFileSync(new URL('../apps/admin/public/admin-signature.js', import.meta.url), 'utf8');
+  assert.ok(signatureSrc.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'), 'signature off message says what to do');
 });
 
 /**

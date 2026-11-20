@@ -214,6 +214,8 @@ const HAND_CHECKED = new Map([
   ['admin-agenti.js#once', [1, 'Affida reads «Invio…» from draft.busy at render']],
   ['admin-agenti.js#save', [1, 'Salva modifica reads «Salvo…» from decision.busy at render']],
   ['admin-agenti.js#confirm', [1, 'Conferma rifiuto reads «Rifiuto…» from decision.busy at render']],
+  ['admin-assistant.js#go', [1, 'Riattiva reads «Riattivo…» with aria-busy from mention.busy at render']],
+  ['admin-assistant.js#retry', [1, 'Riprova riattivazione reads «Riattivo…» with aria-busy from mention.busy at render']],
   ['admin-agenti.js#add', [1, 'Aggiungi reads «Aggiungo…» from state.adding at render']],
   ['admin-calendario.js#yes', [1, 'annulla appuntamento: Sì is off and aria-busy from state.cancelBusy at render']],
   ['admin-calendario.js#move', [1, 'Sposta reads «Spostamento in corso…» via uiMarkBusy from state.moveBusy']],

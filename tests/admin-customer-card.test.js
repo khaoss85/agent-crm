@@ -7162,3 +7162,105 @@ test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce
   assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
   assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
 });
+
+// backlog:612317ae1251: the appointment rows name the hour of the event
+// beside the slot — like the note and offer rows — never a row with no
+// hour, never the hour twice when the event falls back to the slot.
+test('612317ae1251: the appointment rows name the event hour beside the slot', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 3,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2026-11-12T10:00:00.000Z', endsAt: '2026-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            bookedAt: '2026-11-09T08:05:00.000Z',
+          },
+          {
+            id: 'b1', status: 'cancelled', startsAt: '2026-11-10T09:00:00.000Z', endsAt: '2026-11-10T09:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: null, decidedAt: '2026-11-11T15:05:00.000Z',
+          },
+          {
+            id: 'b2', status: 'cancelled', startsAt: '2026-11-12T09:00:00.000Z', endsAt: '2026-11-12T09:30:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: null, decidedAt: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  const first = booked.find((node) => node.textContent.includes('09:05'));
+  assert.ok(first?.textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov 11:00 · 09:05'),
+    `the booking names its hour beside the slot: ${first?.textContent}`);
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  const decided = cancelled.find((node) => node.textContent.includes('10 nov'));
+  assert.ok(decided?.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00 · 16:05'),
+    `the cancellation names its hour beside the slot: ${decided?.textContent}`);
+  const fallback = cancelled.find((node) => node.textContent.includes('12 nov'));
+  assert.ok(fallback, 'the cancellation without decidedAt keeps its row');
+  assert.equal((fallback.textContent.match(/10:00/g) ?? []).length, 1,
+    `no hour twice when the event falls back to the slot: ${fallback.textContent}`);
+});
+
+// backlog:d29bc93caf92: the booking made from the scheda is cancelled from
+// the scheda — «Annulla» under «Prossimo appuntamento» asks the question
+// with the optional reason and posts the Calendario's own cancel route.
+test('d29bc93caf92: «Prossimo appuntamento» cancels the booking from the scheda', async () => {
+  const base = stubClient({
+    services: [
+      { serviceKey: 'pt-single', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+    ],
+  });
+  const writes = [];
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/cancel' && (options?.method ?? 'GET') !== 'GET') {
+        enforceAdminWriteGate(path, options);
+        let body = options?.body ?? {};
+        if (typeof body === 'string') body = JSON.parse(body);
+        writes.push({ path, method: options.method, body });
+        return { status: 'cancelled', id: 'b1' };
+      }
+      return base.request(path, options);
+    },
+  };
+  const toasts = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, spaceId: 'spazio-1',
+    toast: (text, error) => { toasts.push({ text, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  const ask = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-appointment');
+  assert.ok(ask, '«Annulla» reads under «Prossimo appuntamento»');
+  assert.equal(ask.textContent, 'Annulla');
+  ask.dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Annullare l\u2019appuntamento?'), 'the question asks');
+  const reason = mount.findAll('input').find((node) => node.getAttribute('name') === 'appointment-cancel-reason');
+  assert.ok(reason, 'the optional reason rides along');
+  reason.value = 'Il cliente ha disdetto';
+  const yes = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-appointment-yes');
+  assert.ok(yes, '«Sì, annulla» confirms');
+  yes.dispatch('click');
+  await flush();
+  await flush();
+  assert.equal(writes.length, 1, 'one cancel leaves');
+  assert.equal(writes[0].path, '/api/appointments/cancel');
+  assert.deepEqual(writes[0].body, { id: 'b1', reason: 'Il cliente ha disdetto', spaceId: 'spazio-1' },
+    'the cancel names the booking, the reason and the space');
+  assert.ok(toasts.some((toast) => toast.text === 'Appuntamento annullato.' && toast.error === false),
+    `the success toasts as information: ${JSON.stringify(toasts)}`);
+  assert.ok(base.calls.filter((path) => path.startsWith('/api/customer-hub/timeline/')).length >= 2,
+    'the timeline is re-read after the cancellation, like after a booking');
+});

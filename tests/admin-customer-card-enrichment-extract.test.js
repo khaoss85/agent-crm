@@ -709,3 +709,40 @@ test('e5e3e886 seguito 18/11: no-message click shows one outcome and never holds
   assert.ok(!toasts.includes('Nessun dato nuovo'), 'unchanged facts with no messages never read «Nessun dato nuovo»');
   assert.equal(byAction(mount, 'refresh-enrichment').textContent, 'Aggiorna', 'the repainted button reads «Aggiorna»');
 });
+
+test('612317ae1251: while the run flies the section shows one state and one «Estraggo…»', async () => {
+  const client = fakeClient();
+  const { mount } = await open(client);
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  client.hold();
+  const running = refresh.listeners.click[0]();
+  await flush();
+  const seen = String(mount.textContent).split('Estraggo').length - 1;
+  assert.equal(seen, 1, 'one «Estraggo…» while the run flies: the status line, never two');
+  assert.equal(refresh.textContent, 'Aggiorna', 'the button stays «Aggiorna», never a second busy state');
+  client.release();
+  await running;
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no «Estraggo…» survives the landing');
+});
+
+test('612317ae1251: with no messages the outcome is information, never the error colour', async () => {
+  const client = fakeClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text, error) => { seen.push({ text, error: error ?? false }); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(seen.length, 1, 'one outcome per click');
+  assert.ok(seen[0].text.includes('Non ci sono messaggi'), 'the single outcome says the AI starts from messages');
+  assert.equal(seen[0].error, false, 'information, never the error colour');
+});

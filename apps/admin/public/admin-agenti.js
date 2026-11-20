@@ -732,6 +732,46 @@ function lowerFirst(value) {
   return value === '' ? value : value.charAt(0).toLocaleLowerCase('it-IT') + value.slice(1);
 }
 
+/**
+ * backlog:a391aa36c661: the key the assistant writes when «Apri Agenti →»
+ * carries the phrase (admin-assistant.js AGENT_PREFILL_KEY). The same
+ * literal on both sides — the assistant already imports this module, so
+ * this side cannot import it back.
+ */
+const AGENTI_PREFILL_KEY = 'bo.agenti.prefill';
+
+/**
+ * backlog:a391aa36c661: the phrase the assistant carried over («Apri
+ * Agenti →»), read once: { sourceKey, phrase } when both are non-empty,
+ * else null. A read always consumes, so a repaint never overwrites what
+ * the operator already typed.
+ * @param {any} store
+ */
+export function consumeAgentPrefill(store) {
+  let raw = null;
+  try {
+    raw = store?.getItem?.(AGENTI_PREFILL_KEY) ?? null;
+  } catch {
+    raw = null;
+  }
+  try {
+    store?.removeItem?.(AGENTI_PREFILL_KEY);
+  } catch {
+    // Read-once even when the phrase is unusable: the next paint starts clean.
+  }
+  if (typeof raw !== 'string' || raw === '') return null;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const sourceKey = typeof parsed?.sourceKey === 'string' ? parsed.sourceKey : '';
+  const phrase = typeof parsed?.phrase === 'string' ? parsed.phrase : '';
+  if (sourceKey === '' || phrase === '') return null;
+  return { sourceKey, phrase };
+}
+
 /** @param {unknown} error */
 function isNameTaken(error) {
   return Boolean(error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_NAME_TAKEN');
@@ -791,14 +831,23 @@ export function newAgentErrorText(error) {
 
 /**
  * Agent rows for the Team (Spazi e accessi): the same row idiom as the
- * people, with an «Agente» badge. Returns null when there is nothing to
- * add, so the Team stays exactly as it was.
- * @param {any} doc @param {Array<any> | null} agents
+ * people, with an «Agente» badge. The state link reads the same word as
+ * the Agenti card of the same agent (backlog:b9b5e6bda): paused stays
+ * «In pausa», an agent nothing runs reads «Pronto, in attesa del motore».
+ * Returns null when there is nothing to add, so the Team stays exactly as
+ * it was.
+ * @param {any} doc @param {Array<any> | null} agents @param {Array<any> | null} [catalog]
  */
-export function renderTeamAgentRows(doc, agents) {
+export function renderTeamAgentRows(doc, agents, catalog = null) {
   if (!Array.isArray(agents)) return null;
   const rows = agents.filter((row) => text(row?.name) !== null);
   if (rows.length === 0) return null;
+  // Same engine rule as buildAgentCards: the catalogue keys name the agents
+  // this space can run. Without a catalogue read a hand-written key still
+  // has no engine, so the Team never reads «Attivo» where Agenti does not.
+  const engines = Array.isArray(catalog)
+    ? new Set(catalog.map((entry) => entry?.agentSourceKey).filter((key) => typeof key === 'string'))
+    : null;
   // Own classes (bo-agent-*), never bo-spazi-member: the people count of
   // the Team reads that class, and an agent is not a person.
   const wrap = el(doc, 'div', 'bo-agent-team');
@@ -815,7 +864,10 @@ export function renderTeamAgentRows(doc, agents) {
     identity.appendChild(names);
     item.appendChild(identity);
     item.appendChild(uiBadge(doc, { authority: 'agent', text: 'Agente' }));
-    const link = el(doc, 'a', 'bo-agent-team-link', AGENT_STATUS_LABEL[row.status === 'paused' ? 'paused' : 'active']);
+    const paused = row.status === 'paused';
+    const engine = engines === null ? !isHandAgentKey(row.sourceKey) : engines.has(String(row.sourceKey ?? ''));
+    const status = paused ? 'paused' : engine ? 'active' : 'waiting';
+    const link = el(doc, 'a', 'bo-agent-team-link', status === 'waiting' ? AGENT_NO_ENGINE_LABEL : AGENT_STATUS_LABEL[status]);
     link.setAttribute('href', '#/agenti');
     item.appendChild(link);
     wrap.appendChild(item);
@@ -837,7 +889,7 @@ function romeStamp(iso) {
 
 /**
  * The Agenti screen.
- * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
+ * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, prefillStorage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
  */
 /**
  * The last good read per space, module-wide: coming back to Agenti paints
@@ -849,7 +901,7 @@ function romeStamp(iso) {
 const AGENTI_CACHE = new Map();
 const AGENTI_CACHE_SPACES = 20;
 
-export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer, onTeamAgent }) {
+export function createAgentiView({ doc = null, mount, client, submissions, storage, prefillStorage = null, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer, onTeamAgent }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
@@ -1577,9 +1629,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   function renderRetireBox(card, paused, entry) {
     const boxEl = el(documentNode, 'div', 'bo-agent-retire');
     if (entry.confirm && !entry.busy) {
+      // backlog:b9b5e6bda: the Riattiva confirm reads the same word as the
+      // state it brings back — the badge's own label, never a fixed
+      // «attivo» when the agent waits for the engine.
+      const backLabel = card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL;
       boxEl.appendChild(el(documentNode, 'p', null, paused
-        ? `${card.name} torna attivo e riceve di nuovo incarichi. Continuo?`
-        : `Ritiro ${card.name}? Resta nel team ma non riceve più incarichi; quelli dati restano.`));
+        ? `${card.name} torna ${lowerFirst(backLabel)}${card.engine ? ' e riceve di nuovo incarichi' : ''}. Continuo?`
+        : `Ritiro ${card.name}? Resta nel team ma non riceve più incarichi; gli incarichi già dati restano.`));
       const confirmBtn = uiButton(documentNode, {
         variant: 'primary', small: true, label: 'Conferma',
         attrs: { type: 'button', 'data-action': 'confirm-retire-agent' },
@@ -2442,7 +2498,29 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (state.capped) {
       page.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${AGENTI_READ_LIMIT} elementi per elenco.`));
     }
+    // backlog:a391aa36c661: the phrase «Apri Agenti →» carried over — the
+    // card already written, already open, already read. The assistant writes
+    // window.sessionStorage; the shell storage this view gets is local, so
+    // the document's own session store comes before it.
+    const prefillSource = prefillStorage ?? documentNode?.defaultView?.sessionStorage ?? null;
+    const prefill = consumeAgentPrefill(prefillSource);
+    const prefilled = prefill !== null && cards.some((card) => card?.sourceKey === prefill.sourceKey)
+      ? prefill
+      : null;
+    if (prefilled !== null) {
+      const draft = draftOf(prefilled.sourceKey);
+      if (draft.text === '') draft.text = prefilled.phrase;
+    }
     renderMine(page, cards);
+    if (prefilled !== null) {
+      const target = findNode(page, (node) => node.getAttribute('name') === `talk-${prefilled.sourceKey}`);
+      try {
+        if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'nearest' });
+      } catch {
+        // The phrase is written either way: the focus is a courtesy.
+      }
+    }
     renderDaFare(page, buildDaFare({ runs: state.runs, agents: state.agents, assignments: state.assignments }));
     renderCatalog(page, buildCatalogItems({ catalog: state.catalog, agents: state.agents }));
     // The old Sequenze stay reachable for whoever still uses them.

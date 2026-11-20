@@ -4977,7 +4977,34 @@ export function createCalendarioView(deps) {
       state.manual = kept;
     }
     state.draftWrote = null;
+    // backlog:f0a09f1b — «Annulla» on the draft also closes the «Nuovo
+    // appuntamento» panel when the draft opened it: no slot, no customer
+    // pick and nothing the operator typed (manualTyped holds only real
+    // keystrokes, never draft values or proposed defaults), so no empty
+    // panel is left behind. A form holding the operator's own edits, pick
+    // or slot stays open with the draft values restored above.
+    const draftOpenedPanel = state.selection === null
+      && state.customerPick === null
+      && state.manualTyped.size === 0;
+    if (draftOpenedPanel) {
+      cancelCustomerSearch();
+      state.selection = null;
+      state.manualOpen = false;
+      state.manual = null;
+      state.manualTyped.clear();
+      state.customerQuery = '';
+      state.customerItems = [];
+      state.customerError = null;
+      state.customerPartial = false;
+      state.bookingNote = '';
+      state.serviceError = '';
+      state.confirmed = null;
+    }
     renderAll();
+    if (draftOpenedPanel) {
+      const toggle = mount.querySelector('button[aria-haspopup="true"]');
+      if (toggle && typeof toggle.focus === 'function') toggle.focus();
+    }
   }
 
   /** Live manual values, from the rendered inputs when present. @param {string} name */

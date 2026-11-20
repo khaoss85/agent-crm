@@ -688,6 +688,9 @@ const quoteView = createQuoteView({
   submissions,
   spaceName: () => currentSpaceName(),
   navigate: (hash) => { window.location.hash = hash; },
+  // backlog:0550bea56168: the Firma box tells the titolare what they can
+  // do, the others whom to ask.
+  role: () => shellUser?.role ?? null,
 });
 
 // Product catalog (BO-F2-05): the backoffice product table with its source

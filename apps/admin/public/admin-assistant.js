@@ -26,11 +26,12 @@
 // navigation into the thread and always needs an explicit per-action
 // confirmation first.
 
-import { formatMinorUnits } from './admin-core.js';
+import { formatAmount, formatMinorUnits, humanWriteError, parseEuroToCents } from './admin-core.js';
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
 import {
-  AGENT_CAP_USE_CARD_NOTE, PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
-  isPhraseUnclear, loadSpaceAgents,
+  AGENT_COST_NEEDED_NOTE, AGENT_PAUSED_DONE, AGENT_WAIT_ENGINE_DONE, ASSIGNMENT_NO_ENGINE_LABEL, DA_FARE_UNAVAILABLE_NOTE,
+  PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
+  isPhraseUnclear, loadAgentiData,
 } from './admin-agenti.js';
 import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
@@ -74,6 +75,14 @@ export const SUGGESTION_MAX_LISTED = 3;
  * persisted — sources carry customer labels that must not rest on disk.
  */
 export const ASSISTANT_HISTORY_LIMIT = 20;
+
+/**
+ * Voce a391aa36: the handoff the «Apri Agenti →» link leaves for the Agenti
+ * screen — the agent to open and the phrase already typed. The Agenti view
+ * (admin-agenti.js) reads it and pre-fills the card draft, so the card opens
+ * with the phrase already written.
+ */
+export const AGENT_PREFILL_KEY = 'bo.agenti.prefill';
 
 /** Record ids travel in sources; the shape mirrors packages/llm. */
 const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
@@ -2372,30 +2381,58 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     drainQueued();
   }
 
+  /**
+   * Whether the mentioned agent can run in this space: the catalogue owns
+   * the engines (buildAgentCards rule in admin-agenti.js) — a hand-written
+   * agent waits for the engine. Only computed on a served catalogue, never
+   * guessed when the read is missing.
+   * @param {unknown} catalogue the agents of /api/agents/catalog
+   * @param {unknown} sourceKey
+   */
+  function mentionEngine(catalogue, sourceKey) {
+    if (!Array.isArray(catalogue) || typeof sourceKey !== 'string' || sourceKey === '') return null;
+    return catalogue.some((entry) => entry !== null && typeof entry === 'object'
+      && entry.agentSourceKey === sourceKey);
+  }
+
   /** Resolve «@Nome …» against this space's agents (backlog:33782ba68747). */
   async function startMention(typed) {
     const space = readSpace();
     state.asked = null;
     state.mention = { typed, status: 'loading', space };
     render();
-    const agents = await loadSpaceAgents(client, space);
+    const data = await loadAgentiData(client, space);
     // A newer question or a space switch meanwhile wins (review #661 P3).
     if (state.mention === null || state.mention.typed !== typed || state.mention.space !== space) return;
-    if (agents === null) {
+    if (data === null || data.available !== true) {
       state.mention = { typed, status: 'unavailable', space };
     } else {
+      const agents = data.agents;
       const found = findMentionedAgent(typed, agents);
       if (!found || !found.agent) {
         const word = found?.typedName ?? '';
         state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
-      } else if (Number.isInteger(found.agent.spendingCapCents)) {
-        // backlog:1f7cb20d3c30: a capped agent needs the cost of one run,
-        // which this bar does not ask — never a post bound to refuse.
-        state.mention = { typed, status: 'capped', agent: found.agent, space };
+      } else if (found.agent.status === 'paused') {
+        // Voce a391aa36: a paused agent is reactivated first — an incarico
+        // would stay put, so «Affida» is not offered here.
+        state.mention = {
+          typed, status: 'paused', agent: found.agent, instruction: found.instruction,
+          engine: mentionEngine(data.catalog, found.agent.sourceKey), space,
+        };
       } else if (found.instruction === '') {
         state.mention = { typed, status: 'empty', agent: found.agent, space };
+      } else if (Number.isInteger(found.agent.spendingCapCents)) {
+        // Voce a391aa36: a capped agent is proposed with its estimated cost
+        // in this panel — one confirm sends it, never a refused post.
+        state.mention = {
+          typed, status: 'capped', agent: found.agent, instruction: found.instruction,
+          engine: mentionEngine(data.catalog, found.agent.sourceKey), cost: '', error: '', space,
+        };
       } else {
-        state.mention = { typed, status: 'confirm', agent: found.agent, instruction: found.instruction, space };
+        state.mention = {
+          typed, status: 'confirm', agent: found.agent, instruction: found.instruction,
+          engine: mentionEngine(data.catalog, found.agent.sourceKey), space,
+        };
       }
     }
     render();
@@ -2411,23 +2448,46 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       await startMention(mention.typed);
       return;
     }
+    // Voce a391aa36: a capped agent sends the estimated cost of one run
+    // with the incarico (package rule requireCostEstimate) — one confirm.
+    let costPerRunCents = 0;
+    if (Number.isInteger(mention.agent.spendingCapCents)) {
+      const cents = parseEuroToCents(String(mention.cost ?? ''));
+      if (cents === null || cents <= 0) {
+        mention.error = AGENT_COST_NEEDED_NOTE;
+        render();
+        return;
+      }
+      costPerRunCents = cents;
+    }
     mention.busy = true;
     mention.once = once;
     // Review #661 P1: one intent keeps one sourceKey and key across retries.
     pendingAttempt = assignAttempt(pendingAttempt, {
-      spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, phrase: mention.instruction,
+      spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, phrase: mention.instruction, costPerRunCents,
     });
     render();
     try {
       const made = await assignToAgent(bound(), pendingAttempt, { once });
       pendingAttempt = null;
       mention.status = 'done';
-      mention.message = `Fatto: ${mention.agent.name} ha l’incarico «${mention.instruction}» (${made ? describeSchedule(made).toLowerCase() : 'registrato'}).`;
+      if (mention.engine === false) {
+        // Voce a391aa36: a hand-written agent waits for the engine — the
+        // outcome says so, never «Fatto».
+        const schedule = made ? describeSchedule(made).toLowerCase() : 'registrato';
+        mention.message = `${ASSIGNMENT_NO_ENGINE_LABEL}: «${mention.instruction}» per ${mention.agent.name} (${schedule}) — parte da solo appena arriva il motore.`;
+      } else {
+        mention.message = `Fatto: ${mention.agent.name} ha l’incarico «${mention.instruction}» (${made ? describeSchedule(made).toLowerCase() : 'registrato'}).`;
+      }
       // A card cancelled meanwhile stays quiet (review #661 P3).
       if (state.mention === mention) notify(`Incarico dato a ${mention.agent.name}`);
     } catch (error) {
       if (isPhraseUnclear(error)) {
         mention.status = 'unclear';
+      } else if (mention.status === 'capped') {
+        // The cost field stays: a refused estimate (AGENT_COST_ESTIMATE_REQUIRED
+        // reads AGENT_COST_NEEDED_NOTE) is fixed in place, never on the card.
+        mention.error = assignErrorText(error);
       } else {
         mention.status = 'error';
         mention.message = assignErrorText(error);
@@ -2438,11 +2498,69 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     }
   }
 
-  function agentsLink() {
-    const link = el(doc, 'a', 'bo-assistant-source-link', 'Apri Agenti');
+  /** Reactivate a paused agent through set-agent-status (voce a391aa36). */
+  async function reactivateMention() {
+    const mention = state.mention;
+    if (!mention || mention.busy || !mention.agent || !mention.space) return;
+    if (readSpace() !== mention.space) {
+      await startMention(mention.typed);
+      return;
+    }
+    mention.busy = true;
+    mention.error = '';
+    if (mention.reactivateKey == null) mention.reactivateKey = issueAdminKey();
+    render();
+    try {
+      await bound().request('/api/agents/set-status', {
+        method: 'POST',
+        body: { spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, status: 'active' },
+        idempotencyKey: mention.reactivateKey,
+      });
+      mention.status = 'done';
+      const again = typeof mention.instruction === 'string' && mention.instruction !== ''
+        ? ` Ora puoi affidargli «${mention.instruction}».` : '';
+      mention.message = mention.engine === false
+        ? `${mention.agent.name} riattivato.${again} ${AGENT_WAIT_ENGINE_DONE}`
+        : `${mention.agent.name} riattivato.${again}`;
+      if (state.mention === mention) notify(`${mention.agent.name} riattivato`);
+    } catch (error) {
+      mention.status = 'error';
+      const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).status : null;
+      mention.message = code === 404 || code === 405
+        ? DA_FARE_UNAVAILABLE_NOTE
+        : humanWriteError(error, {
+          failed: `Non riesco a riattivare ${mention.agent.name} adesso: riprova tra poco.`,
+          notComposed: 'Gli agenti non sono attivi in questo spazio.',
+        });
+    } finally {
+      mention.busy = false;
+      render();
+    }
+  }
+
+  /**
+   * Voce a391aa36: «Apri Agenti →» opens the agent's card with the phrase
+   * already written — the Agenti view reads AGENT_PREFILL_KEY and pre-fills
+   * the card draft (admin-agenti.js, altro writer). Without a phrase it is
+   * a plain navigation, like before.
+   * @param {{ sourceKey?: string, phrase?: string } | null} prefill
+   */
+  function agentsLink(prefill = null) {
+    const link = el(doc, 'a', 'bo-assistant-source-link', 'Apri Agenti →');
     link.setAttribute('href', '#/agenti');
     link.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (prefill !== null && typeof prefill === 'object') {
+        try {
+          const store = win?.sessionStorage ?? globalThis.sessionStorage ?? null;
+          store?.setItem?.(AGENT_PREFILL_KEY, JSON.stringify({
+            sourceKey: typeof prefill.sourceKey === 'string' ? prefill.sourceKey : '',
+            phrase: typeof prefill.phrase === 'string' ? prefill.phrase : '',
+          }));
+        } catch {
+          // Without storage the card still opens, just without the phrase.
+        }
+      }
       navigate('#/agenti');
     });
     return link;
@@ -2455,6 +2573,17 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     const box = el(doc, 'div', 'bo-assistant-answer bo-assistant-agent');
     box.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(mention.typed, 140)}»`));
     const say = (line) => box.appendChild(el(doc, 'p', 'bo-assistant-line', line));
+    // Voce a391aa36: «Apri Agenti →» carries the phrase to the card.
+    const prefill = mention.agent && typeof mention.instruction === 'string' && mention.instruction !== ''
+      ? { sourceKey: mention.agent.sourceKey, phrase: mention.instruction }
+      : null;
+    const cancelButton = () => {
+      const cancel = el(doc, 'button', 'bo-assistant-cancel', 'Annulla');
+      cancel.setAttribute('type', 'button');
+      cancel.disabled = mention.busy === true;
+      cancel.addEventListener('click', () => { state.mention = null; render(); });
+      return cancel;
+    };
     switch (mention.status) {
       case 'loading':
         say('Cerco l’agente…');
@@ -2466,7 +2595,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         const agents = Array.isArray(mention.agents) ? mention.agents : [];
         if (agents.length === 0) {
           say('Non hai ancora agenti nel team: aggiungine uno dal catalogo o creane uno nuovo in Agenti.');
-          box.appendChild(agentsLink());
+          box.appendChild(agentsLink(null));
           break;
         }
         say('Non trovo un agente con questo nome. Agenti del team:');
@@ -2483,10 +2612,58 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         box.appendChild(chips);
         break;
       }
-      case 'capped':
-        say(AGENT_CAP_USE_CARD_NOTE);
-        box.appendChild(agentsLink());
+      case 'paused': {
+        // Voce a391aa36: a paused card reactivates first — «Riattiva»,
+        // never «Affida» (the incarico would stay put).
+        say(`${mention.agent.name} ${AGENT_PAUSED_DONE}`);
+        const actions = el(doc, 'div', 'bo-assistant-actions');
+        const reactivating = mention.busy === true;
+        const go = el(doc, 'button', 'bo-assistant-confirm', reactivating ? 'Riattivo…' : `Riattiva ${mention.agent.name}`);
+        go.setAttribute('type', 'button');
+        go.setAttribute('data-action', 'agent-reactivate');
+        if (reactivating) go.setAttribute('aria-busy', 'true');
+        go.disabled = reactivating;
+        go.addEventListener('click', () => { void reactivateMention(); });
+        actions.appendChild(go);
+        actions.appendChild(cancelButton());
+        box.appendChild(actions);
+        box.appendChild(agentsLink(prefill));
         break;
+      }
+      case 'capped': {
+        // Voce a391aa36: a capped agent is proposed with its estimated
+        // cost — one confirm sends phrase and cost together.
+        const cap = mention.agent.spendingCapCents;
+        say(`Incarico per ${mention.agent.name}: «${shortText(mention.instruction, 200)}»`);
+        say(`Tetto al mese: ${formatAmount(cap, 'EUR')} — scrivi quanto costa più o meno un giro, in euro.`);
+        const form = el(doc, 'form', 'bo-assistant-cost');
+        const input = doc.createElement('input');
+        input.setAttribute('type', 'text');
+        input.setAttribute('inputmode', 'decimal');
+        input.setAttribute('name', `agent-cost-${mention.agent.sourceKey}`);
+        input.setAttribute('aria-label', `Quanto costa un giro di ${mention.agent.name}, in euro`);
+        input.setAttribute('placeholder', '€ a giro');
+        input.value = typeof mention.cost === 'string' ? mention.cost : '';
+        input.addEventListener('input', () => { mention.cost = String(input.value ?? ''); });
+        form.appendChild(input);
+        const go = el(doc, 'button', 'bo-assistant-confirm', `Affida a ${mention.agent.name}`);
+        go.setAttribute('type', 'submit');
+        go.setAttribute('data-action', 'agent-assign');
+        go.disabled = mention.busy === true;
+        form.appendChild(go);
+        form.addEventListener('submit', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          mention.cost = String(input.value ?? mention.cost ?? '');
+          void confirmMention(false);
+        });
+        box.appendChild(form);
+        if (typeof mention.error === 'string' && mention.error !== '') {
+          box.appendChild(el(doc, 'p', 'bo-assistant-error', mention.error));
+        }
+        box.appendChild(cancelButton());
+        box.appendChild(agentsLink(prefill));
+        break;
+      }
       case 'empty':
         say(`Cosa deve fare ${mention.agent.name}? Scrivi «@${mention.agent.name}» e l’incarico nella barra in alto.`);
         break;
@@ -2513,16 +2690,23 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       }
       case 'done':
         say(String(mention.message ?? ''));
-        box.appendChild(agentsLink());
+        box.appendChild(agentsLink(null));
         break;
       default: {
         box.appendChild(el(doc, 'p', 'bo-assistant-error', String(mention.message ?? 'Qualcosa non è andato.')));
         // Retry the same intent: same sourceKey, never a second incarico.
-        const retry = el(doc, 'button', 'bo-assistant-confirm', 'Riprova');
+        // A paused agent retries the reactivation, never an «Affida».
+        const retryPaused = mention.agent?.status === 'paused';
+        const retrying = mention.busy === true;
+        const retry = el(doc, 'button', 'bo-assistant-confirm', retrying ? (retryPaused ? 'Riattivo…' : 'Riprovo…') : 'Riprova');
         retry.setAttribute('type', 'button');
-        retry.setAttribute('data-action', 'agent-retry');
-        retry.disabled = mention.busy === true;
-        retry.addEventListener('click', () => { void confirmMention(mention.once === true); });
+        retry.setAttribute('data-action', retryPaused ? 'agent-reactivate' : 'agent-retry');
+        if (retrying) retry.setAttribute('aria-busy', 'true');
+        retry.disabled = retrying;
+        retry.addEventListener('click', () => {
+          if (retryPaused) void reactivateMention();
+          else void confirmMention(mention.once === true);
+        });
         box.appendChild(retry);
       }
     }

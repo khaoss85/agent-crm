@@ -7,6 +7,7 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import * as agentiMod from '../apps/admin/public/admin-agenti.js';
 import {
   AGENT_AUTONOMY_LABEL,
+  AGENT_NO_ENGINE_LABEL,
   AGENTS_IDLE_NOTE,
   DA_FARE_PENDING_NOTE,
   DA_FARE_UNAVAILABLE_NOTE,
@@ -149,6 +150,36 @@ test('Team rows: nothing when there are no agents, an «Agente» badge beside ea
   assert.ok(textOf(members[0]).includes('Agente'));
   assert.equal(rows.findAll('img').length, 0, 'a hostile name stays text');
   assert.equal(members.some((node) => node.classList.contains('bo-spazi-member')), false, 'agents never count as people');
+});
+
+test('Team rows: la stessa parola di stato delle card Agenti (b9b5e6bda)', () => {
+  const doc = createFakeDocument();
+  const hand = { id: 3, sourceKey: 'custom-agent:presti:v1.prova-verifica-44', spaceId: 'presti', name: 'Prova verifica 44', role: 'Verifica', status: 'active' };
+  const cards = buildAgentCards({ agents: [RIAGGANCIO, REPORT, hand], assignments: [], runs: [], nowIso: NOW, catalog: CATALOG });
+  const rows = renderTeamAgentRows(doc, [RIAGGANCIO, REPORT, hand], CATALOG);
+  assert.ok(rows);
+  assert.deepEqual(rows.findAll('a').map((node) => node.textContent), cards.map((card) => card.statusLabel));
+  assert.ok(textOf(rows).includes(AGENT_NO_ENGINE_LABEL), 'la riga scritta a mano non legge «Attivo»');
+  // Senza lettura del catalogo la chiave scritta a mano resta senza motore.
+  const bare = renderTeamAgentRows(doc, [hand]);
+  assert.ok(textOf(bare).includes(AGENT_NO_ENGINE_LABEL));
+  const paused = renderTeamAgentRows(doc, [REPORT]);
+  assert.ok(textOf(paused).includes('In pausa'));
+});
+
+test('Riattiva chiede con le parole dello stato che torna (b9b5e6bda)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const hand = { id: 2, sourceKey: 'custom-agent:presti:v1.mano', spaceId: 'presti', name: 'Mano', role: 'Fa cose', instructions: 'Guarda.', status: 'paused' };
+  const client = driveClient({ rows: [hand] });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'retire-agent').dispatch('click', {});
+  await flush();
+  const text = textOf(mount);
+  assert.ok(text.includes(`Mano torna ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}. Continuo?`), 'la conferma usa le parole del badge');
+  assert.ok(!text.includes('torna attivo'), 'mai «attivo» per un agente che aspetta il motore');
 });
 
 test('the #/agenti route resolves to the Agenti screen; anything under it is invalid', () => {
@@ -987,6 +1018,19 @@ test('fd1c564a21d9: il rifiuto di «Nuovo agente» dice la causa vera e cosa far
   assert.ok(!/404|NOT_FOUND/.test(refused), 'niente codici tecnici');
   assert.equal(newAgentErrorText(Object.assign(new Error('denied'), { status: 403 })), 'Non hai il permesso di creare agenti in questo spazio: chiedilo a chi gestisce il team.');
   assert.ok(newAgentErrorText(Object.assign(new Error('down'), { status: 502 })).includes('riprova tra poco'));
+});
+
+test('Ritira asks in a clear Italian sentence (612317ae1251)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const hand = { id: 2, sourceKey: 'custom-agent:presti:v1.mano', spaceId: 'presti', name: 'Mano', role: 'Fa cose', instructions: 'Guarda.', status: 'active' };
+  const client = driveClient({ rows: [hand] });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'retire-agent').dispatch('click', {});
+  await flush();
+  assert.ok(textOf(mount).includes('Ritiro Mano? Resta nel team ma non riceve più incarichi; gli incarichi già dati restano.'));
 });
 
 test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {

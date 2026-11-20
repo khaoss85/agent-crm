@@ -108,9 +108,17 @@ export function openAppointmentPanel(deps) {
   }
   duration.value = '30';
   const person = select('person', 'Carico il team…');
+  // backlog:d29bc93caf92: the scheda window carries the same Note field as
+  // the Calendario manual form (label and placeholder included).
+  const notes = el('input', 'bo-offer-input');
+  notes.setAttribute('name', 'appointment-notes');
+  notes.setAttribute('type', 'text');
+  notes.setAttribute('placeholder', 'Facoltative');
+  notes.setAttribute('maxlength', '2000');
   field('service', 'Servizio', service, true);
   field('duration', 'Durata', duration);
   field('person', 'Persona del team', person);
+  field('notes', 'Note', notes, true);
   // backlog:9ff9a9ee1fea — the place, like the Calendario form and the
   // Google Calendar event form: a free address, or «Online» with the link.
   const location = el('input', 'bo-offer-input');
@@ -382,6 +390,7 @@ export function openAppointmentPanel(deps) {
     }
     if (bad || picked === null || chosen === null) return;
     const slot = chosen;
+    const noteText = String(notes.value ?? '').trim();
     const claim = bookingClaim({
       spaceId: deps.spaceId,
       customer: { resource: customer.resource, id: customer.id },
@@ -390,6 +399,7 @@ export function openAppointmentPanel(deps) {
       priceCents: picked.priceCents,
       startsAt: slot.startsAt,
       endsAt: slot.endsAt,
+      notes: noteText === '' ? null : noteText,
       location: location.value,
       locationUrl: locationUrl.value,
     });

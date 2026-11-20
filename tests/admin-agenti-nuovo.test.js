@@ -11,7 +11,6 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  AGENT_CAP_USE_CARD_NOTE,
   AGENT_COST_NEEDED_NOTE,
   AGENT_NAME_TAKEN_NOTE,
   NEW_AGENT_PENDING_NOTE,
@@ -268,7 +267,7 @@ test('un agente con tetto: la card chiede il costo di un giro prima di affidare,
   assert.ok(mount.textContent.includes('Incarico dato a Auguri'));
 });
 
-test('@nome trova anche un agente scritto a mano; con un tetto la barra ⌘K manda alla card invece di scrivere', async () => {
+test('@nome trova anche un agente scritto a mano; con un tetto la barra ⌘K propone incarico e costo (voce a391aa36)', async () => {
   const plain = { ...AUGURI, spendingCapCents: undefined };
   const found = findMentionedAgent('@auguri ogni lunedì fai gli auguri', [RIAGGANCIO, plain]);
   assert.equal(found?.agent?.sourceKey, AUGURI.sourceKey);
@@ -280,9 +279,10 @@ test('@nome trova anche un agente scritto a mano; con un tetto la barra ⌘K man
   await panel.open('oggi', null, null, '@Auguri ogni lunedì fai gli auguri');
   await flush();
   assert.equal(panel.getState().mentionStatus, 'capped');
-  assert.ok(mount.textContent.includes(AGENT_CAP_USE_CARD_NOTE));
-  assert.ok(mount.querySelector('a[href="#/agenti"]'));
-  assert.equal(posts(client, '/api/agents/assign').length, 0, 'niente scrittura destinata al rifiuto');
+  assert.ok(mount.textContent.includes('Incarico per Auguri'), 'la proposta, non solo la card');
+  assert.ok(mount.querySelector('input[placeholder="€ a giro"]'), 'il campo della stima');
+  assert.ok(mount.querySelector('a[href="#/agenti"]'), '«Apri Agenti →» resta');
+  assert.equal(posts(client, '/api/agents/assign').length, 0, 'niente scrittura senza la stima');
 });
 
 test('senza lettura del catalogo la card non inventa niente: resta «Attivo»', () => {

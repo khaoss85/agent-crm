@@ -5,6 +5,7 @@ import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { discountRuleLabel } from './admin-labels.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { signatureOffNotice } from './admin-signature.js';
 
 /**
  * Quote builder Admin (ADR-016), built on the ADR-009 override seam: a small
@@ -113,6 +114,9 @@ export function createQuoteView(deps) {
     }
   };
   const { client } = bindAdminMutations(deps.client, deps);
+  // backlog:0550bea56168: the session role, read late — only the titolare
+  // is told what they can do about the signature, the others whom to ask.
+  const readRole = typeof deps.role === 'function' ? deps.role : () => null;
   let renderToken = 0;
 
   const el = elFor(doc); // BO-F6-02: shared element builder.
@@ -907,7 +911,7 @@ export function createQuoteView(deps) {
 
     if (quote.status === 'approved') {
       side.appendChild(el('p', 'quote-approved', 'Approvato: righe e prezzi sono in sola lettura.'));
-      await renderSignature({ quote, schema, mount: side, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel });
+      await renderSignature({ quote, schema, mount: side, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel, role: readRole(), linkTo });
     }
 
     const versionsPanel = el('div', 'quote-versions');
@@ -945,7 +949,7 @@ export function createQuoteView(deps) {
    * control, which is an explicit human action with its caveat stated in the
    * UI. No payment, invoice or delivery control exists.
    */
-  async function renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel }) {
+  async function renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel, role = null, linkTo = null }) {
     const envelopeStatusLabel = (status) => {
       if (status === 'sent') return 'Inviata';
       if (status === 'completed') return 'Completata';
@@ -971,8 +975,15 @@ export function createQuoteView(deps) {
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
       // backlog:bfc070243427: plain words, never «progetto» — and what to
-      // do, like the AI-off lines («Per accenderla chiedi al titolare»).
-      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui. Per accenderla chiedi al titolare.'));
+      // do. backlog:0550bea56168: the titolare reads what they can do, with
+      // the way there one click away; the others read whom to ask.
+      if (role === 'owner' && typeof linkTo === 'function') {
+        const line = el('p', 'muted', `${signatureOffNotice(role)} `);
+        line.appendChild(linkTo('#/spazi-accessi', 'Apri Spazi e accessi'));
+        panel.appendChild(line);
+      } else {
+        panel.appendChild(el('p', 'muted', signatureOffNotice(role)));
+      }
       return;
     }
     let envelopes;

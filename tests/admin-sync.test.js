@@ -38,6 +38,7 @@ import {
   syncChannelRows,
   syncChannelTable,
   syncFeedItems,
+  syncFeedEmptyText,
   syncFixItems,
   syncGrantCards,
   syncIdentityCards,
@@ -325,6 +326,31 @@ test('feed lists newest-first events without payload or provider wording', () =>
   });
   assert.equal(items[1].text, 'invio fermo');
   assert.deepEqual(syncFeedItems(null), []);
+});
+
+test('empty feed names no activity only with nothing updated today (backlog:f0063dc75b7f)', () => {
+  // Email e Calendar aggiornati 4 min fa: il riquadro non dice «Nessuna attività».
+  const fresh = syncFeedEmptyText(activityOf({
+    connections: [
+      entryOf({ connectionKey: 'em-1', channel: 'email', inbox: inboxOf({ lastReceivedAt: '2026-10-25T11:56:00.000Z' }) }),
+    ],
+    feed: [],
+    lastActivityAt: null,
+  }), NOW);
+  assert.ok(!fresh.includes('Nessuna attività'), 'a channel updated today never reads as no activity');
+  assert.ok(fresh.includes('Canali'), 'it points to the channel table');
+
+  // Nulla di oggi: la riga quieta resta.
+  const stale = syncFeedEmptyText(activityOf({
+    connections: [entryOf({ inbox: inboxOf({ received: 0, lastReceivedAt: '2026-10-20T11:30:00.000Z' }), outbox: { openDeadLetters: 0, lastFailedAt: null } })],
+    feed: [],
+    lastActivityAt: null,
+  }), NOW);
+  assert.equal(stale, 'Nessuna attività sincronizzata oggi.');
+
+  const none = syncFeedEmptyText(activityOf({ connections: [], feed: [], lastActivityAt: null }), NOW);
+  assert.equal(none, 'Nessuna attività sincronizzata oggi.');
+  assert.equal(syncFeedEmptyText(null, NOW), 'Nessuna attività sincronizzata oggi.');
 });
 
 test('the screen renders indicator, fixes, table and feed from live activity', async () => {

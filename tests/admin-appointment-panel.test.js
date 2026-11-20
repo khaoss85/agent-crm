@@ -570,6 +570,17 @@ test('9a91d09e: a day with more hours than shown offers «Mostra altri orari» a
   assert.equal(client.confirms()[0].body.startsAt, '2026-11-12T14:30:00.000Z', 'a revealed late hour books');
 });
 
+test('Nuovo appuntamento: the Note field rides the claim like the Calendario manual form (d29bc93caf92)', async () => {
+  const { panel, client } = await open();
+  const notes = panel.findAll('input').find((node) => node.getAttribute('name') === 'appointment-notes');
+  assert.ok(notes, 'the Note field is in the window');
+  assert.equal(notes.getAttribute('placeholder'), 'Facoltative', 'same hint as the Calendario');
+  await choose(panel);
+  chips(panel)[0].dispatch('click');
+  notes.value = 'Citofono rotto, chiamare al secondo';
+  await panel.__submit();
+  assert.equal(client.confirms()[0].body.notes, 'Citofono rotto, chiamare al secondo');
+});
 // backlog:9ff9a9ee1fea — the scheda window books the place too, like the
 // Calendario form: a free address, or «Online» with the meeting link.
 test('9ff9a9ee1fea: the scheda window has Luogo and Link riunione and books them', async () => {

@@ -296,6 +296,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
   let editError = '';
   let saving = false;
   let draft = '';
+  // backlog:3ff581d8f8ce: Annulla hands focus back to «Modifica» — set before
+  // the repaint, consumed by header() once the fresh button is connected.
+  let focusEdit = false;
   const bound = bindAdminMutations(client, submissions ? { submissions } : {}).client;
 
   function clear() {
@@ -316,7 +319,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     const nameRow = el(doc, 'div', 'bo-profilo-name-row');
     // backlog:c51dca86dc66: the person's name is the page's h1 — every
     // screen names its subject once, at the top level.
-    nameRow.appendChild(el(doc, 'h1', 'bo-profilo-name', shown));
+    // backlog:3ff581d8f8ce: while editing the name lives in the Nome field,
+    // so the h1 reads «Modifica nome» instead of repeating it.
+    nameRow.appendChild(el(doc, 'h1', 'bo-profilo-name', editing ? 'Modifica nome' : shown));
     if (!editing) {
       const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
         attrs: { type: 'button', 'data-action': 'modifica-nome' } });
@@ -328,6 +333,12 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         paintLast();
       });
       nameRow.appendChild(edit);
+      // backlog:3ff581d8f8ce: after Annulla (or Esc) the fresh «Modifica»
+      // is connected already (page lives in mount), so it can take focus.
+      if (focusEdit) {
+        focusEdit = false;
+        if (typeof edit.focus === 'function') edit.focus();
+      }
     }
     words.appendChild(nameRow);
     // The Nome input takes real focus only once it is connected: a focus()
@@ -428,6 +439,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         editing = false;
         editError = '';
         draft = '';
+        // backlog:3ff581d8f8ce: Annulla (and Esc through it) hands focus
+        // back to «Modifica», like closing a menu returns to its toggle.
+        focusEdit = true;
         paintLast();
       };
       save.addEventListener('click', doSave);
