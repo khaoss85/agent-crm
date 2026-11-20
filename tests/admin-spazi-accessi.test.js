@@ -2312,3 +2312,59 @@ test('785aeb28bd18: the roster paints while the switches read is still out, each
   assert.equal(count((path) => path.startsWith('/api/connectors?')), 1, 'the connectors are read once per load');
   assert.equal(count((path) => path.startsWith('/api/customer-data/customers?')), 1, 'the customers are read once per load');
 });
+
+// Review indipendente su #1112 (P2 sul secondo tempo): un operatore che
+// scrive nell'invito mentre effective è fuori non perde il testo quando i
+// riempimenti arrivano — scrivere non sostituisce i nodi, quindi le guardie
+// del mount non lo vedono.
+test('785aeb28bd18: the fill-in paints keep the typed invite draft and focus', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [] },
+    customersBySpace: { [SPACE]: { total: 0, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
+  const releaseWhere = (wanted) => {
+    const keep = [];
+    for (const entry of pending.splice(0)) {
+      if (wanted(entry.path)) entry.release();
+      else keep.push(entry);
+    }
+    pending.push(...keep);
+  };
+  const { doc, mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  releaseWhere((path) => path === '/api/spine/context' || path === '/api/spine/memberships');
+  await flush();
+  const draftOf = (tag, label) => mount.findAll(tag)
+    .find((node) => node.getAttribute('aria-label') === label);
+  const subject = draftOf('input', 'Identificativo della persona da invitare');
+  const reason = draftOf('input', 'Motivo dell\u2019invito');
+  assert.ok(subject && reason, 'the roster paints with the invite form beside it');
+  // The operator types while effective and the badge are still out.
+  subject.value = 'nuova@example.com';
+  reason.value = 'deve vedere Presti';
+  doc.activeElement = subject;
+  for (let round = 0; round < 8 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    releaseWhere((path) => !isStat(path));
+    await flush();
+  }
+  assert.equal(draftOf('input', 'Identificativo della persona da invitare').value, 'nuova@example.com', 'the second paint keeps the typed email');
+  assert.equal(draftOf('input', 'Motivo dell\u2019invito').value, 'deve vedere Presti', 'the second paint keeps the typed reason');
+  assert.ok(draftOf('input', 'Identificativo della persona da invitare').__focused, 'focus stays in the field');
+  releaseWhere(() => true);
+  await done;
+  await flush();
+  assert.equal(draftOf('input', 'Identificativo della persona da invitare').value, 'nuova@example.com', 'the statistic paint keeps the typed email too');
+});

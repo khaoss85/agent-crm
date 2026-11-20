@@ -1543,6 +1543,68 @@ export function createSpaziAccessiView(deps) {
     lastPaint = childrenOf();
   }
 
+  // Voce 785aeb28bd18 (review indipendente su #1112, P2): the fill-in
+  // paints below replace whole panels while the operator may be typing —
+  // typing never replaces DOM nodes, so the mount guards cannot see it and
+  // a late paint would silently clear the invite form or a removal reason.
+  // Unsubmitted field values (and focus) therefore survive those paints:
+  // snapshotted from the live DOM before, restored onto the fresh nodes
+  // after, keyed by tag and aria-label. Only childNodes/tagName/value/focus
+  // are used — real-DOM surface, so the tests exercise the same path. The
+  // first paint after resetLoadState keeps fresh-state semantics (a form
+  // consumed by its submit reopens empty); only the fill-in paints on the
+  // same state preserve drafts.
+  function snapshotDrafts() {
+    const drafts = [];
+    const walk = (node) => {
+      for (const child of node?.childNodes ?? []) {
+        if (child !== null && typeof child === 'object'
+          && (child.tagName === 'INPUT' || child.tagName === 'SELECT' || child.tagName === 'TEXTAREA')) {
+          drafts.push({
+            tag: child.tagName,
+            label: typeof child.getAttribute === 'function' ? child.getAttribute('aria-label') : null,
+            value: typeof child.value === 'string' ? child.value : '',
+            focused: doc !== null && doc.activeElement === child,
+          });
+        }
+        walk(child);
+      }
+    };
+    walk(mount);
+    return drafts;
+  }
+  function restoreDrafts(drafts) {
+    if (!Array.isArray(drafts) || drafts.length === 0) return;
+    const used = new Set();
+    const labelOf = (node) => (typeof node.getAttribute === 'function' ? node.getAttribute('aria-label') : null);
+    const walk = (node) => {
+      for (const child of node?.childNodes ?? []) {
+        if (child !== null && typeof child === 'object'
+          && (child.tagName === 'INPUT' || child.tagName === 'SELECT' || child.tagName === 'TEXTAREA')) {
+          const index = drafts.findIndex((entry, at) => !used.has(at)
+            && entry.tag === child.tagName && entry.label === labelOf(child));
+          if (index !== -1) {
+            used.add(index);
+            try {
+              child.value = drafts[index].value;
+            } catch {
+              // A field that refuses its draft never breaks the paint.
+            }
+            if (drafts[index].focused) {
+              try {
+                child.focus();
+              } catch {
+                // Focus is a courtesy: the draft above is what must survive.
+              }
+            }
+          }
+        }
+        walk(child);
+      }
+    };
+    walk(mount);
+  }
+
   function paint() {
     refusalPainted = false;
     liveMenuWraps.length = 0;
@@ -1662,7 +1724,11 @@ export function createSpaziAccessiView(deps) {
     if (mine !== generation) return;
     if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
     if (!sameNodes(childrenOf(), lastPaint)) return;
+    // Review indipendente su #1112 (P2): the operator may be typing in the
+    // invite form or a removal reason while this fill-in paint lands.
+    const drafts = snapshotDrafts();
     render();
+    restoreDrafts(drafts);
     // Voce 785aeb28bd18: the second wave starts only now that the data is
     // on screen — the roster never queued behind the card reads.
     const statsNow = startStats();
@@ -1684,7 +1750,11 @@ export function createSpaziAccessiView(deps) {
     if (space === '' || readActiveSpace().trim() !== space) return;
     if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
     if (!sameNodes(childrenOf(), lastPaint)) return;
+    // Review indipendente su #1112 (P2): same draft preservation as the
+    // fill-in paint above — the operator may still be typing.
+    const statDrafts = snapshotDrafts();
     render();
+    restoreDrafts(statDrafts);
   }
 
   async function renderView() {
