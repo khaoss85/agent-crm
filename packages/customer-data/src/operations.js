@@ -19,6 +19,12 @@ import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './impo
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, coalescedProfileFor } from './profile.js';
 import { createPolicyReader, createSubjectForRow, isNoCompany, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
+// backlog:e80c6aee42c5 — the contact-fit scorer arrives as the `fitScorer`
+// option (a plain function like `interactions`), never through an import:
+// a domain package reaches another only through requires plus capability
+// (AGENTS.md rule 9), so the intelligence-owned rule is handed over at
+// composition and an absent scorer reads unavailable instead of breaking
+// the load of this module.
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -57,7 +63,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null, fitScorer = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -387,7 +393,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names, interactions }, request);
+      return listCustomerRecords({ modules, core, names, interactions, fitScorer }, request);
     },
 
     /**
@@ -822,7 +828,7 @@ function summarizeSectionRows(read, rows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null, fitScorer = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -1071,6 +1077,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // filter) run after every read resolves, as before.
     customDefs,
     customValues,
+    // backlog:e80c6aee42c5 — the Punteggio column: the space's sales
+    // playbook, read straight at its record module like the reads above
+    // (never through another package's code). Without the module, without a
+    // space, or when the read fails, every row below reads unavailable —
+    // the column stays out of the answer instead of scoring against nothing.
+    playbook,
   ] = await Promise.all([
     batched(names.identity),
     batched('opportunity', [
@@ -1180,6 +1192,21 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       }));
       return { rows, failed };
     })(),
+    (async () => {
+      if (!query.spaceId) return null;
+      const service = optional(modules, 'sales-playbook');
+      if (!service || typeof service.getBySpace !== 'function') return null;
+      try {
+        return await service.getBySpace(query.spaceId);
+      } catch (error) {
+        // Degraded, never silent: the rows below read unavailable, and the
+        // cause is logged with the space, never data (AGENTS.md).
+        console.error(
+          `[accordo] customer playbook unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+        );
+        return null;
+      }
+    })(),
   ]);
   const identitiesBySubject = new Map(subjectKeys.map((key) => [key, []]));
   for (const row of identities.rows) {
@@ -1250,6 +1277,47 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       value: row?.value ?? null, updatedAt: row?.updatedAt ?? null, updatedBy: row?.updatedBy ?? null,
     };
   })]));
+
+  // backlog:e80c6aee42c5 — one fit per customer, computed on read from the
+  // playbook above and never stored: a rewritten ideal customer re-scores
+  // every row on the next read with no button and no stale row. The scorer
+  // is the intelligence-owned pure function handed over at composition (or
+  // in tests); without it every row reads unavailable, never a zero that
+  // would read as «not a fit». A scorer throw reads unavailable too, never
+  // a verdict on the row.
+  const scorer = typeof fitScorer === 'function' ? fitScorer : null;
+  const fitBySubject = new Map(subjectKeys.map((key) => [key, null]));
+  for (const { contact, company } of subjects) {
+    const key = contact ? keyOf('contact', contact.id) : keyOf('company', company.id);
+    let fit = null;
+    if (scorer === null) {
+      fit = { available: false, value: null, reasons: ['il punteggio non è disponibile: lo scorer del cliente ideale non è composto'] };
+    } else try {
+      fit = scorer({ contact, company }, playbook);
+    } catch (error) {
+      // A scorer throw is a bug in the new code, never a verdict on the row:
+      // the row reads unavailable, and the cause is logged with the space,
+      // never data (AGENTS.md review rules).
+      console.error(
+        `[accordo] contact-fit scorer threw: ${error?.name ?? 'Error'} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+      );
+      fit = null;
+    }
+    fitBySubject.set(key, fit !== null && typeof fit === 'object'
+      ? { available: fit.available === true, value: fit.value ?? null, reasons: Array.isArray(fit.reasons) ? [...fit.reasons] : [] }
+      : { available: false, value: null, reasons: [] });
+  }
+  // The column (and its sort) is answered only when at least one row scored:
+  // without a playbook, or with an ideal customer that carries no usable
+  // cue, the answer names no punteggio column instead of an empty one.
+  const fitAvailable = [...fitBySubject.values()].some((fit) => fit?.available === true);
+  // An explicit fit sort with no scored row refuses instead of silently
+  // answering name order (review agent-crm#987: the parse allows fit because
+  // it is a declared sort, so the operation owns the refusal, like the
+  // canale and derived-view 409s above).
+  if (query.sort === 'fit' && fitAvailable !== true) {
+    throw new AppError('the fit sort needs a playbook with a usable ideal customer: no row scored, so punteggio order is unavailable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
 
   // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
   // is only exact when both the message and the call scans are readable and
@@ -1510,6 +1578,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
         source: { resource, id },
       }]]),
+      fitBySubject: new Map([[key, fitBySubject.get(key) ?? null]]),
       customFieldsBySubject: new Map([[key, customFieldsBySubject.get(key) ?? []]]),
     });
   });
@@ -1553,8 +1622,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     complete,
     totalIsExact: complete,
     views,
-    sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
-    columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
+    sorts: (fitAvailable ? CUSTOMER_SORTS : CUSTOMER_SORTS.filter((sort) => sort.id !== 'fit'))
+      .map((sort) => ({ ...sort })),
+    columns: (fitAvailable ? CUSTOMER_COLUMNS : CUSTOMER_COLUMNS.filter((column) => column.id !== 'punteggio'))
+      .map((column) => ({ ...column })),
     customColumns: Object.freeze(customDefs.map((def) => Object.freeze({
       key: def.key, label: def.label, type: def.type, options: Object.freeze([...def.options]),
     }))),

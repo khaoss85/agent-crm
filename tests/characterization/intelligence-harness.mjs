@@ -152,6 +152,7 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/intelligence/src/index.js',
   'packages/intelligence/src/call-intelligence.js',
   'packages/intelligence/src/actions.js',
+  'packages/intelligence/src/contact-fit.js',
   'packages/intelligence/src/registry.js',
   'packages/intelligence/src/capability.js',
   'packages/core/src/definition-fingerprint.js',
