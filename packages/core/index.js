@@ -361,4 +361,4 @@ export { buildMoveStageAction } from './src/pipeline-actions.js';
 // The customer list and Reporting decide open/won/lost through these, so a
 // package never reaches into `packages/core/src/*` for them: the header
 // above names that coupling out of contract.
-export { findStage, isLostOfferStage, isOpenOfferStage, isWonOfferStage } from './src/pipeline-registry.js';
+export { findStage, isLostOfferStage, isOpenOfferRow, isOpenOfferStage, isWonOfferStage } from './src/pipeline-registry.js';

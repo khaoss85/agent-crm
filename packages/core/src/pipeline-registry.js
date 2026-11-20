@@ -264,3 +264,25 @@ export function isLostOfferStage(pipeline, value) {
   }
   return value === LOST_STAGE_KEY;
 }
+
+/**
+ * backlog:1adf95307b31 (seguito 20/11, ANSWER supervisore 10:4xZ) — the ONE
+ * row rule for a customer's open value, shared by the customer list,
+ * Reporting and the Pipeline board header. A row filed under the composed
+ * pipeline (pipelineKey names it, the definition names the stage key) reads
+ * through its stage type; anything else — another pipeline, no pipeline key
+ * at all, a stage the definition no longer names — reads through the
+ * canonical stage. Unknown or empty stages read closed, never open.
+ * @param {PipelineDefinition | null} pipeline
+ * @param {Record<string, any> | null | undefined} row
+ */
+export function isOpenOfferRow(pipeline, row) {
+  const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
+  const rowPipeline = typeof row?.pipelineKey === 'string' && row.pipelineKey !== '' ? row.pipelineKey : null;
+  if (key !== null && rowPipeline !== null && pipeline !== null && pipeline !== undefined
+    && Array.isArray(pipeline.stages) && rowPipeline === pipeline.name
+    && findStage(pipeline, key) !== null) {
+    return isOpenOfferStage(pipeline, key);
+  }
+  return isOpenOfferStage(null, row?.stage);
+}
