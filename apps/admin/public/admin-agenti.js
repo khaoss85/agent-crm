@@ -1511,7 +1511,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       useCost.disabled = draft.busy;
       useCost.addEventListener('click', () => {
         draft.cost = (suggested / 100).toFixed(2).replace('.', ',');
-        void sendInstruction(card, false);
+        const release = uiHold(useCost, 'Invio…');
+        void sendInstruction(card, false).finally(() => release());
       });
       form.appendChild(useCost);
     }
@@ -1542,8 +1543,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         const pick = uiButton(documentNode, { variant: 'secondary', small: true, label: proposal.label, attrs: { type: 'button', 'data-action': action } });
         pick.disabled = draft.busy;
         pick.addEventListener('click', () => {
-          if (proposal.id === 'once') void sendInstruction(card, true, draft.unclear);
-          else void sendInstruction(card, false, draft.unclear, proposal.plan);
+          const release = uiHold(pick, 'Invio…');
+          if (proposal.id === 'once') void sendInstruction(card, true, draft.unclear).finally(() => release());
+          else void sendInstruction(card, false, draft.unclear, proposal.plan).finally(() => release());
         });
         choices.appendChild(pick);
       }

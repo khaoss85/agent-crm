@@ -211,7 +211,6 @@ const ADMIN_PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps',
  * moves to uiBusy/uiHold asks to shrink the list.
  */
 const HAND_CHECKED = new Map([
-  ['admin-agenti.js#once', [1, 'Affida reads «Invio…» from draft.busy at render']],
   ['admin-agenti.js#save', [1, 'Salva modifica reads «Salvo…» from decision.busy at render']],
   ['admin-agenti.js#confirm', [1, 'Conferma rifiuto reads «Rifiuto…» from decision.busy at render']],
   ['admin-agenti.js#add', [1, 'Aggiungi reads «Aggiungo…» from state.adding at render']],

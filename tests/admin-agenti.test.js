@@ -368,6 +368,41 @@ test('a capped agent proposes its per-turn cost: one click fills it and sends (0
   assert.ok(textOf(mount).includes('Incarico dato a Riaggancio:'));
 });
 
+test('086c6656c5df: «Usa … a giro» e le frequenze dicono «Invio…» dal clic (cura del rosso fast di #1104)', async () => {
+  const cappedDoc = createFakeDocument();
+  const cappedMount = createMount();
+  const cappedClient = driveClient();
+  cappedClient.agents[0] = { ...RIAGGANCIO, spendingCapCents: 1000 };
+  const cappedView = createAgentiView({ doc: cappedDoc, mount: cappedMount, client: cappedClient, spaceId: () => 'presti', now: () => NOW });
+  await cappedView.render();
+  await flush();
+  const talk = cappedMount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk.value = 'ogni giorno prepara il report';
+  talk.dispatch('input', {});
+  const suggest = findButton(cappedMount, 'cost-suggest');
+  suggest.dispatch('click', {});
+  assert.equal(suggest.textContent, 'Invio…', 'l’attesa si vede dal clic');
+  await flush();
+  assert.equal(cappedClient.calls.filter((call) => call.path === '/api/agents/assign').length, 1, 'un clic conferma il costo proposto');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ unclearFirst: true });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'occupati dei lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  const pick = findButton(mount, 'once');
+  pick.dispatch('click', {});
+  assert.equal(pick.textContent, 'Invio…', 'l’attesa si vede dal clic');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.path === '/api/agents/assign').length, 2, 'un clic conferma «una volta»');
+});
+
 test('086c6656c5df helpers: frequencies are fresh copies, the cost is the median, the draft names the agent', () => {
   const first = suggestScheduleProposals();
   assert.deepEqual(first.map((entry) => entry.id), ['daily', 'monthly', 'once']);
