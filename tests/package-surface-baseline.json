@@ -90,14 +90,14 @@
       "dir": "customer-data",
       "graph": "contract1",
       "version": 8,
-      "fingerprint": "d49aa6af25a8c7424f9ae8a7d008398e6c33a11fbf0d0704841ed11ca3141adf"
+      "fingerprint": "9b100276d2ae7b510c066ad94d3613685ac41f41468090d807e23e6b68fe6f95"
     },
     {
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract2",
       "version": 8,
-      "fingerprint": "276e8a6bb04d10d2570f19b61d2318955021ef336d8321ca0d10d063821503a2"
+      "fingerprint": "61cea5cb8eafa09b6162271114745dd8f5e2b8a90a4887c1d9806ddc34eb8d65"
     },
     {
       "name": "customer-hub",
