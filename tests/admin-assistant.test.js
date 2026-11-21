@@ -1586,8 +1586,8 @@ test('voce 34fd687c: «il primo lead di oggi» tiene letture e note del giorno',
   const text = shownText(outcome.answer);
   assert.ok(text.includes('Marco Rossi'), `the primo names its lead: ${JSON.stringify(outcome.answer.lines)}`);
   assert.equal(outcome.answer.trace.reads.length, 2, 'both day reads are kept, not discarded');
-  assert.ok(outcome.answer.unavailable.some((note) => note.includes('company')),
-    `the company note survives: ${JSON.stringify(outcome.answer.unavailable)}`);
+  assert.ok(outcome.answer.unavailable.some((note) => note.includes('aziende')),
+    `the company note survives in plain words: ${JSON.stringify(outcome.answer.unavailable)}`);
   for (const raw of ['c-marco']) {
     assert.ok(!text.includes(raw), `raw id leaked: ${text}`);
   }
@@ -1614,6 +1614,84 @@ test('voce 34fd687c: giorno vuoto e giorno illeggibile rispondono diverso al «p
   const primoEmpty = await askFreeQuestion(emptyClient, { mode: 'dry-run' }, 'chi è il primo?', empty.answer.context);
   assert.ok(primoEmpty.answer.lines.some((line) => line.includes('Nessun lead')));
   assert.ok(!shownText(primoEmpty.answer).includes('Non riesco a leggere'));
+});
+
+// Voce 4b9dbbe5721c: modulo illeggibile dice quale e perché, senza parole
+// tecniche — mai «modulo», mai il codice del modulo, mai lo stato.
+test('voce 4b9dbbe5721c: note illeggibili in parole semplici, con il perché', async () => {
+  const denied = (message) => Object.assign(new Error(message), { status: 403, code: 'FORBIDDEN' });
+  const absent = (message) => Object.assign(new Error(message), { status: 404, code: 'MODULE_NOT_FOUND' });
+  const cases = [
+    {
+      name: 'permesso negato',
+      routes: {
+        '/api/modules/contact/records?limit=50': denied('forbidden'),
+        '/api/modules/company/records?limit=50': denied('forbidden'),
+      },
+      mustShow: ['Non hai il permesso di vedere i contatti', 'Non hai il permesso di vedere le aziende'],
+    },
+    {
+      name: 'modulo assente',
+      routes: {
+        '/api/modules/contact/records?limit=50': absent('no such module'),
+        '/api/modules/company/records?limit=50': absent('no such module'),
+      },
+      mustShow: ['I contatti non sono attivi in questo spazio', 'Le aziende non sono attive in questo spazio'],
+    },
+    {
+      name: 'servizio irraggiungibile',
+      routes: {
+        '/api/modules/contact/records?limit=50': new TypeError('fetch failed'),
+        '/api/modules/company/records?limit=50': new TypeError('fetch failed'),
+      },
+      mustShow: ['Non riesco a leggere i contatti adesso', 'Non riesco a leggere le aziende adesso'],
+    },
+    {
+      name: 'errore ignoto',
+      routes: {
+        '/api/modules/contact/records?limit=50': new Error('forbidden'),
+        '/api/modules/company/records?limit=50': new Error('forbidden'),
+      },
+      mustShow: ['Non riesco a leggere i contatti adesso', 'Non riesco a leggere le aziende adesso'],
+    },
+  ];
+  const technical = ['modulo', 'contact', 'company', 'records', '403', '404', 'endpoint', 'rotta', 'UUID'];
+  for (const { name, routes, mustShow } of cases) {
+    const outcome = await askFreeQuestion(stubClient(routes), { mode: 'dry-run' }, 'quanti lead oggi?');
+    assert.equal(outcome.ok, true, name);
+    assert.equal(outcome.answer.context.unreadable, true, `${name}: unreadable, never a measured zero`);
+    assert.ok(outcome.answer.lines.some((line) => line.includes('non sono leggibili')), `${name}: ${JSON.stringify(outcome.answer.lines)}`);
+    for (const fragment of mustShow) {
+      assert.ok(outcome.answer.unavailable.some((note) => note.includes(fragment)),
+        `${name} shows «${fragment}»: ${JSON.stringify(outcome.answer.unavailable)}`);
+    }
+    for (const note of outcome.answer.unavailable) {
+      for (const word of technical) {
+        assert.ok(!note.includes(word), `${name}: technical word «${word}» leaked: ${note}`);
+      }
+    }
+    const primo = await askFreeQuestion(stubClient(routes), { mode: 'dry-run' }, 'chi è il primo?', outcome.answer.context);
+    assert.ok(primo.answer.lines.some((line) => line.includes('Non riesco a leggere i lead')),
+      `${name}: primo keeps unreadable: ${JSON.stringify(primo.answer.lines)}`);
+  }
+});
+
+test('voce 4b9dbbe5721c: un modulo solo illeggibile conta l’altro con dati veri', async () => {
+  const denied = Object.assign(new Error('forbidden'), { status: 403, code: 'FORBIDDEN' });
+  const client = stubClient({
+    '/api/modules/contact/records?limit=50': denied,
+    '/api/modules/company/records?limit=50': {
+      items: [{ id: 'co-olimpia', name: 'Palestra Olimpia', createdAt: atHour(LEAD_TODAY, 10) }],
+    },
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('1 lead nuovo oggi')), JSON.stringify(outcome.answer.lines));
+  assert.ok(shownText(outcome.answer).includes('Palestra Olimpia'));
+  assert.ok(outcome.answer.unavailable.some((note) => note.includes('Non hai il permesso di vedere i contatti')),
+    JSON.stringify(outcome.answer.unavailable));
+  assert.ok(!outcome.answer.unavailable.some((note) => note.includes('aziende') && note.includes('permesso')),
+    'the readable side names no note');
 });
 
 // Giro 4 (testa 3c16b1c8): un lead senza etichetta resta nel conteggio, con

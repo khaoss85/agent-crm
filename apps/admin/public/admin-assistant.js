@@ -391,27 +391,55 @@ function conversationLine(row, label) {
 }
 
 /**
+ * Why a module read failed, in one word the answer builders map to a plain
+ * sentence (voce 4b9dbbe5721c): 'denied' when the space reader has no access
+ * (401/403), 'absent' when nothing answers that module here (404), and
+ * 'unreachable' when the request never got an answer (a lost connection or
+ * a waking service). Anything else is 'unknown' — the answer still says
+ * which records it could not read, without guessing why.
+ * @param {unknown} error the rejection from `client.request`
+ */
+function classifyReadError(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 401 || status === 403) return 'denied';
+  if (status === 404) return 'absent';
+  if (status === null && (error instanceof TypeError || typeof record.code === 'string')) return 'unreachable';
+  if (status !== null && (status < 200 || status >= 500)) return 'unreachable';
+  return 'unknown';
+}
+
+/**
  * Read one module list best-effort: rows when the module is composed and the
  * read succeeds, null when it is not — an unavailable section names itself
  * instead of failing the whole answer. Every attempt lands in `traceReads`
- * (BO-F4-04) so the answer can show which records it really read.
+ * (BO-F4-04) so the answer can show which records it really read. The
+ * optional `report` object receives the failure `reason` (voce 4b9dbbe5721c)
+ * so the caller can say which records and why, in plain words — the trace
+ * shape never changes.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} module
  * @param {number} limit
  * @param {Array<TraceRead>} [traceReads]
+ * @param {{ reason?: string }} [report]
  */
-async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT, traceReads) {
+async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT, traceReads, report) {
+  const note = (reason) => {
+    if (report !== null && typeof report === 'object') report.reason = reason;
+  };
   try {
     const body = await client.request(`/api/modules/${module}/records?limit=${limit}`);
     if (!body || !Array.isArray(body.items)) {
       traceRead(traceReads, module, limit, 'invalid', 0);
+      note('invalid');
       return null;
     }
     const rows = body.items.filter((row) => row !== null && typeof row === 'object');
     traceRead(traceReads, module, limit, 'ok', rows.length);
     return rows;
-  } catch {
+  } catch (error) {
     traceRead(traceReads, module, limit, 'missing', 0);
+    note(classifyReadError(error));
     return null;
   }
 }
@@ -1368,6 +1396,27 @@ function fallbackLeadLabel(row) {
 }
 
 /**
+ * Why a lead source stayed unread, in the operator's own words (voce
+ * 4b9dbbe5721c): which records ('i contatti', 'le aziende') and why —
+ * never a module code, a status, or a route. The phrasing follows the
+ * views' own sentences ('non sono attivi', 'permesso', 'riprova tra
+ * poco', admin-agenti.js).
+ * @param {'contact' | 'company'} module
+ * @param {unknown} reason the failure reason collected by `readRecords`
+ */
+function leadUnreadableNote(module, reason) {
+  const what = module === 'contact' ? 'i contatti' : 'le aziende';
+  const notActive = module === 'contact'
+    ? 'I contatti non sono attivi in questo spazio.'
+    : 'Le aziende non sono attive in questo spazio.';
+  if (reason === 'denied') return `Non hai il permesso di vedere ${what} in questo spazio: chiedilo a chi gestisce il team.`;
+  if (reason === 'absent') return notActive;
+  return module === 'contact'
+    ? 'Non riesco a leggere i contatti adesso: riprova tra poco.'
+    : 'Non riesco a leggere le aziende adesso: riprova tra poco.';
+}
+
+/**
  * One lead-day answer: contacts and companies created on one local day,
  * oldest first, named (never UUIDs) and linked to their customer card.
  * @param {{ request: (path: string) => Promise<any> }} client
@@ -1377,15 +1426,17 @@ function fallbackLeadLabel(row) {
  */
 async function answerLeadDay(client, title, day, dayWord) {
   const answer = emptyAnswer('bo04:domanda-libera', title);
+  const contactReport = {};
+  const companyReport = {};
   const [contacts, companies] = await Promise.all([
-    readRecords(client, 'contact', FREE_DATA_READ_LIMIT, answer.trace.reads),
-    readRecords(client, 'company', FREE_DATA_READ_LIMIT, answer.trace.reads),
+    readRecords(client, 'contact', FREE_DATA_READ_LIMIT, answer.trace.reads, contactReport),
+    readRecords(client, 'company', FREE_DATA_READ_LIMIT, answer.trace.reads, companyReport),
   ]);
   const readable = [];
   if (contacts !== null) readable.push(['contact', contacts]);
-  else answer.unavailable.push('Lead: modulo contact non leggibile in questo spazio.');
+  else answer.unavailable.push(leadUnreadableNote('contact', contactReport.reason));
   if (companies !== null) readable.push(['company', companies]);
-  else answer.unavailable.push('Aziende: modulo company non leggibile in questo spazio.');
+  else answer.unavailable.push(leadUnreadableNote('company', companyReport.reason));
   /** @type {Array<{ module: string, id: string, label: string, at: number }>} */
   const entries = [];
   for (const [module, rows] of readable) {

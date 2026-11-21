@@ -663,16 +663,23 @@ export function assignAttempt(previous, intent) {
  * @param {{ once?: boolean, nowIso?: string }} [options]
  */
 export async function assignToAgent(bound, attempt, options = {}) {
-  const mode = options.once ? 'once' : 'plain';
-  if (options.once && attempt.runAt === null) attempt.runAt = options.nowIso ?? new Date().toISOString();
-  if (attempt.keys[mode] === null) attempt.keys[mode] = issueAdminKey();
+  // Backlog 086c6656c5df: the confirm sends the proposed frequency as an
+  // explicit plan — the server never parses the phrase then. `once` still
+  // fixes its instant at the first try, like before.
+  const plan = options.plan ?? (options.once ? { cadence: 'once', runAt: attempt.runAt } : null);
+  if (plan && plan.cadence === 'once' && !plan.runAt) {
+    if (attempt.runAt === null) attempt.runAt = options.nowIso ?? new Date().toISOString();
+    plan.runAt = attempt.runAt;
+  }
+  const mode = plan ? `plan:${plan.cadence}` : 'plain';
+  if (attempt.keys[mode] == null) attempt.keys[mode] = issueAdminKey();
   const body = {
     spaceId: attempt.spaceId,
     sourceKey: attempt.sourceKey,
     agentSourceKey: attempt.agentSourceKey,
     phrase: attempt.phrase,
     ...(attempt.costPerRunCents > 0 ? { costPerRunCents: attempt.costPerRunCents } : {}),
-    ...(options.once ? { plan: { cadence: 'once', runAt: attempt.runAt } } : {}),
+    ...(plan ? { plan } : {}),
   };
   const answer = await bound.request('/api/agents/assign', {
     method: 'POST',
@@ -694,6 +701,90 @@ export const PHRASE_UNCLEAR_NOTE = 'Non ho capito ogni quanto farlo. Puoi scrive
 
 /** Restyle 19/11: after an incarico with no schedule ran once on its own. */
 export const PHRASE_ONCE_FALLBACK_NOTE = 'Non c’era ogni quanto farlo, quindi parte una volta, adesso. Per ripeterlo scrivi per esempio «ogni lunedì».';
+
+/**
+ * Backlog 086c6656c5df: what a phrase without «ogni quanto» proposes — a
+ * frequency or «una volta» to confirm, never a guess. Daily and monthly
+ * need no weekday; `once` gets its instant at confirm time. Weekly stays
+ * out: «ogni lunedì» for a phrase naming no day would invent a day.
+ */
+export const FREQUENCY_PROPOSALS = Object.freeze([
+  Object.freeze({ id: 'daily', label: 'Ogni giorno', plan: Object.freeze({ cadence: 'daily', timeOfDay: '08:00' }) }),
+  Object.freeze({ id: 'monthly', label: 'Ogni mese', plan: Object.freeze({ cadence: 'monthly', timeOfDay: '08:00' }) }),
+  Object.freeze({ id: 'once', label: 'Una volta, adesso', plan: Object.freeze({ cadence: 'once' }) }),
+]);
+
+/** Fresh copies of FREQUENCY_PROPOSALS: a confirm sends one, never mutates it. */
+export function suggestScheduleProposals() {
+  return FREQUENCY_PROPOSALS.map((entry) => ({ id: entry.id, label: entry.label, plan: { ...entry.plan } }));
+}
+
+/**
+ * Backlog 086c6656c5df: the per-turn cost the card proposes for a capped
+ * agent — the median of its own positive run costs, so one odd run never
+ * moves it; ten cents when it never ran with a cost yet. Like
+ * spentThisMonthCents, it mirrors packages/agents suggestCostCents.
+ * @param {Array<any>} runs @param {string} agentSourceKey @param {number} [fallbackCents]
+ */
+export function suggestedCostCents(runs, agentSourceKey, fallbackCents = 10) {
+  const fallback = Number.isInteger(fallbackCents) && fallbackCents > 0 ? fallbackCents : 10;
+  if (agentSourceKey === '') return fallback;
+  const costs = (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && typeof run === 'object' && run.agentSourceKey === agentSourceKey
+      && Number.isInteger(run.costCents) && run.costCents > 0)
+    .map((run) => run.costCents)
+    .sort((a, b) => a - b);
+  if (costs.length === 0) return fallback;
+  const middle = Math.floor(costs.length / 2);
+  return costs.length % 2 === 1 ? costs[middle] : Math.round((costs[middle - 1] + costs[middle]) / 2);
+}
+
+/** The «Nuovo agente» phrase box: one sentence describing the agent to create. */
+export const NEW_AGENT_PHRASE_HINT = 'Scrivi in una frase cosa deve fare: ti propongo nome, ruolo e istruzioni, e sotto restano i campi da compilare a mano.';
+/** The one-click fill of the AI proposal into the hand-written fields. */
+export const NEW_AGENT_USE_SUGGESTION_LABEL = 'Usa la proposta';
+
+/**
+ * Backlog 086c6656c5df: a new agent drafted from one phrase — the AI
+ * proposal beside the manual fields. Mirrors packages/agents
+ * suggestNewAgent: schedule words never name the agent, the role and the
+ * instructions keep the whole phrase. Null when the phrase says nothing.
+ * @param {unknown} phrase
+ */
+export function suggestNewAgentDraft(phrase) {
+  const cleaned = typeof phrase === 'string' ? phrase.replace(/\s+/g, ' ').trim() : '';
+  if (cleaned === '') return null;
+  const folded = cleaned.toLowerCase()
+    .replace(/[àáâä]/g, 'a').replace(/[èéêë]/g, 'e')
+    .replace(/[ìíîï]/g, 'i').replace(/[òóôö]/g, 'o')
+    .replace(/[ùúûü]/g, 'u');
+  const foldedWords = folded.split(' ').filter(Boolean);
+  const cleanedWords = cleaned.split(' ').filter(Boolean);
+  const dropped = new Set();
+  const days = new Set(['lunedi', 'martedi', 'mercoledi', 'giovedi', 'venerdi', 'sabato', 'domenica', 'giorno', 'settimana', 'mese', 'mattina']);
+  for (let i = 0; i < foldedWords.length; i += 1) {
+    const word = foldedWords[i].replace(/^[@,;:.–—-]+/, '').replace(/[,;:.–—-]+$/, '');
+    if (word === 'ogni' && days.has((foldedWords[i + 1] ?? '').replace(/[,;:.–—-]+$/, ''))) {
+      dropped.add(i); dropped.add(i + 1); i += 1;
+    } else if (word === 'una' && (foldedWords[i + 1] === 'volta' || foldedWords[i + 1] === 'tantum')) {
+      dropped.add(i); dropped.add(i + 1); i += 1;
+    } else if (word === 'quotidiano' || word === 'settimanale' || word === 'mensile' || word === 'subito' || word === 'adesso') {
+      dropped.add(i);
+    }
+  }
+  const kept = cleanedWords
+    .filter((word, index) => !dropped.has(index))
+    .map((word) => word.replace(/^[@,;:.–—-]+/, '').replace(/[,;:.–—-]+$/, ''))
+    .filter(Boolean)
+    .slice(0, 3);
+  const rawName = kept.length > 0 ? kept.join(' ') : cleanedWords.slice(0, 3).join(' ');
+  const name = (rawName === '' ? 'Nuovo agente' : rawName.replace(/^./, (char) => char.toUpperCase())).slice(0, 120);
+  return {
+    name,
+    role: `Esegue: ${cleaned}`.slice(0, 120),
+    instructions: `${cleaned} Prima di fare qualcosa chiede sempre l’ok.`.slice(0, 4000),
+  };
+}
 
 /** Italian message for a refused instruction. @param {unknown} error */
 export function assignErrorText(error) {
@@ -939,7 +1030,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     runs: /** @type {Array<any>} */ ([]),
     capped: false,
     unavailable: /** @type {Array<string>} */ ([]),
-    /** @type {Map<string, { text: string, busy: boolean, error: string, unclear: boolean, done: string, attempt: any }>} */
+    /** @type {Map<string, { text: string, cost: string, busy: boolean, error: string, unclear: { phrase: string, costPerRunCents: number } | null, done: string, attempt: any }>} */
     drafts: new Map(),
     /** slug being added, or null */
     adding: /** @type {string | null} */ (null),
@@ -965,7 +1056,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
      * (review #836 P2), never the fields as they are now. `field` names
      * the control its `error` belongs to, for the inline error, the
      * aria-invalid mark and the focus that follows the repaint.
-     * @type {{ key: string, name: string, role: string, instructions: string, cap: string, error: string, field: string | null, busy: boolean, pending: any } | null}
+     * @type {{ key: string, phrase: string, name: string, role: string, instructions: string, cap: string, error: string, field: string | null, busy: boolean, pending: any } | null}
      */
     newAgent: null,
     /**
@@ -1020,7 +1111,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   function draftOf(key) {
-    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', cost: '', busy: false, error: '', unclear: false, done: '', attempt: null });
+    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', cost: '', busy: false, error: '', unclear: null, done: '', attempt: null });
     return /** @type {any} */ (state.drafts.get(key));
   }
 
@@ -1229,11 +1320,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   /**
    * @param {any} agent @param {boolean} [once]
    * @param {{ phrase: string, costPerRunCents: number } | null} [fallback] the
-   *   «una volta» retry of an unclear phrase: it sends the words and cost of
-   *   the attempt that failed, never what the field holds now (review #1072
-   *   giro 2 P1: typing during «Invio…» must not change what is sent).
+   *   words and cost of the attempt that failed, never what the field holds
+   *   now (review #1072 giro 2 P1: typing during «Invio…» must not change
+   *   what is sent) — backlog 086c6656c5df: the confirmed proposal sends
+   *   exactly these, in one click.
+   * @param {{ cadence: string, weekday?: number | null, timeOfDay?: string, runAt?: string } | null} [plan]
+   *   the confirmed frequency, or null to let the server read the phrase.
    */
-  async function sendInstruction(agent, once = false, fallback = null) {
+  async function sendInstruction(agent, once = false, fallback = null, plan = null) {
     // Review #661: the shell space may have changed under this screen.
     // Never write to the space left behind: repaint on the active one.
     if (readSpace() !== state.space) {
@@ -1261,9 +1355,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     paint();
     draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase, costPerRunCents });
     try {
-      const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now() });
+      const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now(), ...(plan ? { plan } : {}) });
       draft.busy = false;
-      draft.unclear = false;
+      draft.unclear = null;
       // What was typed during «Invio…» is a new incarico in the making: only
       // the words that were sent leave the field.
       if (draft.text.trim() === phrase) {
@@ -1275,7 +1369,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // hand-written agent with no engine waits for it, a paused one stays
       // off until Riattiva.
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`
-        + (fallback !== null ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
+        + (once || plan?.cadence === 'once' ? ` ${PHRASE_ONCE_FALLBACK_NOTE}` : '')
         + (agent.engine === false ? ` ${AGENT_WAIT_ENGINE_DONE}` : '')
         + (agent.status === 'paused' ? ` ${agent.name} ${AGENT_PAUSED_DONE}` : '');
       if (await reload()) paint();
@@ -1284,17 +1378,15 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       scheduleFollowups();
     } catch (error) {
       draft.busy = false;
-      if (isPhraseUnclear(error) && !once) {
-        // Restyle 19/11 (Dan: pochi clic): an incarico with no «ogni quanto»
-        // runs once, now — the reading of a task given without a schedule —
-        // and the outcome says how to make it repeat. No extra press.
-        // The fallback travels as an argument of this one call, never in
-        // the draft: a failed retry cannot leave it set for the next
-        // incarico (review #1072 P1).
-        await sendInstruction(agent, true, { phrase, costPerRunCents });
-        return;
+      if (isPhraseUnclear(error) && !once && !plan) {
+        // Backlog 086c6656c5df: a phrase with no «ogni quanto» proposes a
+        // frequency or «una volta» to confirm — the operator picks, in one
+        // click, instead of the screen guessing. The failed words and cost
+        // travel in the draft: typing meanwhile never changes what a confirm
+        // sends (review #1072 P1).
+        draft.unclear = { phrase, costPerRunCents };
       } else if (isPhraseUnclear(error)) {
-        draft.unclear = true;
+        draft.unclear = draft.unclear ?? { phrase, costPerRunCents };
       } else {
         draft.error = assignErrorText(error);
       }
@@ -1408,6 +1500,21 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       costWrap.appendChild(el(documentNode, 'span', 'bo-agent-cost-label', `€ a giro · tetto ${card.capLabel ?? ''}`.replace(/ · tetto $/, '')));
       costWrap.appendChild(cost);
       form.appendChild(costWrap);
+      // Backlog 086c6656c5df: the per-turn cost proposed — one click fills
+      // the agent's own median and sends it, instead of typing it by hand.
+      const suggested = suggestedCostCents(state.runs, card.sourceKey);
+      const useCost = uiButton(documentNode, {
+        variant: 'secondary', small: true,
+        label: `Usa ${formatAmount(suggested, 'EUR')} a giro`,
+        attrs: { type: 'button', 'data-action': 'cost-suggest' },
+      });
+      useCost.disabled = draft.busy;
+      useCost.addEventListener('click', () => {
+        draft.cost = (suggested / 100).toFixed(2).replace('.', ',');
+        const release = uiHold(useCost, 'Invio…');
+        void sendInstruction(card, false).finally(() => release());
+      });
+      form.appendChild(useCost);
     }
     const send = uiButton(documentNode, { variant: 'primary', label: draft.busy ? 'Invio…' : 'Affida', attrs: { type: 'submit', 'data-action': 'talk' } });
     send.disabled = draft.busy;
@@ -1425,12 +1532,24 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     });
     box.appendChild(form);
     if (draft.unclear) {
+      // Backlog 086c6656c5df: the failed words stay proposed — a frequency
+      // or «una volta», each confirmed in one click with the frozen words
+      // and cost, never what the field holds now.
       const unclear = el(documentNode, 'div', 'bo-agent-unclear');
       unclear.appendChild(el(documentNode, 'p', null, PHRASE_UNCLEAR_NOTE));
-      const once = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Fallo una volta, adesso', attrs: { type: 'button', 'data-action': 'once' } });
-      once.disabled = draft.busy;
-      once.addEventListener('click', () => { void sendInstruction(card, true); });
-      unclear.appendChild(once);
+      const choices = el(documentNode, 'div', 'bo-agent-freq');
+      for (const proposal of suggestScheduleProposals()) {
+        const action = proposal.id === 'once' ? 'once' : `freq-${proposal.id}`;
+        const pick = uiButton(documentNode, { variant: 'secondary', small: true, label: proposal.label, attrs: { type: 'button', 'data-action': action } });
+        pick.disabled = draft.busy;
+        pick.addEventListener('click', () => {
+          const release = uiHold(pick, 'Invio…');
+          if (proposal.id === 'once') void sendInstruction(card, true, draft.unclear).finally(() => release());
+          else void sendInstruction(card, false, draft.unclear, proposal.plan).finally(() => release());
+        });
+        choices.appendChild(pick);
+      }
+      unclear.appendChild(choices);
       box.appendChild(unclear);
     }
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
@@ -1745,7 +1864,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // One caller key per open panel: a retry or a double click replays it.
     // `nameError`: the live check of Nome (review Muse #895), its own slot
     // beside the error of Crea (`error`/`field`), so one never erases the other.
-    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', field: null, nameError: '', busy: false, pending: null };
+    state.newAgent = { key: issueAdminKey(), phrase: '', name: '', role: '', instructions: '', cap: '', error: '', field: null, nameError: '', busy: false, pending: null };
     paint();
     focusIn('input[name="agent-name"]');
   }
@@ -1810,6 +1929,32 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       node.value = value;
       return node;
     };
+    // Backlog 086c6656c5df: a new agent from one phrase — the AI proposes
+    // name, role and instructions, the hand-written fields stay as the
+    // manual secondary. Typing never overwrites them: only «Usa la
+    // proposta» fills them, in one click.
+    const phrase = field('input', 'agent-phrase', form.phrase ?? '', 280, 'Es. Segue i lead e prepara il report ogni lunedì');
+    panel.appendChild(fieldRow('phrase', 'Descrivilo in una frase (facoltativo)', 'bo-agent-new-phrase', phrase, NEW_AGENT_PHRASE_HINT));
+    const suggestBox = el(documentNode, 'div', 'bo-agent-new-suggest');
+    panel.appendChild(suggestBox);
+    const paintSuggest = () => {
+      while (suggestBox.firstChild) suggestBox.removeChild(suggestBox.firstChild);
+      const draft = suggestNewAgentDraft(form.phrase);
+      if (!draft) return;
+      suggestBox.appendChild(el(documentNode, 'p', 'bo-agent-new-suggest-line', `Proposta: ${draft.name} — ${draft.role}`));
+      const use = uiButton(documentNode, { variant: 'secondary', small: true, label: NEW_AGENT_USE_SUGGESTION_LABEL, attrs: { type: 'button', 'data-action': 'use-suggestion' } });
+      if (locked || form.busy) use.disabled = true;
+      use.addEventListener('click', () => {
+        form.name = draft.name;
+        form.role = draft.role;
+        form.instructions = draft.instructions;
+        form.nameError = '';
+        paint();
+      });
+      suggestBox.appendChild(use);
+    };
+    phrase.addEventListener('input', () => { form.phrase = String(phrase.value ?? ''); paintSuggest(); });
+    paintSuggest();
     const name = field('input', 'agent-name', form.name, NEW_AGENT_LIMITS.name, 'Es. Auguri');
     const nameRow = fieldRow('name', 'Nome', 'bo-agent-new-name', name, 'È il nome che scrivi dopo la @ per dargli un incarico.');
     // backlog:f06d06f242d6: a name already in the team shows at once, while
