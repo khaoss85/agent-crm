@@ -258,6 +258,46 @@ test('250b528ea22a: the stamp shows the version served under schema.version', as
   assert.equal(missing.version, '', 'no version anywhere stamps empty, never throws');
   assert.match(missing.digest, /^[0-9a-f]{8}$/);
 });
+// backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): al primo
+// caricamento senza copia lo schema risponde 200 in meno di 1 s, ma la
+// lettura del boot viene scartata come vecchia (READ_STALE: route() alza il
+// token dopo populateNav) e mai rifatta — la copia non nasce mai e il menu
+// mente. Red before the cure: the stale boot read rejects and no copy is
+// ever stored.
+test('312dd81f83ba: a boot schema read dropped as stale is read again and stored as the copy', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error('stale'), { code: 'READ_STALE' });
+    return { version: '1' };
+  }, { space: () => 's1' });
+  assert.deepEqual(await cached('/api/schema'), { version: '1' }, 'the stale boot read is read again with a fresh key');
+  assert.equal(calls, 2, 'exactly one retry, never a loop');
+  assert.deepEqual(await cached('/api/schema'), { version: '1' }, 'the retried schema answers from the stored copy');
+  assert.equal(calls, 2, 'no new request once the copy is stored');
+});
+
+test('312dd81f83ba: a second stale drop is not retried forever', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    throw Object.assign(new Error('stale'), { code: 'READ_STALE' });
+  }, { space: () => 's1' });
+  await assert.rejects(cached('/api/schema'), /stale/, 'a read that stays stale still rejects');
+  assert.equal(calls, 2, 'one retry, then it stops');
+});
+
+test('312dd81f83ba: a hung schema read times out and the next request starts a fresh read', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    return new Promise(() => {});
+  }, { space: () => 's1', timeoutMs: 20 });
+  await assert.rejects(cached('/api/schema'), /timed out/, 'the hung boot read does not hang the wait');
+  assert.equal(calls, 1);
+  await assert.rejects(cached('/api/schema'), /timed out/, 'the timed-out flight was dropped');
+  assert.equal(calls, 2, 'the next wait starts a fresh read, never the hung flight');
+});
 
 test('c048bf6f2dd3: a failed renewal, a refused copy and a failing change say why — once each — and never break the read', async () => {
   let clock = 0;

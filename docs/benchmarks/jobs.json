@@ -1476,10 +1476,14 @@
       "id": "JTBD-PK-05",
       "section": "Package developer (Custom Package Authoring v1, M13)",
       "status": "validated end to end",
-      "summary": "accordo package scaffold <name> --apply creates, atomically, a minimal, empty local package — two files, an identity and five empty declarations — dry-run by default, and the result passes package validate, package inspect and package test with no manual edit (tests/package-scaffold.test.js → \"freshly scaffolded output passes validate, inspect and test with no manual edit\"; tests/package-test-command.test.js; docs/plans/dx3-package-scaffold.md). In the same breath, each published as its own limitation code: it invents no business logic — no record, action, policy, provider, capability, Admin section, Solution Plan or MCP tool (NO_DOMAIN_SEMANTICS); it performs no automatic composition — the one import into packages/domains/generated/index.js stays a human's deliberate edit (NO_COMPOSITION); it does no global identity-uniqueness verification — only the target directory is checked, and a duplicate identity is refused later by the registry at startup (IDENTITY_UNIQUENESS_NOT_CHECKED); and it does no remote installation or publication — nothing is downloaded, installed, signed, published or registered anywhere (NO_INSTALL_OR_PUBLISH). Conformance is not correctness: the output satisfies the framework contract and models no domain (CONFORMANCE_IS_NOT_CORRECTNESS)",
+      "summary": "accordo package scaffold <name> --apply creates, atomically, a minimal, empty local package — two files, an identity and five empty declarations — dry-run by default, and the result passes package validate, package inspect and package test with no manual edit (tests/package-scaffold.test.js → \"freshly scaffolded output passes validate, inspect and test with no manual edit\"; tests/package-test-command-1.test.js; tests/package-test-command-2.test.js; tests/package-test-command-3.test.js; tests/package-test-command-4.test.js; tests/package-test-command-5.test.js; docs/plans/dx3-package-scaffold.md). In the same breath, each published as its own limitation code: it invents no business logic — no record, action, policy, provider, capability, Admin section, Solution Plan or MCP tool (NO_DOMAIN_SEMANTICS); it performs no automatic composition — the one import into packages/domains/generated/index.js stays a human's deliberate edit (NO_COMPOSITION); it does no global identity-uniqueness verification — only the target directory is checked, and a duplicate identity is refused later by the registry at startup (IDENTITY_UNIQUENESS_NOT_CHECKED); and it does no remote installation or publication — nothing is downloaded, installed, signed, published or registered anywhere (NO_INSTALL_OR_PUBLISH). Conformance is not correctness: the output satisfies the framework contract and models no domain (CONFORMANCE_IS_NOT_CORRECTNESS)",
       "tests": [
         "tests/package-scaffold.test.js",
-        "tests/package-test-command.test.js"
+        "tests/package-test-command-1.test.js",
+        "tests/package-test-command-2.test.js",
+        "tests/package-test-command-3.test.js",
+        "tests/package-test-command-4.test.js",
+        "tests/package-test-command-5.test.js"
       ],
       "title": "Scaffold a new package from a template"
     },

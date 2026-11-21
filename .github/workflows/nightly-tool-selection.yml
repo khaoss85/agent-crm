@@ -17,7 +17,10 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  # Single writer of the verified npm cache (backlog:a6def994): the
+  # actions/cache save post step needs actions:write, otherwise the save is
+  # denied warning-only and the entry the ci.yml readers restore never exists.
+  actions: write
 
 concurrency:
   group: nightly-tool-selection
@@ -91,7 +94,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: 'npm'
+      # Single writer of the verified npm cache (backlog:a6def994): the full
+      # actions/cache restores at step time and its post step saves only on
+      # an exact-key miss, so the entry stays fresh with no save on a hit.
+      # The key and path are the contract the three ci.yml readers restore:
+      # setup-node's own cache key (node-cache-*) never matched them, so
+      # every PR restore missed. No `cache:` on setup-node on purpose: its
+      # internal key cannot be aligned with the readers.
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - if: steps.window.outputs.run == 'true'
         run: npm ci
       - if: steps.window.outputs.run == 'true'

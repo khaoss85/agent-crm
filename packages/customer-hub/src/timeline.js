@@ -465,6 +465,10 @@ function shapeAppointments(schedule) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    // backlog:ece111d80305: the meeting place rides the schedule read,
+    // so the customer timeline shows the place the booking stored.
+    location: row.location ?? null,
+    locationUrl: row.locationUrl ?? null,
     // backlog:5346ab531538: the history row of a cancellation.
     cancelReason: row.cancelReason ?? null,
     decidedAt: row.decidedAt ?? null,
