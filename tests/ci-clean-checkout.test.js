@@ -236,6 +236,10 @@ test('nightly writer and ci readers share one cache key and path (backlog:a6def9
   // check and missed every restore.
   const nightly = read('.github/workflows/nightly-tool-selection.yml');
   const ci = read('.github/workflows/ci.yml');
+  assert.ok(
+    read('.gitignore').split('\n').includes('/' + CACHE_PATH + '/'),
+    'the checkout-local npm cache must be ignored so CI measurement sees a clean tree',
+  );
   const cacheSetting = '  npm_config_cache: ${{ github.workspace }}/' + CACHE_PATH;
   for (const [name, workflow] of [['nightly', nightly], ['ci', ci]]) {
     assert.ok(workflow.split('\n').includes(cacheSetting), `${name} must point npm at its checkout-local cache`);
