@@ -613,10 +613,12 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
   async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
-    // Voce 785aeb28bd18: this runs in the second wave only (beginStatReads
-    // starts it after the team data lands), so the two reads below never
-    // start beside the roster. Only the statistic waits for the member
-    // count and the profile it formats with.
+    // Voce 785aeb28bd18: on entry this runs in the second wave only
+    // (beginStatReads starts it after the team data lands), so the two reads
+    // below never start beside the roster; the post-write reload() overlaps
+    // them with the data instead (same wrapper, one read per path). Either
+    // way only the statistic waits for the member count and the profile it
+    // formats with.
     const reads = Promise.allSettled([
       readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
       readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
@@ -690,6 +692,9 @@ export function createSpaziAccessiView(deps) {
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
+    // Voce 785aeb28bd18: the early roster paint below must never wear
+    // another load's agents — they land in the second stage.
+    state.agents = null;
     state.overrides = null;
     state.switchesUnavailable = null;
     state.stats = new Map();
@@ -777,11 +782,14 @@ export function createSpaziAccessiView(deps) {
   }
 
   /**
-   * The data the page paints: role, team, agents and switches. The statistic
-   * is not awaited here — it fills in with {@link loadStats}.
-   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   * Voce 785aeb28bd18 (verifica Mac 20/11 sul live c089949: effective da
+   * sola sta in 0,2-0,6 s ma con le 7 letture della prima ondata arriva
+   * sempre ultima a 2,5-5 s, e il roster aspetta): the roster half of the
+   * data — role and team. The page paints as soon as this half lands, never
+   * behind agents, switches, the fix count or the statistic.
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any> }} reads
    */
-  async function loadCore(reads) {
+  async function loadRoster(reads) {
     const context = await reads.contextRead;
     state.contextPending = false;
     state.selfSubject = selfSubjectOf(context);
@@ -814,6 +822,16 @@ export function createSpaziAccessiView(deps) {
           failed: 'Il team non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi: niente \u00E8 stato inventato al suo posto.',
         });
     }
+  }
+
+  /**
+   * Voce 785aeb28bd18: agents and switches fill the second paint, beside
+   * the roster already on screen — a slow effective never holds the team.
+   * The statistic is not awaited here either — it fills in with
+   * {@link loadStats}.
+   * @param {{ agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   */
+  async function loadRest(reads) {
     // backlog:33782ba68747: agents sit beside people; a failed or absent
     // read leaves the Team exactly as it was.
     state.agents = await reads.agentsRead;
@@ -853,10 +871,18 @@ export function createSpaziAccessiView(deps) {
     // shares one coalescing wrapper like the entry load above.
     const readsClient = coalesceSpaceReads(client);
     const reads = beginReads(space, readsClient);
-    await loadCore(reads);
-    // Voce 785aeb28bd18: the card statistic follows the data here too —
-    // never beside the roster.
-    await loadStats(beginStatReads(space, reads, readsClient));
+    // Voce 785aeb28bd18 (review indipendente su #1086, P2): overlap the
+    // waves here only — start the card-statistic reads before the team data
+    // lands (same coalescing wrapper: one read per path still holds), then
+    // land the roster first and the statistic after. This path has no paint
+    // in between (the caller repaints once on the fresh state), so
+    // serializing here would bill the refusal repaint core+stat instead of
+    // max(core,stat) as on main. The entry refresh() keeps the deferred
+    // start so the roster still paints first.
+    const stats = beginStatReads(space, reads, readsClient);
+    await loadRoster(reads);
+    await loadRest(reads);
+    await loadStats(stats);
     state.statsPending = false;
   }
 
@@ -1364,7 +1390,11 @@ export function createSpaziAccessiView(deps) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-ai-panel' });
     section.appendChild(el(doc, 'h3', { text: '\u2726 Cosa pu\u00F2 fare l\u2019AI' }));
     if (state.overrides === null) {
-      section.appendChild(el(doc, 'p', { text: state.switchesUnavailable ?? 'Permessi non disponibili.', cls: 'bo-muted' }));
+      // Voce 785aeb28bd18: the roster paints before effective lands, so the
+      // AI panel waits honestly beside it — a read still out is «Leggo…»,
+      // never a failure (mirrors the team tiles' «Leggo canali e
+      // calendario…» while the statistic is out).
+      section.appendChild(el(doc, 'p', { text: state.switchesUnavailable ?? 'Leggo i permessi AI…', cls: 'bo-muted' }));
       box.appendChild(section);
       return;
     }
@@ -1513,6 +1543,68 @@ export function createSpaziAccessiView(deps) {
     lastPaint = childrenOf();
   }
 
+  // Voce 785aeb28bd18 (review indipendente su #1112, P2): the fill-in
+  // paints below replace whole panels while the operator may be typing —
+  // typing never replaces DOM nodes, so the mount guards cannot see it and
+  // a late paint would silently clear the invite form or a removal reason.
+  // Unsubmitted field values (and focus) therefore survive those paints:
+  // snapshotted from the live DOM before, restored onto the fresh nodes
+  // after, keyed by tag and aria-label. Only childNodes/tagName/value/focus
+  // are used — real-DOM surface, so the tests exercise the same path. The
+  // first paint after resetLoadState keeps fresh-state semantics (a form
+  // consumed by its submit reopens empty); only the fill-in paints on the
+  // same state preserve drafts.
+  function snapshotDrafts() {
+    const drafts = [];
+    const walk = (node) => {
+      for (const child of node?.childNodes ?? []) {
+        if (child !== null && typeof child === 'object'
+          && (child.tagName === 'INPUT' || child.tagName === 'SELECT' || child.tagName === 'TEXTAREA')) {
+          drafts.push({
+            tag: child.tagName,
+            label: typeof child.getAttribute === 'function' ? child.getAttribute('aria-label') : null,
+            value: typeof child.value === 'string' ? child.value : '',
+            focused: doc !== null && doc.activeElement === child,
+          });
+        }
+        walk(child);
+      }
+    };
+    walk(mount);
+    return drafts;
+  }
+  function restoreDrafts(drafts) {
+    if (!Array.isArray(drafts) || drafts.length === 0) return;
+    const used = new Set();
+    const labelOf = (node) => (typeof node.getAttribute === 'function' ? node.getAttribute('aria-label') : null);
+    const walk = (node) => {
+      for (const child of node?.childNodes ?? []) {
+        if (child !== null && typeof child === 'object'
+          && (child.tagName === 'INPUT' || child.tagName === 'SELECT' || child.tagName === 'TEXTAREA')) {
+          const index = drafts.findIndex((entry, at) => !used.has(at)
+            && entry.tag === child.tagName && entry.label === labelOf(child));
+          if (index !== -1) {
+            used.add(index);
+            try {
+              child.value = drafts[index].value;
+            } catch {
+              // A field that refuses its draft never breaks the paint.
+            }
+            if (drafts[index].focused) {
+              try {
+                child.focus();
+              } catch {
+                // Focus is a courtesy: the draft above is what must survive.
+              }
+            }
+          }
+        }
+        walk(child);
+      }
+    };
+    walk(mount);
+  }
+
   function paint() {
     refusalPainted = false;
     liveMenuWraps.length = 0;
@@ -1587,18 +1679,14 @@ export function createSpaziAccessiView(deps) {
     const hasSpace = resetLoadState(space);
     const reads = hasSpace ? beginReads(space, readsClient) : null;
     // Voce 785aeb28bd18: the card statistic starts only after the data below
-    // landed and painted — never beside the roster. The flag flips in the
-    // settlement turn, before the data paint below, so a statistic that
-    // already landed paints as data, never as pending.
-    let statsDone = false;
+    // landed and painted — never beside the roster. (Review indipendente su
+    // #1086, P3: the statsDone pre-render flip is gone — the statistic can
+    // no longer land before the first data paint, so the dead branch went
+    // with it and the first paint below is always stats-pending.)
     let stats = null;
     const startStats = () => {
       if (stats !== null || reads === null) return stats;
       stats = beginStatReads(space, reads, readsClient);
-      stats.statsRead.then(
-        () => { statsDone = true; },
-        () => { statsDone = true; },
-      );
       return stats;
     };
     // backlog:1a96094db71d: on entry the page paints at once — tabs,
@@ -1610,17 +1698,16 @@ export function createSpaziAccessiView(deps) {
       render();
     }
     const before = childrenOf();
-    // backlog:2de01913d276: the data paints as soon as its reads land; the
-    // statistic (connectors, customers, profile) follows when the slowest
-    // one lands instead of holding the page (verifica 13/11: 7,6 s).
-    if (reads !== null) await loadCore(reads);
-    const count = await countRead;
+    // Voce 785aeb28bd18 (verifica Mac 20/11 sul live c089949 con #1086:
+    // effective arriva ultima a 2,5-5 s e il roster aspetta): the roster —
+    // role and team only — paints as soon as its reads land, never behind
+    // agents, switches, the fix count or the statistic (verifica 13/11:
+    // 7,6 s for the same hold on the whole data).
+    if (reads !== null) await loadRoster(reads);
     // Only the newest refresh decides the loading state: an older one
     // landing late never lifts a newer one's skeleton.
     if (mine !== generation) return;
-    if (statsDone) state.statsPending = false;
     state.loading = false;
-    if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
     // Paint only while the mount still holds this screen: what it held
     // when the reads started, or what this view painted since (a menu
     // opened meanwhile). Anything else is another screen: stay out.
@@ -1628,6 +1715,20 @@ export function createSpaziAccessiView(deps) {
     if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
     if (reads === null) return;
+    // Voce 785aeb28bd18: agents, switches and the badge fill the second
+    // paint beside the roster already on screen — from this load's reads,
+    // never a reread. «Da sistemare» lands here, after the roster painted:
+    // it never holds the team, and the team never waits for it.
+    await loadRest(reads);
+    const count = await countRead;
+    if (mine !== generation) return;
+    if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
+    if (!sameNodes(childrenOf(), lastPaint)) return;
+    // Review indipendente su #1112 (P2): the operator may be typing in the
+    // invite form or a removal reason while this fill-in paint lands.
+    const drafts = snapshotDrafts();
+    render();
+    restoreDrafts(drafts);
     // Voce 785aeb28bd18: the second wave starts only now that the data is
     // on screen — the roster never queued behind the card reads.
     const statsNow = startStats();
@@ -1649,7 +1750,11 @@ export function createSpaziAccessiView(deps) {
     if (space === '' || readActiveSpace().trim() !== space) return;
     if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
     if (!sameNodes(childrenOf(), lastPaint)) return;
+    // Review indipendente su #1112 (P2): same draft preservation as the
+    // fill-in paint above — the operator may still be typing.
+    const statDrafts = snapshotDrafts();
     render();
+    restoreDrafts(statDrafts);
   }
 
   async function renderView() {
