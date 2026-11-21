@@ -412,6 +412,11 @@ export function shapeCustomerCard(profile, subject) {
     customerCardContract: CUSTOMER_CARD_CONTRACT,
     subject: Object.freeze({ resource, id }),
     name,
+    // Voce 91c92940274c: la card porta archivedAt (e deletedAt), così la
+    // scheda di un contatto archiviato mostra Ripristina invece di
+    // Archivia. Null per i contatti vivi e per i profili di prima.
+    archivedAt: contact?.archivedAt ?? null,
+    deletedAt: contact?.deletedAt ?? null,
     headline,
     company: company ? Object.freeze({ id: company.id, name: company.name, placeholder: company.placeholder }) : null,
     phone,

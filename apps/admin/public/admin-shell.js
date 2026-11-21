@@ -1524,13 +1524,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         navigate(area.route);
       });
-      row.appendChild(link);
       // BO-F0-03: the Stato sync tab carries the badge with the real
       // "things to fix" count — the same text as the sidebar badge, so it
-      // is absent at zero and when the count is unknown.
+      // is absent at zero and when the count is unknown. Restyle
+      // 454f1189ff97: the badge sits before «Apri», so «Apri» stays at the
+      // right edge like on every other row.
       if (area.id === 'stato-sync' && badgeText !== '') {
         row.appendChild(el(doc, 'span', 'bo-badge', badgeText));
       }
+      row.appendChild(link);
     } else {
       row.appendChild(el(doc, 'span', 'bo-setting-coming', `In arrivo con ${area.story}`));
     }

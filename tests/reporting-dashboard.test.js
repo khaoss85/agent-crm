@@ -202,6 +202,9 @@ test('dashboard KPIs match hand-computed totals for 2026-10 EUR', (t) => {
   assert.equal(closing.display, formatMinor(14000, 'EUR'));
   assert.equal(closing.sub, '2 preventivi, 1 senza data attesa');
   assert.deepEqual(model.currencies.others, ['USD']);
+  // Restyle 54b9a2a2706f: the USD offer a6 (proposal, open) is never hidden.
+  assert.deepEqual(openValue.also, { display: formatMinor(5000, 'USD'), count: 1 });
+  assert.equal(wonPeriod.also, null, 'no USD won in the month: nothing added');
   assert.equal(model.truncated, false);
   assert.ok(Object.isFrozen(model) && Object.isFrozen(model.kpis) && Object.isFrozen(model.team));
 });
@@ -1040,4 +1043,15 @@ test('ed6bae5e5c0d: «Cosa noto» reads the period closed (1 won + 1 lost), like
   assert.deepEqual([alice.wonCount, alice.lostCount, alice.winRateDisplay], [1, 1, '50%'], 'the table reads the period: 1 won, 1 lost, 50%');
   const lostRate = model.insights.find((entry) => entry.id === 'lost-rate');
   assert.match(lostRate.text, /^1 preventivo perso su 2 chiusi \(50%\)/, 'the phrase reads the same period closed as the table, never the lifetime 4 of 6');
+});
+
+test('review Muse #1108: una valuta registrata che il formatter non conosce non rompe il dashboard', (t) => {
+  const database = fixtureDatabase(t);
+  const results = dashboardResults(database, QUERY_OCT);
+  const odd = { 'opportunity.currency': 'FOO', 'opportunity.stage': 'proposal', totalMinor: 700, count: 1 };
+  const withOdd = { ...results, byStage: { ...results.byStage, rows: [...results.byStage.rows, odd] } };
+  const model = buildDashboardModel(withOdd, [], QUERY_OCT, TS);
+  const openValue = model.kpis.find((kpi) => kpi.id === 'open-value');
+  assert.equal(openValue.display, formatMinor(26000, 'EUR'));
+  assert.deepEqual(openValue.also, { display: formatMinor(5000, 'USD'), count: 1 }, 'USD stays, FOO is left out');
 });
