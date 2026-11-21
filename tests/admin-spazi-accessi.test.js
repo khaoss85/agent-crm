@@ -2243,3 +2243,128 @@ test('785aeb28bd18: the card statistic reads start only after the team data land
   await flush();
   assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });
+
+// Voce 785aeb28bd18 (verifica Mac 20/11 sul live c089949 con #1086: NON
+// PASSA, peggio di prima — roster 2,5-5,0 s dopo lo scheletro su 5
+// caricamenti perché aspetta /api/space-permissions/effective, che da sola
+// sta in 0,2-0,6 s ma con le 7 letture della prima ondata arriva sempre
+// ultima a 2,5-5 s; dopo le statistiche ogni caricamento rilegge le stesse
+// risorse): il roster si dipinge appena arriva il team, senza aspettare gli
+// interruttori né il conteggio «da sistemare», e un caricamento legge ogni
+// percorso una sola volta.
+test('785aeb28bd18: the roster paints while the switches read is still out, each path read once', async () => {
+  const pending = [];
+  const calls = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+    needsBySpace: { [SPACE]: 5 },
+    calls,
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
+  const releaseWhere = (wanted) => {
+    const keep = [];
+    for (const entry of pending.splice(0)) {
+      if (wanted(entry.path)) entry.release();
+      else keep.push(entry);
+    }
+    pending.push(...keep);
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // Only the team answers: the roster must already be on screen while the
+  // switches, the badge count and the agents are still out.
+  releaseWhere((path) => path === '/api/spine/context' || path === '/api/spine/memberships');
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the team data replaces the skeleton before effective lands');
+  assert.match(text(mount), /Team dell\u2019organizzazione/, 'the roster paints while the switches read is still out');
+  assert.ok(pending.some((entry) => entry.path.startsWith('/api/space-permissions/effective')), 'effective is still out when the roster paints');
+  assert.ok(!pending.some((entry) => isStat(entry.path)), 'the statistic still waits for the data');
+  // The switches and the badge fill in beside the roster, from the same
+  // load's reads — no reread of anything. Late followers (the badge's
+  // activity read starts only after its first two land) are released too.
+  for (let round = 0; round < 8 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    releaseWhere((path) => !isStat(path));
+    await flush();
+  }
+  assert.doesNotMatch(text(mount), /Leggo i permessi AI/, 'the switches fill their panel once effective lands');
+  assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-switch')), 'the AI switches are on screen');
+  assert.ok(pending.some((entry) => isStat(entry.path)), 'the statistic reads start once the data is in');
+  releaseWhere(() => true);
+  await done;
+  await flush();
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
+  const count = (wanted) => calls.filter((entry) => wanted(entry.path)).length;
+  assert.equal(count((path) => path === '/api/spine/memberships'), 1, 'the team is read once per load, badge included');
+  assert.equal(count((path) => path.startsWith('/api/space-permissions/effective')), 1, 'effective is read once per load');
+  assert.equal(count((path) => path === '/api/profile'), 1, 'the profile is read once per load');
+  assert.equal(count((path) => path.startsWith('/api/connectors?')), 1, 'the connectors are read once per load');
+  assert.equal(count((path) => path.startsWith('/api/customer-data/customers?')), 1, 'the customers are read once per load');
+});
+
+// Review indipendente su #1112 (P2 sul secondo tempo): un operatore che
+// scrive nell'invito mentre effective è fuori non perde il testo quando i
+// riempimenti arrivano — scrivere non sostituisce i nodi, quindi le guardie
+// del mount non lo vedono.
+test('785aeb28bd18: the fill-in paints keep the typed invite draft and focus', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [] },
+    customersBySpace: { [SPACE]: { total: 0, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
+  const releaseWhere = (wanted) => {
+    const keep = [];
+    for (const entry of pending.splice(0)) {
+      if (wanted(entry.path)) entry.release();
+      else keep.push(entry);
+    }
+    pending.push(...keep);
+  };
+  const { doc, mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  releaseWhere((path) => path === '/api/spine/context' || path === '/api/spine/memberships');
+  await flush();
+  const draftOf = (tag, label) => mount.findAll(tag)
+    .find((node) => node.getAttribute('aria-label') === label);
+  const subject = draftOf('input', 'Identificativo della persona da invitare');
+  const reason = draftOf('input', 'Motivo dell\u2019invito');
+  assert.ok(subject && reason, 'the roster paints with the invite form beside it');
+  // The operator types while effective and the badge are still out.
+  subject.value = 'nuova@example.com';
+  reason.value = 'deve vedere Presti';
+  doc.activeElement = subject;
+  for (let round = 0; round < 8 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    releaseWhere((path) => !isStat(path));
+    await flush();
+  }
+  assert.equal(draftOf('input', 'Identificativo della persona da invitare').value, 'nuova@example.com', 'the second paint keeps the typed email');
+  assert.equal(draftOf('input', 'Motivo dell\u2019invito').value, 'deve vedere Presti', 'the second paint keeps the typed reason');
+  assert.ok(draftOf('input', 'Identificativo della persona da invitare').__focused, 'focus stays in the field');
+  releaseWhere(() => true);
+  await done;
+  await flush();
+  assert.equal(draftOf('input', 'Identificativo della persona da invitare').value, 'nuova@example.com', 'the statistic paint keeps the typed email too');
+});
