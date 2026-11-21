@@ -377,6 +377,41 @@ test('a cancelled booking never sends', async (t) => {
   assert.equal(composed.api.state.sendCalls, 0);
 });
 
+// backlog:f2e52f14 (review rev-agent-crm-1111-9650fe25f247, P2): the replay of
+// a live rebooked row compared and re-issued the reminder under the original
+// sourceKey instead of the resolved key, so an identical retry after a
+// reminded rebook 409d APPOINTMENTS_LOG_CONFLICT or duplicated the reminder.
+// The retry replays the live winner with the winner's reminder identity.
+test('f2e52f14: a retry after a reminded rebook replays the live winner with the same reminder', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  const request = bookingRequest(connectionKey, { sourceKey: 'gym:reminder:rebook' });
+  const first = await book(composed, now, request);
+  assert.equal(first.replayed, false);
+  await advanceAppointment(
+    { appointments: composed.modules.get('appointment').service, actor: USER, now },
+    first.appointment,
+    'cancelled',
+    'the customer called it off',
+  );
+  const rebooked = await book(composed, now, request);
+  assert.equal(rebooked.replayed, false);
+  assert.equal(rebooked.appointment.sourceKey, 'gym:reminder:rebook:rebook-2');
+  assert.notEqual(rebooked.appointment.id, first.appointment.id);
+  // The identical retry resolves past the cancelled row onto the live winner:
+  // replayed, no third row, no 409, same reminder identity.
+  const retried = await book(composed, now, request);
+  assert.equal(retried.replayed, true);
+  assert.equal(retried.appointment.id, rebooked.appointment.id);
+  assert.equal(retried.reminder?.replayed, true);
+  assert.equal(retried.reminder?.task?.id, rebooked.reminder?.task?.id);
+  const { appointments, tasks } = services(composed);
+  assert.equal((await appointments.listWhere({})).length, 2);
+  assert.equal((await tasks.listWhere({})).length, 2);
+});
+
 test('a booking that names an unapproved template is refused before anything is written', async (t) => {
   const composed = compose();
   t.after(() => composed.database.close());

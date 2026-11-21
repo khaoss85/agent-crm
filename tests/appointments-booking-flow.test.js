@@ -1549,6 +1549,30 @@ test('f2e52f14: a confirm on a cancelled slot with a changed claim books instead
   assert.equal(service.rows.length, 2);
 });
 
+// backlog:f2e52f14 (review rev-agent-crm-1111-9650fe25f247, P2): nextRebookKey
+// with Number(match[1])+1 sticks at 2^53, so resolveBookingKey looped forever
+// on a cancelled :rebook-9007199254740992 key. The suffix is refused naming
+// sourceKey instead of hanging.
+test('f2e52f14: a confirm on a cancelled :rebook-2^53 key fails closed instead of hanging', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const key = 'gym:flow:1:rebook-9007199254740992';
+  const first = await cap.confirmBooking({ ...booking(), sourceKey: key, spaceId: SPACE, confirmed: true });
+  assert.equal(first.appointment.sourceKey, key);
+  await cap.cancelAppointment({ id: first.appointment.id, reason: 'Il cliente ha disdetto' });
+  // Terminates: the resolver refuses the un-advancable suffix instead of
+  // re-reading the same cancelled row forever.
+  await assert.rejects(
+    cap.confirmBooking({ ...booking(), sourceKey: key, spaceId: SPACE, confirmed: true }),
+    (error) => {
+      assert.equal(error?.code, 'VALIDATION_ERROR');
+      assert.equal(error?.details?.field, 'sourceKey');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 1, 'no row is written when the key cannot advance');
+});
+
 // backlog:f2e52f14: the cancelled row keeps its key — cancel-by-key stays
 // idempotent and a reschedule by the old key still refuses as terminal.
 test('f2e52f14: the cancelled row keeps answering cancel-by-key and refuses reschedule', async () => {

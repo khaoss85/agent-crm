@@ -815,8 +815,20 @@ function replayOrConflict(existing, submitted) {
  */
 function nextRebookKey(sourceKey) {
   const match = /:rebook-(\d+)$/.exec(sourceKey);
-  if (match) return `${sourceKey.slice(0, match.index)}:rebook-${Number(match[1]) + 1}`;
-  return `${sourceKey}:rebook-2`;
+  if (!match) return `${sourceKey}:rebook-2`;
+  // The counter must advance at any size: Number(match[1]) + 1 rounds back
+  // onto the same value at 2^53, and the resolver would re-read the same
+  // cancelled row forever. BigInt always advances; a suffix already at or
+  // above the safe-integer bound is refused naming the field instead of
+  // looping — live chains count 2, 3, … and never arrive here, so only a
+  // caller-supplied giant suffix can trip it.
+  if (!Number.isSafeInteger(Number(match[1]))) {
+    throw new ValidationError(
+      'sourceKey names a rebook suffix at or above the safe integer bound, so the next key cannot advance',
+      { field: 'sourceKey' },
+    );
+  }
+  return `${sourceKey.slice(0, match.index)}:rebook-${(BigInt(match[1]) + 1n).toString()}`;
 }
 
 /**
@@ -1113,19 +1125,12 @@ export async function bookAppointment(context, request) {
       // the same key and replays the winner instead of writing a second
       // booking.
       const resolved = await resolveBookingKey(appointments, input.sourceKey);
-      if (resolved.existing) {
-        // A stable shape on every path: the replay answers with the same keys the
-        // fresh booking does. With a reminder named, the reminder is re-issued
-        // through work — which replays the identical reminder rather than
-        // duplicating it, and heals a booking whose reminder was never created —
-        // or fails APPOINTMENTS_REMINDER_UNAVAILABLE when no reminder handle is
-        // composed, exactly like the fresh path.
-        return {
-          appointment: replayOrConflict(resolved.existing, submitted),
-          reminder: await replayReminder(context, { input, source }),
-          replayed: true,
-        };
-      }
+      // The replay and the fresh write both ride the resolved key: a retried
+      // confirm after a reminded rebook resolves past the cancelled row onto
+      // the live winner, so the submitted comparison and the reminder replay
+      // must use the winner's identities — never the requested key's, whose
+      // reminder identity names the cancelled past and would 409 or
+      // duplicate the reminder.
       const keyedInput = resolved.sourceKey === input.sourceKey ? input : { ...input, sourceKey: resolved.sourceKey };
       // The reminder identities ride the stored key, like the booking does:
       // a rebooked slot owns its own reminder, never its cancelled past's.
@@ -1137,6 +1142,26 @@ export async function bookAppointment(context, request) {
       const keyedReminderKey = keyedInput.sourceKey === input.sourceKey
         ? reminderKey
         : (keyedInput.remindAt === null ? null : reminderSourceKey(keyedInput.sourceKey));
+      // Only the reminder identity rides the key: the stored winner's row
+      // carries the resolved key's reminder identity, so the comparison must
+      // too — otherwise an identical retry after a reminded rebook reads as
+      // a different claim and 409s.
+      const keyedSubmitted = keyedReminderKey === submitted.reminderSourceKey
+        ? submitted
+        : { ...submitted, reminderSourceKey: keyedReminderKey };
+      if (resolved.existing) {
+        // A stable shape on every path: the replay answers with the same keys the
+        // fresh booking does. With a reminder named, the reminder is re-issued
+        // through work — which replays the identical reminder rather than
+        // duplicating it, and heals a booking whose reminder was never created —
+        // or fails APPOINTMENTS_REMINDER_UNAVAILABLE when no reminder handle is
+        // composed, exactly like the fresh path.
+        return {
+          appointment: replayOrConflict(resolved.existing, keyedSubmitted),
+          reminder: await replayReminder(context, { input: keyedInput, source }),
+          replayed: true,
+        };
+      }
       if (keyedInput.reminderChannel !== null) {
         reminderThreadKey(keyedInput.sourceKey);
         reminderMessageKey(keyedInput.sourceKey);
@@ -1186,8 +1211,10 @@ export async function bookAppointment(context, request) {
         // A winner that is already cancelled frees the key again: resolve
         // past it on the next pass instead of replaying a dead row.
         if (raced.status === CANCELLED_STATE) continue;
+        // The raced winner was stored under the resolved key, so the
+        // comparison rides the resolved identities too.
         return {
-          appointment: replayOrConflict(raced, submitted),
+          appointment: replayOrConflict(raced, keyedSubmitted),
           reminder: await replayReminder(context, { input: keyedInput, source }),
           replayed: true,
         };
