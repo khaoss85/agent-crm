@@ -162,6 +162,41 @@ export const CONNECTOR_CATALOG = Object.freeze([
 ]);
 
 /**
+ * Snapshot of the list data the `#/connettori` screen already read: the
+ * live adapters from `/api/schema` plus the connection rows of
+ * GET /api/connectors for one space. The detail (`#/connettori/<canale>`)
+ * reuses them so a warm open skips its own schema+connectors reads and only
+ * fetches the unit catalog for display labels (backlog:9a1c9a94).
+ *
+ * Module-local on purpose: both views live in the same page (`app.js`
+ * builds each once), so the list write and the detail read meet without a
+ * new storage key or prop threading. Tests reset it explicitly.
+ */
+let connectorListSnapshot = null;
+
+/**
+ * @param {{ spaceId: string, adapters: Array<any>, entries: Array<any>, channelsReady: boolean } | null} snap
+ */
+export function rememberConnectorListSnapshot(snap) {
+  connectorListSnapshot = snap !== null && typeof snap === 'object'
+    ? Object.freeze({
+      spaceId: typeof snap.spaceId === 'string' ? snap.spaceId : '',
+      adapters: Array.isArray(snap.adapters) ? snap.adapters : [],
+      entries: Array.isArray(snap.entries) ? snap.entries : [],
+      channelsReady: snap.channelsReady === true,
+    })
+    : null;
+}
+
+export function readConnectorListSnapshot() {
+  return connectorListSnapshot;
+}
+
+export function clearConnectorListSnapshot() {
+  connectorListSnapshot = null;
+}
+
+/**
  * The channel badge of every list row, like the Google rows above it: a
  * 2–3 letter tile with a timeline tint (`apps/admin/public/admin-ui.js`
  * names the same tints for the timeline chips; Telegram has no timeline
@@ -439,6 +474,14 @@ export function createConnectorsView(deps) {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(state.spaceId.trim())}`);
       state.entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
       state.loaded = true;
+      // The detail opens from here: leave the rows it needs behind so it
+      // can render without re-reading schema+connectors (backlog:9a1c9a94).
+      rememberConnectorListSnapshot({
+        spaceId: state.spaceId.trim(),
+        adapters: state.adapters,
+        entries: state.entries,
+        channelsReady: state.channelsReady,
+      });
     } catch (error) {
       state.loadError = errorOf(error);
     }

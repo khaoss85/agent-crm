@@ -2067,8 +2067,12 @@ select.bo-spazi-input { flex: none; }
 /* Supervisor design pass: Personalizzazione like prototype 02. */
 .bo-settings-tabs { margin-bottom: 26px; }
 .personalizzazione.panel { border: none; background: transparent; box-shadow: none; padding: 0 30px; max-width: none; }
-.personalizzazione .panel-title { margin: 0 0 22px; font-size: clamp(34px, 4.4vw, 46px); line-height: 1; letter-spacing: -.03em; }
-.personalizzazione .panel-title + .muted { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.personalizzazione .panel-title { margin: 0; font-size: clamp(34px, 4.4vw, 46px); line-height: 1; letter-spacing: -.03em; }
+/* backlog:ef0888bf5a3f: the settings subtitle stays visible on screen — the
+ * same lede as Spazi e accessi (.bo-spazi-lede), so Impostazioni,
+ * Personalizzazione and Spazi e accessi share one header with a visible
+ * subtitle. Never the visually-hidden rule the design pass left here. */
+.personalizzazione .panel-title + .muted { max-width: 640px; margin: 12px 0 22px; font-size: 16px; line-height: 1.5; color: var(--muted); }
 .bo-perso-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 24px; }
 .bo-perso-bar .tabs, .bo-perso-bar .toolbar { display: contents; }
 .bo-perso-bar .tab.ui-btn, .bo-perso-bar .tab { height: 34px; padding: 0 12px; border-radius: 9px; border: none; background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; box-shadow: none; }

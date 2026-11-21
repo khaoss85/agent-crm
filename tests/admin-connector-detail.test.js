@@ -32,7 +32,7 @@ import {
   renewalSection,
   statusLabel,
 } from '../apps/admin/public/admin-connector-detail.js';
-import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
+import { CONNECTOR_CATALOG, clearConnectorListSnapshot, readConnectorListSnapshot, rememberConnectorListSnapshot } from '../apps/admin/public/admin-connectors.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -497,6 +497,82 @@ test('hostile server text stays text, never markup', async () => {
   const html = mount.innerHTML ?? '';
   assert.ok(!html.includes('<img src=x'), 'hostile account is text, never an element');
   assert.ok(!html.includes('<script>'), 'hostile adapter is text, never an element');
+});
+
+test('warm open reuses list data: fewer reads than a cold open (backlog:9a1c9a94)', async () => {
+  const adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }];
+  const renderDetail = async ({ calls, storageValue = 'presti', extra = {} }) => {
+    const doc = createFakeDocument();
+    const mount = createMount(doc);
+    await createConnectorDetailView({
+      doc,
+      mount,
+      client: stubClient({ calls }),
+      storage: { getItem: () => storageValue, setItem: () => {} },
+      navigate: () => {},
+      ...extra,
+    }).render('whatsapp');
+    await flush();
+    return mount;
+  };
+  // Cold open: no snapshot, the detail reads schema + catalog + connectors
+  // plus the profile and the activity payload for the renewal section.
+  const coldCalls = [];
+  const coldMount = await renderDetail({ calls: coldCalls });
+  assert.deepEqual(coldCalls, [
+    '/api/schema',
+    '/api/space-packages/catalog',
+    '/api/connectors?spaceId=presti',
+    '/api/profile',
+    '/api/connectors/activity?spaceId=presti',
+  ]);
+  assert.ok(coldMount.textContent.includes('+390200000001'));
+
+  // Warm open: the list already read adapters+rows for this space, so the
+  // detail skips the schema and connectors reads.
+  const warmCalls = [];
+  const warmMount = await renderDetail({
+    calls: warmCalls,
+    extra: { listSnapshot: { spaceId: 'presti', adapters, entries: [CONNECTION], channelsReady: true } },
+  });
+  assert.deepEqual(warmCalls, [
+    '/api/space-packages/catalog',
+    '/api/profile',
+    '/api/connectors/activity?spaceId=presti',
+  ]);
+  assert.ok(warmMount.textContent.includes('+390200000001'));
+  assert.ok(warmMount.textContent.includes('Cosa entra in Accordo'));
+
+  // Another space: the snapshot must not leak rows across spaces.
+  const otherCalls = [];
+  await renderDetail({
+    calls: otherCalls,
+    storageValue: 'altro-spazio',
+    extra: { listSnapshot: { spaceId: 'presti', adapters, entries: [CONNECTION], channelsReady: true } },
+  });
+  assert.deepEqual(otherCalls, [
+    '/api/schema',
+    '/api/space-packages/catalog',
+    '/api/connectors?spaceId=altro-spazio',
+    '/api/profile',
+    '/api/connectors/activity?spaceId=altro-spazio',
+  ]);
+
+  // The module snapshot the list stores is what the page reuses by default.
+  clearConnectorListSnapshot();
+  assert.equal(readConnectorListSnapshot(), null);
+  rememberConnectorListSnapshot({ spaceId: 'presti', adapters, entries: [CONNECTION], channelsReady: true });
+  assert.equal(readConnectorListSnapshot()?.spaceId, 'presti');
+  const defaultCalls = [];
+  const defaultMount = await renderDetail({ calls: defaultCalls });
+  assert.deepEqual(defaultCalls, [
+    '/api/space-packages/catalog',
+    '/api/profile',
+    '/api/connectors/activity?spaceId=presti',
+  ]);
+  assert.ok(defaultMount.textContent.includes('+390200000001'));
+  clearConnectorListSnapshot();
+  assert.equal(readConnectorListSnapshot(), null);
 });
 
 test('the Email detail offers Gmail Collega even without composed channels; other channels do not', async () => {

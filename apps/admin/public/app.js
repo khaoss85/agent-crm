@@ -160,6 +160,16 @@ function leaveForSpaceLogin(target) {
   }
 }
 
+// backlog:e1b3d56730fa: one queue for every read of the app — the page's
+// waves and the shell counters share it, so the in-flight peak stays within
+// SHELL_MAX_IN_FLIGHT (the same pilot bound Oggi already keeps). The schema
+// cache answers inside a held slot, so its inner fetch never adds past the
+// bound. schemaCachedRequest is only called at request time, once the module
+// below is fully evaluated.
+const sharedReads = createReadGate({
+  request: (path, options) => schemaCachedRequest(path, options),
+});
+
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
@@ -168,7 +178,7 @@ const moduleClient = {
   // backlog:e7bdcbcc6864: every rejection names its request, so the log
   // helpers tell a failed POST from a failed read.
   request(path, options = {}) {
-    return schemaCachedRequest(path, options).catch((error) => {
+    return sharedReads.request(path, options).catch((error) => {
       throw tagRequestFailure(error, options.method ?? 'GET', path);
     });
   },
@@ -549,6 +559,7 @@ import {
   ACTIVE_SPACE_KEY,
   SPACES_KEY,
   buildShellNav,
+  createReadGate,
   createShellView,
   keepSettingsTabs,
   loadClientCount,

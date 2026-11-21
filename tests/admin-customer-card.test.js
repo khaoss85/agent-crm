@@ -5817,6 +5817,19 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
+// backlog:c51dca86dc66 verifier-back (ritorno 1, 18/11): the report read the
+// team member's name where the contact's belongs — the title named the user
+// holding the slot instead of the customer. Repro: red on the code before
+// the cure (member-only title), green after (contact named like Oggi).
+test('repro:c51dca86dc66: the next appointment title names the contact, not the member', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: 'Lia Marroni' } }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.ok(title.textContent.includes('per Lia Marroni'), `the contact reads in the title, got: ${title.textContent}`);
+  assert.ok(!title.textContent.endsWith('con Coach Guido'), 'the member name never stands where the contact belongs');
+});
+
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
   const unreadableMember = {
     ...TIMELINE,
@@ -7199,4 +7212,36 @@ test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
   assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
+});
+
+// backlog:df364d3027e5: a future booking that was cancelled never reads as
+// fixed — no green «Appuntamento fissato» check for a slot that will not
+// happen; the cronologia keeps the «Appuntamento annullato» row instead.
+test('df364d3027e5: a future cancelled booking shows no fissato check, only the annullato row', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b9', status: 'cancelled', startsAt: '2099-11-20T10:00:00.000Z', endsAt: '2099-11-20T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-18T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 0, 'no green fissato check for a future slot that was cancelled');
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(cancelled.length, 1, 'the cancellation row stays');
+  assert.ok(cancelled[0].textContent.includes('Appuntamento annullato · Lezione di prova ·'), cancelled[0].textContent);
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'), 'no fixed row at all for the cancelled future');
 });
