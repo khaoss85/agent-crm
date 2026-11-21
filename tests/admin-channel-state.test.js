@@ -12,8 +12,9 @@
  * settings tab keeps the tab row on screen while its content loads.
  */
 
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
 import {
   CHANNEL_STATE_LABELS,
   NINE_CHANNEL_IDS,
@@ -29,6 +30,11 @@ import { SETTINGS_VIEW_AREAS, keepSettingsTabs } from '../apps/admin/public/admi
 import { paintScreenFailure, paintScreenLoading } from '../apps/admin/public/admin-navigation.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+
+// backlog:30f7ce51c87a: /api/profile is kept once per app start, but each
+// test paints with its own mocked answer, so the kept answer is dropped
+// before every test — otherwise one test's profile leaks into the next.
+beforeEach(() => { forgetCachedProfile(); });
 
 const flush = async (rounds = 8) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
