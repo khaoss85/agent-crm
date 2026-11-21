@@ -591,6 +591,16 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
 
 export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
 /**
+ * Backlog c61b882bbf2a (prova del Mac 18/11 sul live: la scheda restò sui
+ * riquadri scheletro oltre 60 s senza nessun messaggio mentre lo spazio si
+ * riavviava): oltre questa soglia con il profilo ancora in volo la scheda
+ * mostra un messaggio in italiano con un nuovo tentativo, al posto degli
+ * scheletri muti del profilo. Il messaggio sparisce quando i dati arrivano
+ * (la pittura finale non lo conosce). DECISION (to be confirmed): 10 s —
+ * oltre il budget della prima ondata (3 s) ma molto prima del minuto muto.
+ */
+export const PROFILE_SLOW_MS = 10 * 1000;
+/**
  * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
  * spins without end — a run that answers nothing within the timeout refuses
  * with the retry code instead of hanging the section. The caller names the
@@ -1286,6 +1296,16 @@ export function createCustomerCardView(deps) {
   // where the host allows it, so an idle process never waits on it.
   const firstWaveWait = typeof deps.firstWaveWait === 'function'
     ? deps.firstWaveWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
+  // Backlog c61b882bbf2a: the slow-profile clock — its own seam like the
+  // first-wave budget above, so tests fire it without real time and the
+  // load backstop never sits among the screen's user-facing `wait` pauses.
+  // Unref'd where the host allows it, so an idle process never waits on it.
+  const profileSlowWait = typeof deps.profileSlowWait === 'function'
+    ? deps.profileSlowWait
     : (ms) => new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
       if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
@@ -6621,10 +6641,17 @@ export function createCustomerCardView(deps) {
     // A partial paint is a courtesy: if it ever throws, the scheda waits for
     // the full answer like before instead of failing the read.
     let partials = firstVisit;
+    // Backlog c61b882bbf2a: the slow-profile watch — the last partial paint,
+    // so the threshold repaint says the same data with the notice added.
+    let lastPartial = null;
+    let lastPending = PART_NAMES_PENDING();
+    let profileSlow = false;
     const partialPaint = (partial, pending) => {
+      lastPartial = partial;
+      lastPending = pending;
       if (!partials || renderToken !== cardRenderToken || pending.size === 0) return;
       try {
-        paintPartial(key, resource, id, partial, pending);
+        paintPartial(key, resource, id, partial, pending, profileSlow);
       } catch (error) {
         // Review Muse #835 (P2): the cause reaches on-call — name, code and
         // the space only, never a value — so a stalled progressive load is
@@ -6647,6 +6674,22 @@ export function createCustomerCardView(deps) {
       if (known !== null) emitTitle(known);
     }
     partialPaint(null, PART_NAMES_PENDING());
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, repaint the same partial with the notice — a newer render or
+    // a landed profile makes this a noop, so the notice never outlives the
+    // wait. Only a first visit shows skeletons, so only it watches. Like
+    // every courtesy paint, a hostile clock never fails the read.
+    if (firstVisit) {
+      try {
+        void profileSlowWait(PROFILE_SLOW_MS).then(() => {
+          if (renderToken !== cardRenderToken || !lastPending.has('profile')) return;
+          profileSlow = true;
+          partialPaint(lastPartial, lastPending);
+        }, () => {});
+      } catch {
+        // No notice: the full answer still lands like before.
+      }
+    }
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
     } catch (error) {
@@ -7267,8 +7310,9 @@ export function createCustomerCardView(deps) {
    * @param {string} key @param {string} resource @param {string} id
    * @param {any} partial what has landed, or null for nothing yet
    * @param {Set<string> | null} pending the reads still in flight, null for all
+   * @param {boolean} [profileSlow] the profile read passed its threshold
    */
-  function paintPartial(key, resource, id, partial, pending) {
+  function paintPartial(key, resource, id, partial, pending, profileSlow = false) {
     const waiting = pending ?? PART_NAMES_PENDING();
     if (partial?.cardError) return;
     if (partial?.card) {
@@ -7282,6 +7326,7 @@ export function createCustomerCardView(deps) {
         reloadEnrichment: enrichmentReloader(key, resource, id),
         pipelines: partial?.pipelines ?? [],
         pending: waiting,
+        profileSlow,
       });
     } finally {
       pendingDrafts = null;
@@ -7372,6 +7417,7 @@ export function createCustomerCardView(deps) {
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
     services = null,
     pending = null,
+    profileSlow = false,
   }) {
     // backlog:0d68c387: the listino names behind the booked service keys —
     // the booking menu's list, or an empty map (slug words) while it loads.
@@ -7433,15 +7479,39 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     const skeleton = (col, cls, title) => section(col, cls, skeletonSection, title);
-    if (waits('card', 'profile', 'timeline')) skeleton(left, '', 'Azioni rapide');
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, the profile-gated skeletons would sit mute (live 18/11: oltre
+    // 60 s). One notice speaks for all of them — in Italian, with a retry
+    // that re-reads the scheda — and the other skeletons stay off, so no
+    // mute grey box waits on the profile. Sections gated on other reads
+    // keep their own skeletons: they are not the profile's wait.
+    const slowProfile = profileSlow === true && waits('profile');
+    let slowNoticeShown = false;
+    /** @param {any} col */
+    const profileSlowNotice = (col) => section(col, 'bo-scheda-card-profile-slow', (box) => {
+      box.setAttribute('aria-busy', 'true');
+      box.setAttribute('data-loading', 'true');
+      box.appendChild(el('h4', undefined, 'Profilo'));
+      box.appendChild(el('p', 'bo-muted', 'Il caricamento del profilo sta impiegando più del previsto.'));
+      box.appendChild(schedaRetryButton());
+      return true;
+    });
+    // The first profile-gated skeleton becomes the notice; the rest stay
+    // off while it speaks, and everything repaints from the data the moment
+    // it lands (the settled paint never sets profileSlow).
+    const skeletonOrNotice = (col, cls, title) => {
+      if (!slowProfile) { skeleton(col, cls, title); return; }
+      if (!slowNoticeShown) { slowNoticeShown = true; profileSlowNotice(col); }
+    };
+    if (waits('card', 'profile', 'timeline')) skeletonOrNotice(left, '', 'Azioni rapide');
     else {
       section(left, '', quickActions, card, {
         resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
       }, { numbers: schedaNumbers(card, profile, timeline) });
     }
-    if (waits('profile', 'timeline')) skeleton(left, '', 'Identità collegate');
+    if (waits('profile', 'timeline')) skeletonOrNotice(left, '', 'Identità collegate');
     else section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
-    if (waits('card', 'profile')) skeleton(left, '', 'Dettagli');
+    if (waits('card', 'profile')) skeletonOrNotice(left, '', 'Dettagli');
     else section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
     // section, never the scheda — like enrichment above.
@@ -7476,7 +7546,7 @@ export function createCustomerCardView(deps) {
     // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
     // prototype has not got.
     if (waits('calls', 'timeline', 'profile')) {
-      skeleton(right, 'bo-scheda-ai', '✦ Recap');
+      skeletonOrNotice(right, 'bo-scheda-ai', '✦ Recap');
     } else {
       section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
         card, calls, callsError, timeline, timelineError, profile, profileError,
