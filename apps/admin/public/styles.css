@@ -731,7 +731,7 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px;
 }
-.bo-setting-label { font-size: 14px; font-weight: 700; }
+.bo-setting-label { font-size: 14px; font-weight: 700; flex: 1 1 auto; }
 .bo-setting-link { font-size: 13px; font-weight: 700; color: var(--accent); }
 .bo-setting-coming { font-size: 12px; color: var(--dim); }
 
@@ -3105,3 +3105,8 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 
 /* Verifica Mac 20/11: «Link riunione» nella finestra appuntamento solo con Luogo Online. */
 .bo-offer-field[hidden] { display: none; }
+/* Restyle e47da0d6655e: le offerte fuori da questa pipeline non sono più un link minuscolo — un richiamo con conteggio e valore aperto. */
+.pipeline-switch .pipeline-off-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; }
+.pipeline-switch .pipeline-off-toggle::after { content: "▾"; font-size: 10px; color: var(--dim); }
+.pipeline-switch .pipeline-off-toggle[aria-expanded="true"]::after { content: "▴"; }
+.pipeline-switch .pipeline-off-toggle:hover { border-color: var(--ink); }

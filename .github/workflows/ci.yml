@@ -44,6 +44,11 @@ on:
 # enough to hide a real defect through ten consecutive green local runs — it did, in the
 # first wave of this milestone. One file, read by `nvm`, by `actions/setup-node` and by a
 # human, is how the two stay the same number.
+# Each checkout has its own npm cache. The previous shared ~/.npm could
+# change during the nightly archive while another runner installed packages.
+env:
+  npm_config_cache: ${{ github.workspace }}/.ci-npm-cache
+
 jobs:
   # The PR gate. `push` is limited to `main` above, so this is every change
   # that is not yet merged: `npm run check`, the tests of the touched files
@@ -71,13 +76,25 @@ jobs:
     concurrency:
       group: ci-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    # Same billing-lock routing as `verify` below.
+    # Cure lane (backlog:55ca4e0cb76d): a PR with the `cure` label heals a red
+    # main, so it must not queue 3 h behind ordinary PRs on the two shared
+    # runners. The reserved `accordo-cure` runner is NOT registered yet (only
+    # the two `accordo-ci` runners answer: #1093 asked for `accordo-cure` and
+    # queued 24 h, then cancelled), so every PR stays on today's `accordo-ci`
+    # runners. A cure PR still jumps the server queue via CI_FAST_HEAVY_NAME
+    # below (rank 0). When the Leader Server registers the third runner,
+    # point the `cure` label back at `[self-hosted, accordo-cure]`.
     runs-on: [self-hosted, accordo-ci]
     env:
       # The PR gate waits in the CI server's own queue too (scripts/ci-heavy.sh): in the shared
       # queue it waited 20-25 min behind other factories while holding a runner, and main's
       # light checks queued for hours (server, 08/11, decision of the Leader).
       ACCORDO_HEAVY_QUEUE: ci
+      # Cure lane (backlog:55ca4e0cb76d): the heavy name of a `cure` PR
+      # contains `main-red`, which the server queue ranks 0
+      # (heavy-job-priority.json `*/main-red-*`), ahead of every other
+      # waiter. Any other PR keeps `fast`: today's name and rank.
+      CI_FAST_HEAVY_NAME: ${{ contains(github.event.pull_request.labels.*.name, 'cure') && 'fast-main-red-cure' || 'fast' }}
       ACCORDO_TEST_POSTGRES: '1'
       # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
       # cluster per runner, on the port the runner's .env names (ACCORDO_PG_PORT).
@@ -88,7 +105,8 @@ jobs:
       # public repo's self-hosted runner): clean:true wipes the worktree only,
       # never `.git`, so `.git/hooks`, `.git/info/attributes` or `.git/config`
       # keys from a previous job can persist on the runner dir — fresh dir per
-      # job stays a follow-up (no npm cache since backlog:6cc2b44b).
+      # job stays a follow-up (read-only npm cache restore since
+      # backlog:a6def994, no save since backlog:6cc2b44b).
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -96,12 +114,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No npm cache on purpose (backlog:6cc2b44b): on 19/11 the
+          # No setup-node cache on purpose (backlog:6cc2b44b): on 19/11 the
           # cache-save post step (tar + zstdmt over ~GBs) held this job
           # 13-17 min on both runners while PR lanes queued. Without
-          # `cache:` there is no post step at all; `npm ci` downloads
-          # fresh, still far cheaper than the save. Same as bo-shots,
-          # which already runs setup-node without cache.
+          # `cache:` there is no post step at all. The read-only restore
+          # below (backlog:a6def994) brings the saving back with no save.
+      # Read-only npm cache restore (backlog:a6def994): actions/cache/restore
+      # has no post step, so the slow save stays gone; `npm ci` reuses the
+      # verified cache on a hit and downloads fresh otherwise. The nightly
+      # workflow still saves, so the entry stays fresh.
+      - name: Restore the verified npm cache (read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-npm-cache
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -132,6 +159,19 @@ jobs:
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
+      # Cure routing, visible in the job log (backlog:55ca4e0cb76d): which
+      # runner this PR took and which heavy name (queue rank) the gate runs
+      # under. Every PR reads runner `accordo-ci` until the reserved
+      # `accordo-cure` runner is registered; a `cure` PR reads heavy name
+      # `fast-main-red-cure` (rank 0 in the server queue), any other PR `fast`.
+      - name: Cure routing (runner and queue rank)
+        env:
+          # Labels via env, never interpolated into run: (script injection:
+          # a label name could break out of the echo). The shell reads only
+          # $CURE_LABELS, which GitHub passes as a value, not as script.
+          CURE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
+        run: |
+          echo "cure routing: labels=[$CURE_LABELS] runner=accordo-ci heavy-name=$CI_FAST_HEAVY_NAME"
       # The whole gate behind one lock: `scripts/ci-fast.sh` runs the nine
       # phases sequentially (check, touched tests and gtm, pilot browser,
       # smoke, recipe replay, truth agreement, verifier-fixture drift,
@@ -218,8 +258,8 @@ jobs:
     steps:
       # Clean checkout every job (backlog:f16911e3): no checkout reuse;
       # clean:true wipes the worktree only, never the runner's `.git`
-      # (fresh dir per job stays a follow-up; no npm cache since
-      # backlog:6cc2b44b).
+      # (fresh dir per job stays a follow-up; read-only npm cache restore
+      # since backlog:a6def994, no save since backlog:6cc2b44b).
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -228,9 +268,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No npm cache on purpose (backlog:6cc2b44b): the cache-save
+          # No setup-node cache on purpose (backlog:6cc2b44b): the cache-save
           # post step held jobs 13-17 min on 19/11; without `cache:`
-          # there is no post step at all.
+          # there is no post step at all. Read-only restore below
+          # (backlog:a6def994).
+      # Read-only npm cache restore (backlog:a6def994): actions/cache/restore
+      # has no post step, so the slow save stays gone; `npm ci` reuses the
+      # verified cache on a hit and downloads fresh otherwise.
+      - name: Restore the verified npm cache (read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-npm-cache
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -442,9 +492,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          # No npm cache on purpose (backlog:6cc2b44b): the cache-save
+          # No setup-node cache on purpose (backlog:6cc2b44b): the cache-save
           # post step held jobs 13-17 min on 19/11; without `cache:`
-          # there is no post step at all.
+          # there is no post step at all. Read-only restore below
+          # (backlog:a6def994).
+      # Read-only npm cache restore (backlog:a6def994): actions/cache/restore
+      # has no post step, so the slow save stays gone; `npm ci` reuses the
+      # verified cache on a hit and downloads fresh otherwise.
+      - name: Restore the verified npm cache (read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-npm-cache
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this

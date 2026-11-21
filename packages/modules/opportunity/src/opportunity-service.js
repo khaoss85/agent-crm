@@ -11,6 +11,7 @@ import {
   requiredString,
 } from '../../../core/src/validation.js';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_TYPES } from '../../../core/src/schema.js';
+import { assertContactLinkable } from '../../contact/src/contact-service.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 
@@ -256,6 +257,11 @@ export class OpportunityService {
     const contactId = optionalString(input.contactId, 'contactId');
     if (contactId) {
       const contact = await Promise.resolve(this.contacts.get(contactId));
+      // Voce 91c92940274c (review P1 su #1077, giro 2): un'offerta non si
+      // lega mai a un contatto archiviato o eliminato — quel contatto non
+      // si eliminerebbe più (409 CONTACT_HAS_OPPORTUNITIES) e l'offerta
+      // punterebbe a una riga che nessuna vista mostra.
+      assertContactLinkable(contact);
       if (contact.companyId !== companyId) {
         throw new ValidationError('contactId must belong to companyId', { contactId, companyId });
       }

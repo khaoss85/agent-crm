@@ -107,6 +107,22 @@ export function defineCustomerMatchPolicy(config = {}) {
       if (row.email) {
         const contact = await reader.contactByEmail(row.email);
         if (contact) {
+          // Voce 91c92940274c (review P1 su #1077, giro 2): un contatto
+          // archiviato o eliminato non si riusa in silenzio per nuova
+          // posta in arrivo — legare il messaggio alla riga invisibile
+          // nasconde attività viva al team (perdita di visibilità, non
+          // dedup). La policy resta pura (niente scritture): risponde
+          // «da decidere» con il contatto come candidato, e un umano
+          // decide (ripristino o nuova riga).
+          if (contact.archivedAt != null || contact.deletedAt != null) {
+            return {
+              outcome: 'unresolved',
+              rule: 'contact-email',
+              subject: null,
+              candidates: [{ resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email }],
+              evidence: 'exact normalized email names an archived or eliminated contact: a human decides, never a silent reuse',
+            };
+          }
           return {
             outcome: 'matched',
             rule: 'contact-email',

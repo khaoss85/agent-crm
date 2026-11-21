@@ -1592,12 +1592,39 @@ export function createPipelineBoard(deps) {
    * @param {number} offPipeline
    * @param {boolean} truncated whether the read hit BOARD_LIMIT
    */
+  /**
+   * Restyle e47da0d6655e: whether an offer off this board still holds open
+   * value — by the type of its stage on its own board, or, with no board,
+   * by its canonical stage (never won, paid, lost or closed).
+   * @param {Array<Record<string, any>>} pipelines @param {Record<string, any>} record
+   */
+  function offPipelineOpen(pipelines, record) {
+    const own = (pipelines ?? []).find((entry) => entry?.name === record.pipelineKey || entry?.key === record.pipelineKey);
+    const stage = own && Array.isArray(own.stages) ? own.stages.find((entry) => entry?.key === record.pipelineStage) : null;
+    if (stage) return stage.type === 'open' || stage.type === 'renewal';
+    const canonical = String(record.stage ?? '').toLowerCase();
+    return canonical !== '' && !/^(won|lost|paid|closed|closed[-_]won|closed[-_]lost|vinta|persa|pagato)$/.test(canonical);
+  }
+
   function renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated) {
     const wrap = el(doc, 'span', { class: 'pipeline-off' });
     const one = offPipeline === 1;
+    // Restyle e47da0d6655e (verifica Mac 20/11): the count says what those
+    // offers are worth — their value still open, per currency (never
+    // summed across currencies), read with each offer's own board when it
+    // has one, its canonical stage otherwise — so an open offer outside
+    // this board is never only a small link.
+    const openOff = new Map();
+    for (const record of records) {
+      if (record.pipelineKey === pipelineName || !Number.isSafeInteger(record.valueCents)) continue;
+      if (typeof record.currency !== 'string' || record.currency === '') continue;
+      if (!offPipelineOpen(pipelines, record)) continue;
+      openOff.set(record.currency, (openOff.get(record.currency) ?? 0) + record.valueCents);
+    }
+    const openText = [...openOff.entries()].sort().map(([currency, total]) => formatAmount(total, currency)).join(' + ');
     const toggle = el(doc, 'button', {
-      class: 'link-button',
-      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline`,
+      class: 'link-button pipeline-off-toggle',
+      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline${openText === '' ? '' : ` · ${truncated ? 'almeno ' : ''}${openText} aperti`}`,
       attrs: { type: 'button', 'data-action': 'show-off-pipeline', 'aria-expanded': 'false' },
     });
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });

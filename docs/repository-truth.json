@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "9e01d1c2fcdb7b37c4eacd7d98eb8e2e8dec1d167bcc93e5ad178d7d1a726d1b",
+  "sourceSha": "b83c27a55122d39a1baf29aa5417ebf3d61c4f1d62df64911b2d86b3c077612a",
   "environment": {
     "node": "v24.10.0",
     "pg": "resolvable"
@@ -262,7 +262,7 @@
       "value": "package_native",
       "authority": "reference.composition",
       "evidence": [
-        "package:customer-data@7",
+        "package:customer-data@8",
         "packageContract:1",
         "provides:channel-sender@1|customer-channel-origins@1|customer-identity@1|customer-profile@1",
         "resources:13"
@@ -374,7 +374,7 @@
       "value": "package_native",
       "authority": "reference.composition",
       "evidence": [
-        "package:work@2",
+        "package:work@3",
         "packageContract:1",
         "provides:follow-up@1",
         "resources:2"
@@ -1040,5 +1040,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "969975f47707c6569c1b7291bb79dff549b0189e23e999a76000715ebfc59e45"
+  "fingerprint": "6b74b0a73e0df8e35a9ac79db287d1b568e5c4be5cdce9cb16550b6a657a69a3"
 }
