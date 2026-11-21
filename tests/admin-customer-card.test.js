@@ -6815,6 +6815,48 @@ test('c1649d1d: the scheda Storia stati names who moved the offer from which sta
     'an unlabelled move still reads the generic Italian line, like the detail');
 });
 
+// backlog:acd136b3cd5d: a move the audit cannot attribute to anyone reads
+// with no author segment — never «da —» — in Storia stati and in the
+// cronologia head alike.
+test('a stage move by an unknown author reads with no «da —»', async () => {
+  const audit = [
+    {
+      action: 'opportunity.updated', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+    {
+      action: 'opportunity.updated', createdAt: '2026-11-08T12:00:00.000Z',
+      data: { owner: 'marco' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(!text.includes('da —'), 'no dangling author dash anywhere on the card');
+  assert.ok(text.includes('da Richiesta info a Prova · '),
+    'the labelled move still reads from which stage to which, with no author');
+  assert.ok(text.includes('Cambio di stato · '),
+    'the unlabelled move still reads the generic Italian line, with no author');
+});
+
+// backlog:f733f95742a1: a timeline that fits one page shows no
+// «Mostra precedenti»; one row past the page counts the single remainder.
+test('the timeline hides «Mostra precedenti» on a single page and counts one remainder', async () => {
+  const message = (index) => ({
+    entry: 'message', id: `m${index}`, channel: 'email', direction: 'inbound', sync: 'received',
+    body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
+    occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
+  });
+  const older = (mount) => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
+  const full = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 20, truncated: false, items: Array.from({ length: 20 }, (_, index) => message(index)) } } }));
+  assert.equal(older(full), undefined, 'no button when one page holds everything');
+  const plusOne = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 21, truncated: false, items: Array.from({ length: 21 }, (_, index) => message(index)) } } }));
+  assert.equal(older(plusOne)?.textContent, 'Mostra precedenti · 1 di 1', 'the button counts the single remainder');
+});
+
 test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Storia stati names a team actor from the roster, never «utente»', async () => {
   const mount = await renderCard(stubClient({
     profile: PLACED_QUOTE_PROFILE,
