@@ -90,14 +90,14 @@
       "dir": "customer-data",
       "graph": "contract1",
       "version": 8,
-      "fingerprint": "c370b7b220e34784ad38a56b79c939ae262fd9f7afafec23a24b226802b78d8f"
+      "fingerprint": "d49aa6af25a8c7424f9ae8a7d008398e6c33a11fbf0d0704841ed11ca3141adf"
     },
     {
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract2",
       "version": 8,
-      "fingerprint": "61cea5cb8eafa09b6162271114745dd8f5e2b8a90a4887c1d9806ddc34eb8d65"
+      "fingerprint": "276e8a6bb04d10d2570f19b61d2318955021ef336d8321ca0d10d063821503a2"
     },
     {
       "name": "customer-hub",
@@ -306,15 +306,15 @@
       "name": "work",
       "dir": "work",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "716471060f2efe5786baf5c929d6f02debdff1e51e5b42cbe739ffcc084fdff2"
+      "version": 3,
+      "fingerprint": "9a5ea2fe8b12726512f9a0e7fac9320d0ab5c3cb1747156ba81a19c8358053b3"
     },
     {
       "name": "work",
       "dir": "work",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "8f74a4977a3596c353e4acdf16186e84cffd915c91fade2567c86fdb0b92f15e"
+      "version": 3,
+      "fingerprint": "c700d104d22f837de2bd6b9d092e179ff4f9eb1e6a82a48e31dabca803a5f3b2"
     }
   ]
 }

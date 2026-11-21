@@ -14,7 +14,9 @@ import { createCustomerDataPackage } from '../packages/customer-data/src/index.j
 // Version 8 (backlog:91c92940274c): archive/restore/remove joins the surface
 // (archivedAt/deletedAt in the row shape and every view filter,
 // tombstone-safe sync match, no recreate of archived rows).
-test('customer-data is version 8 since archive/restore/remove joined the surface', () => {
+// Version 8 (backlog:d547f65e): unlinking a wrong merge writes one cronologia
+// note per separated member through the declared work follow-up@1 edge.
+test('customer-data is version 8 since archive/restore/remove and the unmerge timeline note joined the surface', () => {
   const pkg = createCustomerDataPackage();
   assert.equal(pkg.version, 8);
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),

@@ -1097,3 +1097,18 @@ test('6d0df351: with the pilot adapters Connettori offers Collega only where ser
   assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
     'unknown adapters: the previous answer stays');
 });
+
+test('verifica Mac 20/11 (fdc711253dbd): «Dettagli» di una skill apre il suo dettaglio, senza errori', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const view = createPersonalizzazioneView({ doc, mount, client: stubClient({ rows: [] }), navigate: (hash) => navigated.push(hash), spaceId });
+  view.test.state.tab = 'skill';
+  await view.render();
+  await flush();
+  const detail = mount.findAll('a').find((node) => node.textContent === 'Dettagli');
+  assert.ok(detail, 'the skill card has its «Dettagli» link');
+  assert.equal(detail.getAttribute('href'), '#/personalizzazione/skill/debug-crm-run');
+  detail.listeners.click[0]({ preventDefault() {} });
+  assert.ok(navigated.includes('#/personalizzazione/skill/debug-crm-run'), JSON.stringify(navigated));
+});
