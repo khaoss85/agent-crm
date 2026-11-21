@@ -802,6 +802,59 @@ function replayOrConflict(existing, submitted) {
 }
 
 /**
+ * The rebooking suffix for a source key a cancelled booking still names
+ * (backlog:f2e52f14): a cancelled row keeps its key — cancel-by-key stays
+ * idempotent and the customer's history keeps pointing at it — but the key
+ * is free for a new booking. The next free key derives deterministically
+ * from the requested one, so a retried confirm converges on the same row:
+ * `key` when free, else `key:rebook-2`, `key:rebook-3`, and so on. A key
+ * that already carries the suffix keeps counting, so a rebooked booking
+ * that is cancelled and booked again never collides with its own past.
+ *
+ * @param {string} sourceKey the requested booking key
+ */
+function nextRebookKey(sourceKey) {
+  const match = /:rebook-(\d+)$/.exec(sourceKey);
+  if (!match) return `${sourceKey}:rebook-2`;
+  // The counter must advance at any size: Number(match[1]) + 1 rounds back
+  // onto the same value at 2^53, and the resolver would re-read the same
+  // cancelled row forever. BigInt always advances; a suffix already at or
+  // above the safe-integer bound is refused naming the field instead of
+  // looping — live chains count 2, 3, … and never arrive here, so only a
+  // caller-supplied giant suffix can trip it.
+  if (!Number.isSafeInteger(Number(match[1]))) {
+    throw new ValidationError(
+      'sourceKey names a rebook suffix at or above the safe integer bound, so the next key cannot advance',
+      { field: 'sourceKey' },
+    );
+  }
+  return `${sourceKey.slice(0, match.index)}:rebook-${(BigInt(match[1]) + 1n).toString()}`;
+}
+
+/**
+ * Resolve the key a booking is stored under (backlog:f2e52f14): the first
+ * free key in the rebook chain, or the live row that already claims it. A
+ * cancelled row holds neither the slot (findOverlap skips it) nor the key:
+ * resolving past it is what lets a confirm on a freed slot create a live
+ * appointment instead of replaying the cancelled row as `booked` or
+ * refusing 409 over a claim nobody holds anymore. Every candidate is proven
+ * against the key bound, so a long chain fails closed naming the field
+ * instead of truncating two bookings onto one identity.
+ *
+ * @param {any} appointments the resolved appointment module service
+ * @param {string} sourceKey the requested booking key
+ * @returns {Promise<{sourceKey: string, existing: any|null}>}
+ */
+async function resolveBookingKey(appointments, sourceKey) {
+  let candidate = validateSourceKey(sourceKey, 'sourceKey');
+  for (;;) {
+    const found = (await appointments.listWhere({ sourceKey: candidate }))[0] ?? null;
+    if (!found || found.status !== CANCELLED_STATE) return { sourceKey: candidate, existing: found };
+    candidate = validateSourceKey(nextRebookKey(candidate), 'sourceKey');
+  }
+}
+
+/**
  * The deterministic business identity of the reminder follow-up: one booking
  * owns at most one reminder, and a retried booking replays the same reminder
  * rather than scheduling a second.
@@ -1060,74 +1113,124 @@ export async function bookAppointment(context, request) {
   // (A busy timeout past the winner's commit, or a Postgres serialization
   // abort, surfaces a retryable conflict whose retry re-reads the winner.)
   const runCritical = async () => {
-    const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
-    if (existing) {
-      // A stable shape on every path: the replay answers with the same keys the
-      // fresh booking does. With a reminder named, the reminder is re-issued
-      // through work — which replays the identical reminder rather than
-      // duplicating it, and heals a booking whose reminder was never created —
-      // or fails APPOINTMENTS_REMINDER_UNAVAILABLE when no reminder handle is
-      // composed, exactly like the fresh path.
-      return {
-        appointment: replayOrConflict(existing, submitted),
-        reminder: await replayReminder(context, { input, source }),
-        replayed: true,
-      };
-    }
+    // A lost unique-guard race whose winner was cancelled between the
+    // resolution and the insert resolves again instead of replaying a dead
+    // row: every pass re-reads, so the loop ends on a free key, a live
+    // winner, or a throw. Three passes bound it — a pass either creates or
+    // meets a row another writer committed.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // A cancelled row holds neither the slot (findOverlap skips it) nor
+      // the key (backlog:f2e52f14): resolve past it to the first free key,
+      // or stop on the live row that claims it. A retried confirm derives
+      // the same key and replays the winner instead of writing a second
+      // booking.
+      const resolved = await resolveBookingKey(appointments, input.sourceKey);
+      // The replay and the fresh write both ride the resolved key: a retried
+      // confirm after a reminded rebook resolves past the cancelled row onto
+      // the live winner, so the submitted comparison and the reminder replay
+      // must use the winner's identities — never the requested key's, whose
+      // reminder identity names the cancelled past and would 409 or
+      // duplicate the reminder.
+      const keyedInput = resolved.sourceKey === input.sourceKey ? input : { ...input, sourceKey: resolved.sourceKey };
+      // The reminder identities ride the stored key, like the booking does:
+      // a rebooked slot owns its own reminder, never its cancelled past's.
+      // The derivations throw naming the bound when the derived key leaves
+      // no room — fail closed at booking time, like the request validation.
+      // The unchanged key reuses the reminder key derived up front, before
+      // any read or write, so an overlong requested key fails just as early
+      // as before.
+      const keyedReminderKey = keyedInput.sourceKey === input.sourceKey
+        ? reminderKey
+        : (keyedInput.remindAt === null ? null : reminderSourceKey(keyedInput.sourceKey));
+      // Only the reminder identity rides the key: the stored winner's row
+      // carries the resolved key's reminder identity, so the comparison must
+      // too — otherwise an identical retry after a reminded rebook reads as
+      // a different claim and 409s.
+      const keyedSubmitted = keyedReminderKey === submitted.reminderSourceKey
+        ? submitted
+        : { ...submitted, reminderSourceKey: keyedReminderKey };
+      if (resolved.existing) {
+        // A stable shape on every path: the replay answers with the same keys the
+        // fresh booking does. With a reminder named, the reminder is re-issued
+        // through work — which replays the identical reminder rather than
+        // duplicating it, and heals a booking whose reminder was never created —
+        // or fails APPOINTMENTS_REMINDER_UNAVAILABLE when no reminder handle is
+        // composed, exactly like the fresh path.
+        return {
+          appointment: replayOrConflict(resolved.existing, keyedSubmitted),
+          reminder: await replayReminder(context, { input: keyedInput, source }),
+          replayed: true,
+        };
+      }
+      if (keyedInput.reminderChannel !== null) {
+        reminderThreadKey(keyedInput.sourceKey);
+        reminderMessageKey(keyedInput.sourceKey);
+      }
 
-    const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-    // Owner holds come only from the composed calendar-sync handle — a
-    // request `busyBlocks` key is never read, so omitting or forging it
-    // changes nothing on the write path.
-    const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
-    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
-      [...held, ...blocks]);
-    if (conflict) {
-      throw overlapRefusal(input.teamMemberId, conflict);
-    }
+      const held = await appointments.listWhere({ teamMemberId: keyedInput.teamMemberId });
+      // Owner holds come only from the composed calendar-sync handle — a
+      // request `busyBlocks` key is never read, so omitting or forging it
+      // changes nothing on the write path.
+      const blocks = await ownerBlocksFor(context.calendarSync, keyedInput.teamMemberId, keyedInput.startsAt, keyedInput.endsAt);
+      const conflict = findOverlap({ teamMemberId: keyedInput.teamMemberId, startMs: keyedInput.startMs, endMs: keyedInput.endMs },
+        [...held, ...blocks]);
+      if (conflict) {
+        throw overlapRefusal(keyedInput.teamMemberId, conflict);
+      }
 
-    // The send target is proven before the first write: a fresh booking that
-    // names a channel that cannot send (unknown connection, unapproved
-    // template, malformed recipient) is refused here, not at the instant.
-    // A replay answers the stable shape without re-proving: the stored row
-    // already fixed the target, and the sweep enforces it again at fire
-    // time — so a revoked connection fails the send, never the replay.
-    if (input.reminderChannel !== null) {
-      await checkReminderSendable(context, { input });
-    }
+      // The send target is proven before the first write: a fresh booking that
+      // names a channel that cannot send (unknown connection, unapproved
+      // template, malformed recipient) is refused here, not at the instant.
+      // A replay answers the stable shape without re-proving: the stored row
+      // already fixed the target, and the sweep enforces it again at fire
+      // time — so a revoked connection fails the send, never the replay.
+      if (keyedInput.reminderChannel !== null) {
+        await checkReminderSendable(context, { input: keyedInput });
+      }
 
-    let appointment;
-    try {
-      appointment = await appointments.createManaged({
-        sourceKey: input.sourceKey,
-        ...submitted,
-        subjectLabel: input.subject.label,
-        status: APPOINTMENT_INITIAL,
-        reminderSourceKey: reminderKey,
-        reminderDueAt: input.remindAt,
-        reminderSentAt: null,
-        bookedAt: now,
-        decidedAt: null,
-        cancelReason: null,
-        actorType: who.type,
-        actorId: who.id,
-      }, { actor });
-    } catch (error) {
-      if (!isUniqueConflict(error)) throw error;
-      const raced = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
-      if (!raced) throw error;
-      return {
-        appointment: replayOrConflict(raced, submitted),
-        reminder: await replayReminder(context, { input, source }),
-        replayed: true,
-      };
-    }
+      let appointment;
+      try {
+        appointment = await appointments.createManaged({
+          sourceKey: keyedInput.sourceKey,
+          ...submitted,
+          subjectLabel: keyedInput.subject.label,
+          status: APPOINTMENT_INITIAL,
+          reminderSourceKey: keyedReminderKey,
+          reminderDueAt: keyedInput.remindAt,
+          reminderSentAt: null,
+          bookedAt: now,
+          decidedAt: null,
+          cancelReason: null,
+          actorType: who.type,
+          actorId: who.id,
+        }, { actor });
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await appointments.listWhere({ sourceKey: keyedInput.sourceKey }))[0];
+        if (!raced) throw error;
+        // A winner that is already cancelled frees the key again: resolve
+        // past it on the next pass instead of replaying a dead row.
+        if (raced.status === CANCELLED_STATE) continue;
+        // The raced winner was stored under the resolved key, so the
+        // comparison rides the resolved identities too.
+        return {
+          appointment: replayOrConflict(raced, keyedSubmitted),
+          reminder: await replayReminder(context, { input: keyedInput, source }),
+          replayed: true,
+        };
+      }
 
-    let reminder = null;
-    if (input.remindAt !== null) {
-      reminder = await createReminder(context, { input, source });
+      let reminder = null;
+      if (keyedInput.remindAt !== null) {
+        reminder = await createReminder(context, { input: keyedInput, source });
+      }
+      return { appointment, reminder, replayed: false };
     }
-    return { appointment, reminder, replayed: false };
+    throw new AppError(
+      'The booking store answered a unique conflict with no readable winner three times in a row: '
+      + 'the slot is refused instead of booked over unknown state.',
+      { code: 'APPOINTMENTS_STORAGE_INVALID', status: 500 },
+    );
   };
 
   const runInTransaction = bookingTransaction(appointments);
