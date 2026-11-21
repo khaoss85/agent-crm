@@ -699,12 +699,25 @@ export function createChannelSenderResolution({
           named = await reader.contactById(knownContact.id);
         } catch (error) {
           const gone = error instanceof NotFoundError || error?.code === 'NOT_FOUND';
+          if (gone) {
+            return senderUnresolved(sender, actor, {
+              rule: 'external-identity',
+              candidates: [knownSubjectHere],
+              evidence: `channel handle ${sender.system} names a contact that no longer exists: a human decides, never a silent reuse`,
+            });
+          }
+          // Voce 91c92940274c (review P1 giro 6): la causa del guasto
+          // viaggia con l'esito — solo token sicuri (nome/codice, mai il
+          // messaggio: può contenere dati del contatto). Così un guasto
+          // resta distinguibile dal triage di routine.
+          const causeName = error instanceof Error ? error.name : 'Error';
+          const causeCode = error !== null && typeof error === 'object' && 'code' in error && error.code != null
+            ? String(error.code) : null;
+          const cause = causeCode ? `${causeName}/${causeCode}` : causeName;
           return senderUnresolved(sender, actor, {
             rule: 'external-identity',
             candidates: [knownSubjectHere],
-            evidence: gone
-              ? `channel handle ${sender.system} names a contact that no longer exists: a human decides, never a silent reuse`
-              : `channel handle ${sender.system} names a contact that could not be read: a human decides, never a silent reuse`,
+            evidence: `channel handle ${sender.system} names a contact that could not be read (cause ${cause}): a human decides, never a silent reuse`,
           });
         }
         if (named && (named.archivedAt != null || named.deletedAt != null)) {

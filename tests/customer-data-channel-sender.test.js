@@ -623,6 +623,7 @@ test('voce 91c92940274c: the same handle stays undecided when the contact read f
   assert.equal(second.contact, null);
   assert.equal(second.rule, 'external-identity');
   assert.match(second.evidence, /could not be read/, 'the evidence names the failed read');
+  assert.match(second.evidence, /cause Error/, 'the evidence carries the safe failure cause, not the message');
   assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
     'the named contact stays a candidate for a human');
 
@@ -650,6 +651,7 @@ test('voce 91c92940274c: the same handle stays undecided when the named contact 
   assert.equal(second.contact, null);
   assert.equal(second.rule, 'external-identity');
   assert.match(second.evidence, /no longer exists/, 'the evidence names the missing contact');
+  assert.doesNotMatch(second.evidence, /cause /, 'an expected absence carries no failure cause');
   assert.deepEqual(second.candidates.map((candidate) => candidate.id), [first.contact.id],
     'the named contact stays a candidate for a human');
 
