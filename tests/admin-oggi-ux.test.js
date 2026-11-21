@@ -1150,3 +1150,84 @@ test('803d127c4458: with the server view in, a capped messages page still disclo
   assert.equal(seen[seen.length - 1], '#/customer-data?vista=tutti', 'Clienti opens on Tutti');
   assert.equal(takePendingClientiView(storage), 'tutti', 'the handoff stays as the fallback');
 });
+
+// ---------------------------------------------------------------------------
+// backlog:dbc80d21175d (verifica Mac 20/11: Oggi contava 7 messaggi in meno
+// in 2 caricamenti su 18) — al primo caricamento il conteggio e uguale a
+// quello letto subito dopo; se la lettura e parziale lo dice («almeno N»),
+// mai un numero piu basso come esatto.
+// ---------------------------------------------------------------------------
+
+test('dbc80d21175d: two back-to-back loads read the same count', async () => {
+  const paint = async () => {
+    const client = serverClient(repliesAnswer(17));
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+    await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+    return mount;
+  };
+  const first = await paint();
+  const second = await paint();
+  const head = (mount) => mount.querySelector('section[data-oggi-section="inbox"]').textContent;
+  assert.ok(head(first).includes('17 in attesa'), head(first));
+  assert.ok(head(second).includes('17 in attesa'), head(second));
+  assert.ok(!head(first).includes('almeno'), 'a complete read paints no floor');
+  assert.equal(
+    first.querySelector('.bo-oggi-recap').textContent,
+    second.querySelector('.bo-oggi-recap').textContent,
+    'the recap matches on both loads',
+  );
+});
+
+test('dbc80d21175d: a server answer without total or exactness is a floor, never a lower exact count', () => {
+  const items = [0, 1, 2].map((index) => ({
+    subject: { resource: 'contact', id: `q${index}` },
+    name: `Persona ${index}`, awaitingChannel: 'whatsapp',
+    awaitingText: 'Ciao', lastAwaitingAt: '2026-10-19T06:00:00.000Z',
+  }));
+  const noTotal = buildServerReplies({ items }, NOW);
+  assert.equal(noTotal.total, 3, 'the shown rows are the floor');
+  assert.equal(noTotal.totalIsExact, false, 'a missing total is never exact');
+  const noFlag = buildServerReplies({ items, total: 9 }, NOW);
+  assert.equal(noFlag.total, 9);
+  assert.equal(noFlag.totalIsExact, false, 'a missing flag is never exact');
+});
+
+test('dbc80d21175d: a partial server read paints «almeno N» in the head and the recap', async () => {
+  const client = serverClient({ ...repliesAnswer(9), totalIsExact: false, complete: false });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('almeno 9 in attesa'), section.textContent);
+  assert.ok(
+    mount.querySelector('.bo-oggi-recap').textContent.includes('almeno 9 messaggi da rispondere'),
+    mount.querySelector('.bo-oggi-recap').textContent,
+  );
+});
+
+test('dbc80d21175d: a refused view over a cut messages page paints a floor, never an exact lower count', async () => {
+  const messages = Array.from({ length: OGGI_READ_LIMIT + 1 }, (_, index) => ({
+    ...PERSON_MSG, id: `m-db-${index}`, conversationId: `c-db-${index}`,
+  }));
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) throw Object.assign(new Error('down'), { status: 409 });
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes(`almeno ${OGGI_READ_LIMIT} in attesa`), section.textContent);
+});
