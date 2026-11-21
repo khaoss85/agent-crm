@@ -139,10 +139,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the seven quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 7);
+test('the eight quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 8);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere', 'archiviati']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
