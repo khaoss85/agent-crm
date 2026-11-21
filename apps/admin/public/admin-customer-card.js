@@ -1891,16 +1891,18 @@ export function createCustomerCardView(deps) {
       if (text === '') say.setAttribute('hidden', '');
       else say.removeAttribute('hidden');
     };
-    const refusal = (error, failed) => {
-      // Review Muse #1107 (P2): the cause is logged before any special
-      // wording (name, code, status only — never the payload).
-      logWriteFailure(error);
+    const refusal = (error, failed, action) => {
+      // Only the named service verdict selects special wording. A bare
+      // 409/503 keeps its actual cause and the shared failure handling.
       const code = String(error?.code ?? error?.body?.error?.code ?? '');
-      if (code === 'CONTACT_HAS_OPPORTUNITIES' || error?.status === 409) {
+      if (code === 'CONTACT_HAS_OPPORTUNITIES') {
+        logWriteFailure(error);
         return 'Questo contatto ha offerte collegate: si può archiviare, non eliminare.';
       }
-      if (code === 'CONTACT_SERVICE_UNAVAILABLE' || error?.status === 503) {
-        return 'Archiviazione non ancora attiva su questo rilascio: riprova dopo l’aggiornamento.';
+      if (code === 'CONTACT_SERVICE_UNAVAILABLE') {
+        logWriteFailure(error);
+        const subject = { archive: 'Archiviazione non ancora attiva', restore: 'Ripristino non ancora attivo', delete: 'Eliminazione non ancora attiva' }[action];
+        return `${subject} su questo rilascio: riprova dopo l’aggiornamento.`;
       }
       return humanWriteError(error, { failed });
     };
@@ -1946,7 +1948,7 @@ export function createCustomerCardView(deps) {
         if (result.skipped) return;
         if (result.error) {
           busy(back, false);
-          tell(refusal(result.error, 'Contatto non ripristinato. Riprova più tardi.'));
+          tell(refusal(result.error, 'Contatto non ripristinato. Riprova più tardi.', 'restore'));
           return;
         }
         toast('Contatto ripristinato');
@@ -1968,7 +1970,7 @@ export function createCustomerCardView(deps) {
       if (result.skipped) return;
       if (result.error) {
         busy(archive, false);
-        tell(refusal(result.error, 'Contatto non archiviato. Riprova più tardi.'));
+        tell(refusal(result.error, 'Contatto non archiviato. Riprova più tardi.', 'archive'));
         return;
       }
       toast(`${name} archiviato`, false, {
@@ -1978,7 +1980,7 @@ export function createCustomerCardView(deps) {
             const undo = await write('restore', restore);
             if (undo.skipped) return;
             if (undo.error) {
-              toast(refusal(undo.error, 'Contatto non ripristinato: lo trovi in «Archiviati».'), true);
+              toast(refusal(undo.error, 'Contatto non ripristinato: lo trovi in «Archiviati».', 'restore'), true);
               return;
             }
             toast('Contatto ripristinato');
@@ -2014,7 +2016,7 @@ export function createCustomerCardView(deps) {
         busy(sure, false);
         confirmRow.setAttribute('hidden', '');
         drop.removeAttribute('hidden');
-        tell(refusal(result.error, 'Contatto non eliminato. Riprova più tardi.'));
+        tell(refusal(result.error, 'Contatto non eliminato. Riprova più tardi.', 'delete'));
         return;
       }
       toast(`${name} eliminato`);

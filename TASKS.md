@@ -1,5 +1,7 @@
 # Tasks
 
+- [x] Contact card archive follow-up (91c92940274c): integrate the service/card projection from #1077; restore refreshes the active card, named refusal codes select action-specific text, and unrelated 409/503 keep the shared error handling. Live verification and merge remain independently gated.
+
 The first unchecked item is the default next task for Codex.
 
 - [x] Reconcile the public product surface around separate Product Truth and Repository Truth layers: a human-first homepage and intent navigation, four JTBD-derived solution stories, first-class developer and coding-agent journeys, progressive product proof, a provenance-bearing deployment artifact and a regression gate for the retired authentication/tenancy/RBAC composite (`docs/plans/gtm-site-truth-reconciliation.md`, `docs/marketing/SITE_ARCHITECTURE.md`).
