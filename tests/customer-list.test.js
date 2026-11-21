@@ -849,9 +849,35 @@ test('the list names a finite count per view it can know, omitting the rest', as
   for (const id of ['nuovi-lead', 'clienti-attivi', 'ricontattare-oggi']) {
     assert.equal(byId[id].count, (await run({ vista: id })).total, `${id} counts what opening it shows`);
   }
-  // No subscription module composed: the renewal count stays absent, never a
-  // floor dressed as a total.
-  assert.ok(!('count' in byId['rinnovi-30-giorni']), 'an unknowable view names no count');
+  // No subscription module composed (seguito 19/11, decisione prodotto): the
+  // renewal view is not a view of this space — omitted, never a bare label
+  // and never a floor dressed as a total.
+  assert.ok(!('rinnovi-30-giorni' in byId), 'no subscription module, no renewal view served');
+});
+
+test('5af848afdb63: a view whose module the space lacks is not served, never bare', async () => {
+  // Seguito 19/11 (decisione prodotto del supervisore): «Rinnovi entro 30
+  // giorni» in uno spazio senza abbonamenti non si mostra — né con un numero
+  // finto, né con un'etichetta senza numero, né con un errore. Se il modulo
+  // c'è, il server manda il conteggio, anche 0.
+  const { contacts, companies, identities } = SCENE();
+  const without = fakeModules({ contacts, companies, identities });
+  const bare = await listCustomerRecords(
+    { modules: without, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name' });
+  assert.ok(!bare.views.some((view) => view.id === 'rinnovi-30-giorni'),
+    'no subscription module: the renewal view is not served, never bare');
+  // The subscription module composed, zero subscriptions held: the view is
+  // served with its count, 0.
+  const withSubs = {
+    get: (key) => (key === 'subscription' ? { service: { listWhere: async () => [] } } : without.get(key)),
+  };
+  const counted = await listCustomerRecords(
+    { modules: withSubs, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name' });
+  const rinnovi = counted.views.find((view) => view.id === 'rinnovi-30-giorni');
+  assert.ok(rinnovi, 'with the subscription module the renewal view is served');
+  assert.equal(rinnovi.count, 0, 'zero renewals read 0, never bare and never an error');
 });
 
 test('a view whose dependency is unreadable still answers without its count', async () => {
