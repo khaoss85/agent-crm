@@ -1,6 +1,11 @@
 // @ts-check
 
 import { NotFoundError, ValidationError } from './errors.js';
+import { OPPORTUNITY_STAGES } from './schema.js';
+
+const WON_STAGE_KEY = 'won';
+const LOST_STAGE_KEY = 'lost';
+const OPPORTUNITY_STAGE_KEYS = new Set(OPPORTUNITY_STAGES);
 
 export const SUPPORTED_PIPELINE_CONTRACT = 1;
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
@@ -202,4 +207,60 @@ export function orderedStages(pipeline) {
 /** @param {PipelineDefinition} pipeline @param {string} key */
 export function findStage(pipeline, key) {
   return pipeline.stages.find((stage) => stage.key === key) ?? null;
+}
+
+/**
+ * backlog:1adf95307b31 — one closed/won rule for the customer list and
+ * Reporting: with a pipeline the stage type decides (open/renewal hold
+ * value, won/paid close it — Pagato is won — lost closes it); without one
+ * the canonical stages decide (won/lost close, the open canonical stages
+ * hold value). Off-definition keys close too: drift the board shows aside
+ * never lands in a total.
+ * @param {PipelineDefinition | null} pipeline
+ * @param {unknown} value
+ */
+export function isOpenOfferStage(pipeline, value) {
+  if (pipeline !== null && pipeline !== undefined && Array.isArray(pipeline.stages)) {
+    const stage = typeof value === 'string'
+      ? pipeline.stages.find((entry) => entry !== null && typeof entry === 'object' && entry.key === value) ?? null
+      : null;
+    if (stage === null) return false;
+    return stage.type === 'open' || stage.type === 'renewal';
+  }
+  return typeof value === 'string' && value !== WON_STAGE_KEY && value !== LOST_STAGE_KEY
+    && OPPORTUNITY_STAGE_KEYS.has(value);
+}
+
+/**
+ * backlog:1adf95307b31 — the won side of the shared rule: won/paid with a
+ * pipeline, the canonical won stage without one.
+ * @param {PipelineDefinition | null} pipeline
+ * @param {unknown} value
+ */
+export function isWonOfferStage(pipeline, value) {
+  if (pipeline !== null && pipeline !== undefined && Array.isArray(pipeline.stages)) {
+    const stage = typeof value === 'string'
+      ? pipeline.stages.find((entry) => entry !== null && typeof entry === 'object' && entry.key === value) ?? null
+      : null;
+    if (stage === null) return false;
+    return stage.type === 'won' || stage.type === 'paid';
+  }
+  return value === WON_STAGE_KEY;
+}
+
+/**
+ * backlog:1adf95307b31 — the lost side of the shared rule: lost with a
+ * pipeline, the canonical lost stage without one.
+ * @param {PipelineDefinition | null} pipeline
+ * @param {unknown} value
+ */
+export function isLostOfferStage(pipeline, value) {
+  if (pipeline !== null && pipeline !== undefined && Array.isArray(pipeline.stages)) {
+    const stage = typeof value === 'string'
+      ? pipeline.stages.find((entry) => entry !== null && typeof entry === 'object' && entry.key === value) ?? null
+      : null;
+    if (stage === null) return false;
+    return stage.type === 'lost';
+  }
+  return value === LOST_STAGE_KEY;
 }

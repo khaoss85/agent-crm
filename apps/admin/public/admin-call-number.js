@@ -80,6 +80,7 @@ function numberLabel(entry) {
  *   numbers: Array<{number: string, held: boolean, systems: string[]}>,
  *   draft?: string | null,
  *   mode?: 'call' | 'save',
+ *   onCancel?: (() => void) | null,
  *   choose: (number: string, held: boolean) => Promise<string | null>,
  * }} deps `choose` saves (when needed) and starts the call; it answers
  *   null when done, or the Italian sentence to show in the window. With
@@ -167,7 +168,13 @@ export function openCallNumberPanel(deps) {
   const cancel = el('button', undefined, 'Annulla');
   cancel.setAttribute('type', 'button');
   cancel.setAttribute('data-action', 'cancel-phone');
-  cancel.addEventListener('click', shut);
+  // backlog:28511aa43cc7: from the composer Annulla hands the screen back
+  // to the caller's onCancel (the composer reopens with the typed text);
+  // everywhere else it only closes the window, like before.
+  cancel.addEventListener('click', () => {
+    if (typeof deps.onCancel === 'function') deps.onCancel();
+    else shut();
+  });
   foot.appendChild(go);
   foot.appendChild(cancel);
 
