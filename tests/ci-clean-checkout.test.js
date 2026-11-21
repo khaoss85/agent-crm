@@ -13,8 +13,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 // (.git/hooks, .git/info/attributes, .git/config keys acting during the
 // checkout itself). The arbitration (supervisor 17/11) closed that road: no
 // checkout reuse at all — every job checks out with clean:true, and the disk
-// saving lives ONLY on dependencies, through the npm cache outside the work
-// dir that npm itself verifies against the lockfile. clean:true wipes the
+// saving lives ONLY on dependencies. npm verifies its checkout-local cache
+// against the lockfile. clean:true wipes the
 // worktree only, never the runner's `.git` (hooks, info/attributes, config
 // keys can persist there): per-job fresh dirs stay a follow-up, so this file
 // promises worktree-only cleaning, not a fresh `.git`. This file locks that
@@ -41,7 +41,7 @@ const FILES = [
 // misses (the 20/11 failure: readers asked npm-* while the setup-node
 // producer saved node-cache-*), so the key is part of the contract, not just
 // the step shape.
-const CACHE_PATH = '~/.npm';
+const CACHE_PATH = '.ci-npm-cache';
 const CACHE_KEY = "npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}";
 const CACHE_RESTORE_KEYS = 'npm-${{ runner.os }}-';
 
@@ -206,7 +206,7 @@ test('jobs that install dependencies restore the verified npm cache first', () =
       assert.ok(
         cache,
         `${name}:${inst.line} runs npm ci without a prior npm cache restore in the same job: ` +
-          `the only disk saving allowed is the read-only cache outside the work dir`,
+          `the only disk saving allowed is the read-only cache local to the job`,
       );
     }
   }
@@ -234,14 +234,24 @@ test('nightly writer and ci readers share one cache key and path (backlog:a6def9
   // saved: same key, same path. This is the 20/11 regression net — readers
   // on npm-* with a setup-node producer on node-cache-* passed every shape
   // check and missed every restore.
-  const writers = stepsOf(read('.github/workflows/nightly-tool-selection.yml')).filter(cacheWriter);
+  const nightly = read('.github/workflows/nightly-tool-selection.yml');
+  const ci = read('.github/workflows/ci.yml');
+  assert.ok(
+    read('.gitignore').split('\n').includes('/' + CACHE_PATH + '/'),
+    'the checkout-local npm cache must be ignored so CI measurement sees a clean tree',
+  );
+  const cacheSetting = '  npm_config_cache: ${{ github.workspace }}/' + CACHE_PATH;
+  for (const [name, workflow] of [['nightly', nightly], ['ci', ci]]) {
+    assert.ok(workflow.split('\n').includes(cacheSetting), `${name} must point npm at its checkout-local cache`);
+  }
+  const writers = stepsOf(nightly).filter(cacheWriter);
   assert.equal(
     writers.length,
     1,
     `nightly must have exactly one cache writer with key ${CACHE_KEY} and path ${CACHE_PATH}, ` +
       `found ${writers.length}: the scheduled workflow is the one that keeps the entry fresh`,
   );
-  const readers = stepsOf(read('.github/workflows/ci.yml')).filter(cacheReader);
+  const readers = stepsOf(ci).filter(cacheReader);
   assert.equal(
     readers.length,
     3,
@@ -264,7 +274,6 @@ test('nightly writer and ci readers share one cache key and path (backlog:a6def9
   // The actions/cache save post step needs `actions: write` (backlog:a6def994
   // review 20/11: with `actions: read` the save is denied warning-only, the
   // job stays green and no entry is ever written, so every PR restore misses).
-  const nightly = read('.github/workflows/nightly-tool-selection.yml');
   assert.ok(
     /(^|\n)\s*actions:\s*write/m.test(nightly),
     `nightly-tool-selection.yml grants no actions:write: the single cache writer ` +

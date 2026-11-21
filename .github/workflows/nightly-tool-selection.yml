@@ -26,6 +26,11 @@ concurrency:
   group: nightly-tool-selection
   cancel-in-progress: false
 
+# Each checkout has its own npm cache. The previous shared ~/.npm could
+# change during the nightly archive while another runner installed packages.
+env:
+  npm_config_cache: ${{ github.workspace }}/.ci-npm-cache
+
 jobs:
   # Light gate: decides whether this run does the matrix. A skip leaves the matrix job «skipped» (no cancel, no
   # extra token right); only the matrix job concluding «success» counts as a night done, for this check and for
@@ -84,8 +89,7 @@ jobs:
       # Clean checkout every job (backlog:f16911e3): no checkout reuse on the
       # shared self-hosted runner (clean:true wipes the worktree only, never
       # the runner's `.git`; fresh dir per job is a follow-up); the disk
-      # saving lives only on the npm cache below (outside the work dir, npm
-      # verifies every tarball).
+      # saving lives only on the npm cache below (npm verifies every tarball).
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
@@ -104,7 +108,7 @@ jobs:
       - if: steps.window.outputs.run == 'true'
         uses: actions/cache@v4
         with:
-          path: ~/.npm
+          path: .ci-npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
       - if: steps.window.outputs.run == 'true'
