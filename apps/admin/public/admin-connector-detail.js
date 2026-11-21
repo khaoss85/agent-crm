@@ -37,7 +37,7 @@ import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
+import { PROFILO_CONNECTORS, googleConnectionsCard, readCachedProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { grantExpiring, grantExpiryWording } from './admin-sync.js';
 
@@ -570,7 +570,7 @@ export function createConnectorDetailView(deps) {
     }
     // The profile links merge like the shared count (review #782 P1): the
     // Email detail reuses the Google card's read, any other reads it once.
-    state.profile = state.google !== null ? await state.google.answer : await readProfile(deps.client);
+    state.profile = state.google !== null ? await state.google.answer : await readCachedProfile(deps.client);
     // The provider-stated grant expiries live only in the activity payload
     // (the same one the Stato sync yellow card reads): without them the
     // detail cannot offer a renewal, so they merge onto the rows below.

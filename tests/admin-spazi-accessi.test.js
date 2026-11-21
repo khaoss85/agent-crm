@@ -40,6 +40,7 @@ import {
   SPACE_AI_PERMISSION_DEFAULTS,
 } from '../packages/space-permissions/src/index.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
 import { spaceMenuItems } from '../apps/admin/public/admin-shell.js';
 
 const flush = async (rounds = 12) => {
@@ -118,6 +119,9 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
 }
 
 function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }], active = SPACE, doc = null } = {}) {
+  // The shell keeps /api/profile once per app start: each test is its own
+  // app start, so it opens with an empty cache (backlog:30f7ce51c87a).
+  forgetCachedProfile(null);
   const docNode = doc ?? createFakeDocument();
   const mount = createMount();
   const seen = { toast: [], picked: [], navigated: [] };
@@ -383,11 +387,15 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
 // quindi parte solo dopo che i dati sono arrivati.
 test('1a96094db71d: the page paints a skeleton at once, the team data starts together, the statistic follows', async () => {
   const pending = [];
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }];
   const base = stubClient({
-    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    members,
     connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
     customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
   });
+  // Voce 785aeb28bd18: no summary stubbed here, so the load flies the
+  // single reads — data first, the statistic only after the data lands.
+  // The summary path lives in tests/admin-spazi-accessi-summary.test.js.
   const client = {
     request(path, options = {}) {
       return new Promise((resolve, reject) => {
@@ -409,6 +417,12 @@ test('1a96094db71d: the page paints a skeleton at once, the team data starts tog
   assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton, not «Carico…»');
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
     'no switch to flip before its value is known');
+  // backlog:30f7ce51c87a: the one aggregate is tried first; this backend
+  // has none, so failing it drops the load onto the single reads below.
+  const noSummary = pending.find((entry) => entry.path.startsWith('/api/spazi-accessi/summary'));
+  assert.ok(noSummary, 'the aggregate is tried before the singles');
+  noSummary.release();
+  await flush();
   const started = pending.map((entry) => entry.path);
   for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective']) {
     assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
@@ -1986,7 +2000,9 @@ test('2de01913d276: a 429 on context and members is an error with Riprova, read 
   assert.doesNotMatch(text(mount), /non leggibile/, 'the error lifts after the retry');
   assert.equal(count('/api/spine/context'), 2, 'the retry reads once more');
   assert.equal(count('/api/spine/memberships'), 2, 'the retry reads members once more');
-  assert.equal(count('/api/profile'), 2, 'the retry reads the profile once more');
+  // backlog:30f7ce51c87a: the profile is kept once per client, so the
+  // retry reuses it instead of asking again.
+  assert.equal(count('/api/profile'), 1, 'the retry reuses the kept profile');
 });
 
 test('2de01913d276: concurrent identical GETs share one request; writes and later loads do not', async () => {
@@ -2218,6 +2234,12 @@ test('785aeb28bd18: the card statistic reads start only after the team data land
     || path.startsWith('/api/customer-data/customers?');
   const { mount, view: v } = view({ client });
   const done = v.render();
+  await flush();
+  // backlog:30f7ce51c87a: the one aggregate is tried first; this backend
+  // has none, so failing it drops the load onto the single reads below.
+  const noSummary = pending.find((entry) => entry.path.startsWith('/api/spazi-accessi/summary'));
+  assert.ok(noSummary, 'the aggregate is tried before the singles');
+  noSummary.release();
   await flush();
   const wave1 = pending.map((entry) => entry.path);
   for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective']) {

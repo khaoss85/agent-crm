@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cancelReasonFrom, cancelRefusalText, createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
@@ -128,6 +129,9 @@ function focusingDocument() {
 }
 
 async function openWeek(options = {}) {
+  // The shell keeps /api/profile once per app start: each open is its own
+  // app start (backlog:30f7ce51c87a).
+  forgetCachedProfile(null);
   const doc = focusingDocument();
   const mount = createMount();
   const client = stubClient(options);

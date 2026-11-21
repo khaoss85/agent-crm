@@ -1,9 +1,15 @@
 // @ts-check
 
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createCalendarioView, originOf, slotLabel } from '../apps/admin/public/admin-calendario.js';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
+
+// backlog:30f7ce51c87a: /api/profile is kept once per app start, but each
+// test paints with its own mocked answer, so the kept answer is dropped
+// before every test — otherwise one test's profile leaks into the next.
+beforeEach(() => { forgetCachedProfile(); });
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 

@@ -41,12 +41,12 @@
 // inert text, never markup.
 
 import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
-import { readProfile } from './admin-profilo.js';
+import { readCachedProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
-import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
-import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
+import { countFixes, loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
+import { AGENTI_READ_LIMIT, loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import {
   SPACE_ROLE_LABELS,
   accessLabel,
@@ -623,8 +623,22 @@ export function createSpaziAccessiView(deps) {
     ]);
     const [memberCount, profile] = await Promise.all([memberCountRead, profileRead]);
     if (memberCount === null) return null;
+    return finishSpaceStat(spaceId, memberCount, profile, await reads);
+  }
+
+  /**
+   * Paint the space statistic from two settled reads — the connectors and
+   * the customers answers — whether they flew as single requests or arrived
+   * inside the summary. Same honest states both ways: an unreadable count
+   * is a missing enhancement, never a page error.
+   * @param {string} spaceId
+   * @param {number} memberCount the rendered team size
+   * @param {unknown} profile the /api/profile answer, null when unread
+   * @param {[PromiseSettledResult<any>, PromiseSettledResult<any>]} settled
+   */
+  async function finishSpaceStat(spaceId, memberCount, profile, settled) {
     try {
-      const [channelsSettled, customersSettled] = await reads;
+      const [channelsSettled, customersSettled] = settled;
       // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
       // the team rows tile this space's calendar and channels from the same
       // answer — no second request. A failed customer count never hides the
@@ -722,12 +736,14 @@ export function createSpaziAccessiView(deps) {
    * the card statistic (profile, connectors, customers) no longer starts
    * here — {@link beginStatReads} starts it only after this data lands, so
    * the member step never queues behind the slow card reads (verifica Mac
-   * 19/11: 1,1–2,8 s su questa schermata, sotto 1 s sulle altre).
+   * 19/11: 1,1–2,8 s su questa schermata, sotto 1 s sulle altre). Only the
+   * no-summary fallback uses these single reads: the summary-first
+   * {@link beginReads} tries one aggregate first.
    * @param {string} space
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
    */
-  function beginReads(space, readsClient = client) {
+  function beginLegacyReads(space, readsClient = client) {
     const settle = (promise) => promise.then(
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
@@ -752,28 +768,206 @@ export function createSpaziAccessiView(deps) {
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
    */
-  function beginStatReads(space, { membersRead, contextRead }, readsClient = client) {
+  function beginStatReads(space, { membersRead, contextRead }, readsClient = client, shared = null) {
     const ids = readSpaces()
       .filter((entry) => entry !== null && typeof entry === 'object'
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
         && /** @type {{id?: unknown}} */ (entry).id !== '')
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
     // The profile describes the session's own space: its links count on
-    // that card only, never on another space's (review #782 P1).
-    const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
+    // that card only, never on another space's (review #782 P1). One read
+    // per app start (backlog:30f7ce51c87a): the shell keeps the /api/profile
+    // answer, so the second wave of every screen reuses it. A failed read
+    // is never kept — the next screen asks again.
+    const profileRead = ids.length > 0
+      ? (shared !== null ? shared.profileRead() : readCachedProfile(readsClient))
+      : Promise.resolve(null);
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
       ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));
     const current = space;
-    // backlog:9d06eb1e174b: only the open space's connectors and customers
-    // are read. Another space's GET /api/connectors?spaceId=… answers 403
-    // to this session (verifica 13-14/11): its card shows no statistic
-    // instead of a refused read.
-    const statsRead = Promise.all(ids.filter((id) => id === current).map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
-      if (stat !== null) state.stats.set(id, stat);
-    }));
+    // backlog:30f7ce51c87a: the summary that carried the data already holds
+    // the statistic sections — no second wave of single reads. Without them
+    // the statistic reads its three singles, behind the painted roster.
+    const statsRead = (async () => {
+      const summary = shared !== null ? await shared.summarySettled : null;
+      if (summary !== null && summary.ok) {
+        const connectors = fullSection(summary.value, 'connectors');
+        const customers = fullSection(summary.value, 'customers');
+        const memberCount = await memberCountRead;
+        if (memberCount !== null) {
+          if (connectors !== null && customers !== null) {
+            const profile = await profileRead;
+            const stat = await finishSpaceStat(space, memberCount, profile, [
+              { status: 'fulfilled', value: connectors },
+              { status: 'fulfilled', value: customers },
+            ]);
+            if (stat !== null) state.stats.set(space, stat);
+            return;
+          }
+          if (summary.value !== null && typeof summary.value === 'object'
+            && (summary.value.connectors !== undefined || summary.value.customers !== undefined)) {
+            // A refused half is the same missing enhancement the single
+            // reads would paint: run the same finish with the refusal.
+            const toSettled = (name, section) => (section === null
+              ? { status: 'rejected', reason: sectionError(summary.value, name) }
+              : { status: 'fulfilled', value: section });
+            const profile = await profileRead;
+            const stat = await finishSpaceStat(space, memberCount, profile, [
+              toSettled('connectors', connectors),
+              toSettled('customers', customers),
+            ]);
+            if (stat !== null) state.stats.set(space, stat);
+            return;
+          }
+        }
+      }
+      // backlog:9d06eb1e174b: only the open space's connectors and customers
+      // are read. Another space's GET /api/connectors?spaceId=… answers 403
+      // to this session (verifica 13-14/11): its card shows no statistic
+      // instead of a refused read.
+      await Promise.all(ids.filter((id) => id === current).map(async (id) => {
+        const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
+        if (stat !== null) state.stats.set(id, stat);
+      }));
+    })();
     return { statsRead };
+  }
+
+  /**
+   * A usable summary section: present and not refused. A refused section
+   * carries `{ unavailable: { code, status } }` and maps to the same refusal
+   * the single route would answer, so the honest notes never change.
+   */
+  const fullSection = (summary, name) => {
+    if (summary === null || typeof summary !== 'object') return null;
+    const section = summary[name];
+    if (section === undefined) return null;
+    if (section !== null && typeof section === 'object' && 'unavailable' in section) return null;
+    return section;
+  };
+  const sectionError = (summary, name) => {
+    const section = summary !== null && typeof summary === 'object' ? summary[name] : null;
+    const reason = section !== null && typeof section === 'object' ? section.unavailable : null;
+    return {
+      code: reason !== null && typeof reason === 'object' && typeof reason.code === 'string' && reason.code !== ''
+        ? reason.code
+        : 'UNKNOWN',
+      status: reason !== null && typeof reason === 'object' && typeof reason.status === 'number'
+        ? reason.status
+        : null,
+    };
+  };
+
+  /**
+   * What the waves of one load share (backlog:30f7ce51c87a): the one
+   * aggregate read and the kept profile. The profile starts lazily — only
+   * the second wave asks for it — so a load without a summary still reads
+   * its data first and its statistic after, as voce 785aeb28bd18 requires.
+   * @param {string} space
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   */
+  function beginShared(space, readsClient = client) {
+    const summarySettled = Promise.resolve().then(() => readsClient.request(
+      `/api/spazi-accessi/summary?spaceId=${encodeURIComponent(space)}`,
+    )).then(
+      (value) => ({ ok: true, value, error: null }),
+      (error) => ({ ok: false, value: null, error }),
+    );
+    // The profile is the pilot's answer and the summary cannot carry it:
+    // the shell keeps it once per app start (readCachedProfile), so the
+    // second open of any screen reads nothing new.
+    let keptProfileRead = null;
+    const profileRead = () => (keptProfileRead ??= readCachedProfile(client));
+    return { summarySettled, profileRead };
+  }
+
+  /**
+   * The data of one load through the summary (backlog:30f7ce51c87a): a single
+   * GET /api/spazi-accessi/summary carries context, team, agents and switches
+   * instead of four single reads. Each section maps to the exact state the
+   * single reads would set — an unavailable section becomes the same
+   * {code, status} refusal the single route would answer. When the summary
+   * itself is missing or fails as a whole, the load falls back to the
+   * single reads above: same page, same notes, more round trips.
+   * @param {string} space
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   * @param {{ summarySettled: Promise<any> }} [shared] the load's summary
+   */
+  function beginReads(space, readsClient = client, shared = null) {
+    const summarySettled = shared !== null
+      ? shared.summarySettled
+      : Promise.resolve().then(() => readsClient.request(
+        `/api/spazi-accessi/summary?spaceId=${encodeURIComponent(space)}`,
+      )).then(
+        (value) => ({ ok: true, value, error: null }),
+        (error) => ({ ok: false, value: null, error }),
+      );
+    let legacyReads = null;
+    const legacy = () => (legacyReads ??= beginLegacyReads(space, readsClient));
+    // The summary sections are named after their payload; the single-read
+    // fallbacks are named after their promise (`contextRead`, `membersRead`,
+    // `switchesRead`). A missing entry here reads `undefined` and crashes
+    // the paint with «cannot read ok of undefined» instead of falling back.
+    const LEGACY_KEYS = { context: 'contextRead', memberships: 'membersRead', switches: 'switchesRead' };
+    const settledFromSummary = async (name) => {
+      const summary = await summarySettled;
+      if (summary.ok) {
+        const section = fullSection(summary.value, name);
+        if (section !== null) return { ok: true, value: section, error: null };
+        if (summary.value !== null && typeof summary.value === 'object' && summary.value[name] !== undefined) {
+          return { ok: false, value: null, error: sectionError(summary.value, name) };
+        }
+      }
+      return legacy()[LEGACY_KEYS[name] ?? name];
+    };
+    const contextRead = settledFromSummary('context');
+    const membersRead = settledFromSummary('memberships');
+    const agentsRead = summarySettled.then((summary) => {
+      if (summary.ok) {
+        const section = fullSection(summary.value, 'agents');
+        if (section !== null) {
+          // Same shape as loadSpaceAgents (rows array, null when the read
+          // failed): renderTeamAgentRows takes an array, never {rows, capped}.
+          const items = Array.isArray(section.items) ? section.items : [];
+          return items.slice(0, AGENTI_READ_LIMIT);
+        }
+        if (summary.value !== null && typeof summary.value === 'object' && summary.value.agents !== undefined) {
+          return null;
+        }
+      }
+      return legacy().agentsRead;
+    });
+    const switchesRead = settledFromSummary('switches');
+    // The statistic is not started here: voce 785aeb28bd18 starts it only
+    // after this data lands and paints, through beginStatReads, which reuses
+    // the same summary sections below — no second wave of single reads.
+    // The tab badge from the same summary: open issues plus unresolved
+    // duplicate candidates plus the team duplicates the screen paints,
+    // plus the sync extra — the same addends loadFixCount reads singly.
+    // A summary without the fix section (or a failed one) keeps the
+    // single-read badge: degraded, never silent.
+    const fixRead = summarySettled.then(async (summary) => {
+      if (summary.ok) {
+        const fix = fullSection(summary.value, 'fix');
+        const members = fullSection(summary.value, 'memberships');
+        if (fix !== null && members !== null && Array.isArray(fix.issues) && Array.isArray(fix.candidates)
+          && Array.isArray(members.items)) {
+          const extra = typeof fix.needsFix === 'number' && Number.isInteger(fix.needsFix) && fix.needsFix > 0
+            ? fix.needsFix
+            : 0;
+          try {
+            return countFixes({ issues: fix.issues, candidates: fix.candidates })
+              + duplicateTeamHints(buildTeamRows(members.items)).length + extra;
+          } catch {
+            return null;
+          }
+        }
+      }
+      return loadFixCount(readsClient, { spaceId: space });
+    });
+    const reads = { contextRead, membersRead, agentsRead, switchesRead };
+    return { ...reads, fixRead };
   }
 
   /**
@@ -1583,18 +1777,26 @@ export function createSpaziAccessiView(deps) {
     // shares one coalescing wrapper, so profile and members leave exactly
     // once per load (verifica 17/11: 11 caricamenti in 60 s dopo un 429).
     const readsClient = coalesceSpaceReads(client);
-    const countRead = space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
-    const reads = hasSpace ? beginReads(space, readsClient) : null;
+    // backlog:30f7ce51c87a: one aggregate per load, shared by both waves —
+    // the data reads it first, the statistic reuses its sections after.
+    const shared = hasSpace ? beginShared(space, readsClient) : null;
+    const reads = hasSpace ? beginReads(space, readsClient, shared) : null;
+    // backlog:30f7ce51c87a: the badge counts from the same summary the page
+    // reads — no extra round trips. Without a summary (or a failed one) the
+    // load falls back to the single reads, badge included.
+    const countRead = reads !== null && reads.fixRead !== undefined
+      ? reads.fixRead
+      : (space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null));
     // Voce 785aeb28bd18: the card statistic starts only after the data below
-    // landed and painted — never beside the roster. The flag flips in the
-    // settlement turn, before the data paint below, so a statistic that
-    // already landed paints as data, never as pending.
+    // landed and painted — never beside the roster. A statistic that already
+    // landed paints as data, never as pending: the flag flips in the
+    // settlement turn, before the data paint below.
     let statsDone = false;
     let stats = null;
     const startStats = () => {
       if (stats !== null || reads === null) return stats;
-      stats = beginStatReads(space, reads, readsClient);
+      stats = beginStatReads(space, reads, readsClient, shared);
       stats.statsRead.then(
         () => { statsDone = true; },
         () => { statsDone = true; },
