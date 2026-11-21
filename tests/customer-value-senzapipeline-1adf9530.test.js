@@ -115,6 +115,58 @@ test('backlog:1adf95307b31: un\u2019offerta aperta senza pipeline conta uguale i
   assert.ok(summary.includes('15 €'), `la testata somma la 15 € senza pipeline: ${summary}`);
 });
 
+test('backlog:1adf95307b31: solo vinte «—», valute miste con unità in Clienti e testata', async () => {
+  // Accettazione madre: solo offerte vinte o nessuna aperta → «—», mai
+  // «0 €»; valute miste → ogni importo con la sua valuta, mai un numero
+  // nudo. Vale anche senza pipeline, in entrambe le viste.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+    { id: 'c2', companyId: 'co2', firstName: 'Leo', lastName: 'Verdi', email: 'leo@palestra-due.example' },
+  ];
+  const companies = [
+    { id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' },
+    { id: 'co2', name: 'Palestra Due', domain: 'palestra-due.example' },
+  ];
+  const opportunities = [
+    { id: 'op-won', companyId: 'co1', contactId: 'c1', valueCents: 2000, currency: 'EUR', stage: 'won' },
+    { id: 'op-eur', companyId: 'co2', contactId: 'c2', valueCents: 1500, currency: 'EUR', stage: 'proposal' },
+    { id: 'op-usd', companyId: 'co2', contactId: 'c2', valueCents: 2000, currency: 'USD', stage: 'proposal' },
+  ];
+  const modules = fakeModules({ contacts, companies, opportunities });
+  const page = await listCustomerRecords(
+    {
+      modules,
+      core: {},
+      names: { identity: 'external-identity' },
+      pipelines: { forModule: (name) => (name === 'opportunity' ? SALES_LIKE : null) },
+    },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, null, 'Clienti: solo vinte → nessun valore, la cella legge «—»');
+  assert.equal(ada.offerCurrency, null);
+  assert.equal(ada.offerParts, null);
+  const leo = page.items.find((item) => item.id === 'c2');
+  assert.equal(leo.offerCurrency, null, 'Clienti: valute miste → nessuna valuta singola');
+  assert.deepEqual(
+    [...leo.offerParts].sort((a, b) => String(a.currency).localeCompare(String(b.currency))),
+    [{ valueCents: 1500, currency: 'EUR' }, { valueCents: 2000, currency: 'USD' }],
+    'Clienti: ogni subtotale con il suo codice, mai un numero nudo',
+  );
+
+  const boardRecords = [
+    { id: 'op-eur', name: 'Offerta EUR', companyName: 'Palestra Due', valueCents: 1500, currency: 'EUR', stage: 'proposal', pipelineKey: null, pipelineStage: null },
+    { id: 'op-usd', name: 'Offerta USD', companyName: 'Palestra Due', valueCents: 2000, currency: 'USD', stage: 'proposal', pipelineKey: null, pipelineStage: null },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubBoard(boardRecords) });
+  await board.renderBoard('b2b-sales');
+  const summary = mount.findAll('p').find((node) => node.getAttribute('data-summary') !== null).textContent;
+  assert.ok(summary.includes('15 €'), `la testata mostra gli euro con unità: ${summary}`);
+  assert.ok(summary.includes('20 USD'), `la testata mostra i dollari con unità: ${summary}`);
+});
+
 test('backlog:1adf95307b31: la regola riga decide uguale ovunque', () => {
   // La stessa riga, lo stesso esito in ogni vista che la legge.
   assert.equal(isOpenOfferRow(SALES_LIKE, { pipelineKey: 'accordo-sales', pipelineStage: 'proposta', stage: 'qualification' }), true, 'sulla pipeline: il tipo open tiene il valore');

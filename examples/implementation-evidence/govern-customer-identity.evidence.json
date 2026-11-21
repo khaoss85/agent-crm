@@ -23,7 +23,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/operations.js",
-          "sha256": "d563c3931499820c5175c14e171b681417b540e6581ae726d010c3b20bbcf060"
+          "sha256": "5c933d044cab786902ffaff228081a8ae2a2d478beaea32d957044bf901b6e17"
         }
       ]
     },
