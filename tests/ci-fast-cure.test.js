@@ -44,11 +44,19 @@ function runStep(dir, env) {
     '#!/bin/bash\necho "$1" > "$HEAVY_NAME_FILE"\nexit 0\n',
   );
   chmodSync(join(dir, 'scripts', 'ci-heavy.sh'), 0o755);
+  // The step reads CI_FAST_* from its environment: never inherit the real
+  // job's values (a `cure` CI job exports CI_FAST_HEAVY_NAME=fast-main-red-cure,
+  // which would leak into the "missing value" case). Each case sets exactly
+  // what it means through `env`.
+  const base = { ...process.env };
+  delete base.CI_FAST_HEAVY_NAME;
+  delete base.CI_FAST_GATE_CMD;
+  delete base.CI_FAST_RETRY_CMD;
   return spawnSync('bash', [stepScript], {
     cwd: dir,
     encoding: 'utf8',
     env: {
-      ...process.env,
+      ...base,
       CI_TOUCHED_BUSY_FILE: join(dir, 'busy.json'),
       HEAVY_NAME_FILE: join(dir, 'heavy-name.txt'),
       ...env,
