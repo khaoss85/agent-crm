@@ -43,9 +43,11 @@ export const MATCH_RULES = Object.freeze([
 export const MATCH_OUTCOMES = Object.freeze(['matched', 'unmatched', 'unresolved']);
 
 /**
- * Build the v1 policy. `config` is declared JSON-safe data so the fingerprint
- * covers it; a closure-held table would be invisible to it, which is the ADR-015
- * failure this shape exists to prevent.
+ * Build the v2 policy (backlog:b50c2f9d06a1: #1077 answered archived and
+ * removed contacts with `unresolved` without moving the version, so the
+ * policy moves to version 2 with that rule). `config` is declared JSON-safe
+ * data so the fingerprint covers it; a closure-held table would be invisible
+ * to it, which is the ADR-015 failure this shape exists to prevent.
  *
  * @param {{requireDomainForCompanyMatch?: boolean}} [config]
  */
@@ -58,7 +60,7 @@ export function defineCustomerMatchPolicy(config = {}) {
 
   const definition = {
     name: 'deterministic-customer-match',
-    version: 1,
+    version: 2,
     label: 'Deterministic customer match',
     description:
       'Exact external identity, then exact normalized email, then exact normalized company name with an exact domain. '

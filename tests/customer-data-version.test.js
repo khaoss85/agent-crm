@@ -16,9 +16,15 @@ import { createCustomerDataPackage } from '../packages/customer-data/src/index.j
 // tombstone-safe sync match, no recreate of archived rows).
 // Version 8 (backlog:d547f65e): unlinking a wrong merge writes one cronologia
 // note per separated member through the declared work follow-up@1 edge.
-test('customer-data is version 8 since archive/restore/remove and the unmerge timeline note joined the surface', () => {
+// Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove to
+// the surface under the old version 8, so the package moves to 9.
+test('customer-data is version 9 since archive/restore/remove and the unmerge timeline note joined the surface', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 8);
+  assert.equal(pkg.version, 9);
+  const policy = pkg.policies.find((entry) => entry.kind === 'customer-match-policy');
+  assert.ok(policy, 'the package declares its customer-match-policy');
+  assert.equal(policy.definition.version, 2,
+    'the archived/removed unresolved rule ships as match policy version 2');
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),
     'the version-6 surface carries the AI field proposal operation (propose-field-from-question)');
   assert.ok(pkg.operations.some((operation) => operation.name === 'fill-ai-field-values'),
