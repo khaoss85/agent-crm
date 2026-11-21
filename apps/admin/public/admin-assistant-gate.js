@@ -21,6 +21,14 @@ export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
 export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: chiedi al titolare di attivarlo per questo spazio.';
 
 /**
+ * The same ceiling truth for the titolare themself (backlog:1968c3320cd3:
+ * told where to turn it on, never to ask themself). Lives here with the
+ * gate sentence above so the switch can branch on the viewer role without
+ * importing the panel (that would close an import cycle).
+ */
+export const ASSISTANT_SPACE_DISABLED_OWNER_NOTICE = 'Assistente non attivo in questo spazio: puoi accenderlo da Spazi e accessi.';
+
+/**
  * The gate code an /api/assistant/status answer (or its rejection) carries,
  * or null. One reader for every surface that asks «is the AI off here?»
  * (the Assistente panel, the composer «Scrivi al cliente», the Spazi e

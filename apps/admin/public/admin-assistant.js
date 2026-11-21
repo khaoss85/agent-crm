@@ -41,8 +41,8 @@ import { SPAZI_AI_MASTER, effectiveSwitches, masterEnabled } from './admin-spazi
 // backlog:b139d83617f3: the gate contract lives in admin-assistant-gate.js
 // (the switch imports it from there — importing it from this module would
 // close an import cycle). Re-exported here for the existing importers.
-import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, assistantStatusCode } from './admin-assistant-gate.js';
-export { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, assistantStatusCode };
+import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantStatusCode } from './admin-assistant-gate.js';
+export { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantStatusCode };
 
 /**
  * The only free-question contract: questions POST exactly here. The probe and
@@ -61,8 +61,6 @@ const ASSISTANT_ASK_PATH = '/api/assistant/ask';
  * a684ecf5: il messaggio da spento non si contraddice).
  */
 export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
-/** backlog:1968c3320cd3: the titolare is told where to turn it on, never to ask themself. */
-export const ASSISTANT_SPACE_DISABLED_OWNER_NOTICE = 'Assistente non attivo in questo spazio: puoi accenderlo da Spazi e accessi.';
 export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */

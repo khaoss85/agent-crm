@@ -48,7 +48,7 @@ import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
-import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, assistantGateOf } from './admin-assistant-gate.js';
+import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantGateOf } from './admin-assistant-gate.js';
 import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import {
@@ -347,20 +347,19 @@ export function masterEnabled(spaceId, overrideRows = []) {
 
 /**
  * The master verdict: the stored switch corrected by the gate
- * (backlog:b139d83617f3). Only the owner ceiling locks — a stored-on
- * switch with the gate off and code `LLM_SPACE_DISABLED` reads off and
- * unflippable, with the titolare sentence. Anything else follows the
- * stored switch: a stored-off switch stays flippable with «riaccendi»
- * (the operator can turn it on), and a missing, empty or unreadable gate
+ * (backlog:b139d83617f3). The owner ceiling locks whatever the stored
+ * switch says — with the gate off and code `LLM_SPACE_DISABLED` the
+ * space reads off and unflippable, with who can enable it (a flip would
+ * be refused up there, so nothing promises «riaccendi»). Anything else
+ * follows the stored switch, and a missing, empty or unreadable gate
  * (standalone framework, failed read) changes nothing — the stored
  * permission is the authority there. The gate never turns a switch on.
  * @param {{storedOn?: unknown, gate?: {enabled: boolean, code: string|null}|null}} [input]
  * @returns {{on: boolean, locked: boolean}}
  */
 export function aiMasterVerdict({ storedOn = true, gate = null } = {}) {
-  const on = storedOn === true;
-  const locked = on && gate !== null && gate.enabled === false && gate.code === 'LLM_SPACE_DISABLED';
-  return { on: on && !locked, locked };
+  const locked = gate !== null && gate.enabled === false && gate.code === 'LLM_SPACE_DISABLED';
+  return { on: storedOn === true && !locked, locked };
 }
 
 /**
@@ -1413,13 +1412,19 @@ export function createSpaziAccessiView(deps) {
     // backlog:b139d83617f3: the stored switch corrected by the gate — a
     // ceiling-kept space reads off and locked, with who can enable it,
     // never «finché non la riaccendi» (there is nothing to re-flip here).
+    // The locked line branches on the viewer role like the Assistente
+    // panel: the titolare is told where to turn it on, never to ask
+    // themself (review rev-agent-crm-1126-4389fec29d94 P1).
     const verdict = aiMasterVerdict({ storedOn: masterEnabled(space.id, state.overrides), gate: state.gate });
     const master = verdict.on;
+    const lockedNotice = state.myRole === 'owner'
+      ? ASSISTANT_SPACE_DISABLED_OWNER_NOTICE
+      : ASSISTANT_SPACE_DISABLED_NOTICE;
     section.appendChild(el(doc, 'p', {
       text: master
         ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
         : verdict.locked
-          ? `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}. ${ASSISTANT_SPACE_DISABLED_NOTICE}`
+          ? `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}. ${lockedNotice}`
           : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
       cls: 'bo-muted',
     }));

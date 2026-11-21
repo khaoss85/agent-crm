@@ -381,7 +381,9 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
 // off-ceiling space showed «finché non la riaccendi» while the AI stayed
 // off). Outside the owner ceiling the master reads off and locked, names
 // who can enable it, and matches /api/assistant/status. Red before the
-// cure, green after.
+// cure, green after. The default stub context is the titolare (owner), so
+// the locked line tells them where to turn it on, never to ask themself
+// (review rev-agent-crm-1126-4389fec29d94 P1).
 test('b139d83617f3: outside the owner ceiling the master is off, locked, and names the titolare', async () => {
   const calls = [];
   const { mount, view: v } = view({
@@ -393,7 +395,8 @@ test('b139d83617f3: outside the owner ceiling the master is off, locked, and nam
     'the screen reads the gate it must agree with');
   const rendered = text(mount);
   assert.match(rendered, /AI dello spazio: spenta/);
-  assert.match(rendered, /chiedi al titolare di attivarlo/, 'it says who can enable it');
+  assert.match(rendered, /puoi accenderlo da Spazi e accessi/, 'the titolare is told where to turn it on');
+  assert.doesNotMatch(rendered, /chiedi al titolare/, 'never asks the titolare to ask themself');
   assert.doesNotMatch(rendered, /riaccendi/, 'nothing promises a re-flip the ceiling would refuse');
   const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
   assert.equal(toggles.length, 6);
@@ -404,6 +407,30 @@ test('b139d83617f3: outside the owner ceiling the master is off, locked, and nam
     if (node.getAttribute('aria-label') === SPAZI_AI_MASTER.label) continue;
     assert.equal(node.disabled, true, `${node.getAttribute('aria-label')} stays paused`);
   }
+});
+
+// backlog:b139d83617f3 (review rev-agent-crm-1126-4389fec29d94 P1: the
+// locked line always said «chiedi al titolare» even to the titolare). An
+// operator under the same ceiling is told to ask the titolare instead.
+test('b139d83617f3: under the ceiling an operator is told to ask the titolare', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({
+      context: { identity: { subject: 'google|operatore' }, membership: { role: 'operator', subject: 'google|operatore' }, roles: { owner: [], operator: [], observer: [] } },
+      status: { spaceId: SPACE, enabled: false, reason: 'LLM_SPACE_DISABLED' },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /AI dello spazio: spenta/);
+  assert.match(rendered, /chiedi al titolare di attivarlo/, 'an operator is told who can enable it');
+  assert.doesNotMatch(rendered, /puoi accenderlo/, 'the way-there line is only for the titolare');
+  assert.doesNotMatch(rendered, /riaccendi/, 'nothing promises a re-flip the ceiling would refuse');
+  const master = mount.findAll('button')
+    .filter((node) => node.getAttribute('role') === 'switch')
+    .find((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
+  assert.equal(master?.getAttribute('aria-checked'), 'false');
+  assert.equal(master?.disabled, true, 'the locked master is not flippable');
 });
 
 // backlog:b139d83617f3: inside the ceiling the master still turns the gate
@@ -440,9 +467,12 @@ test('b139d83617f3: a failed status read keeps the stored switch', async () => {
   assert.equal(master?.disabled, false);
 });
 
-// backlog:b139d83617f3: a stored-off switch stays flippable even when the
-// gate is off — the operator can turn it on, so «riaccendi» stays true.
-test('b139d83617f3: a stored-off switch is never locked, even with the gate off', async () => {
+// backlog:b139d83617f3 (review rev-agent-crm-1126-4389fec29d94 P1: the
+// ceiling lock depended on the stored switch, so a stored-off space under
+// the ceiling still read «riaccendi» and stayed flippable although the flip
+// is refused up there). A stored-off switch under the ceiling locks too:
+// off, with who can enable it, never «riaccendi».
+test('b139d83617f3: a stored-off switch under the ceiling locks, never riaccendi', async () => {
   const { mount, view: v } = view({
     client: stubClient({
       overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }],
@@ -452,27 +482,31 @@ test('b139d83617f3: a stored-off switch is never locked, even with the gate off'
   await v.render();
   await flush();
   const rendered = text(mount);
-  assert.match(rendered, /finch\u00E9 non la riaccendi/, 'the manageable switch keeps its honest line');
+  assert.match(rendered, /AI dello spazio: spenta/);
+  assert.doesNotMatch(rendered, /riaccendi/, 'nothing promises a re-flip the ceiling would refuse');
+  assert.match(rendered, /puoi accenderlo da Spazi e accessi/, 'the titolare stub sees the way-there line');
   const master = mount.findAll('button')
     .filter((node) => node.getAttribute('role') === 'switch')
     .find((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
   assert.equal(master?.getAttribute('aria-checked'), 'false');
-  assert.equal(master?.disabled, false, 'a switch the operator can flip never locks');
+  assert.equal(master?.disabled, true, 'a flip the ceiling would refuse never opens');
 });
 
-// backlog:b139d83617f3: the verdict never locks on a missing, empty or
-// unshaped gate, and the gate never turns a stored-off switch on.
-test('b139d83617f3: aiMasterVerdict locks only on stored-on with the ceiling code', () => {
+// backlog:b139d83617f3: the ceiling locks whatever the stored switch says;
+// the verdict never locks on a missing, empty or unshaped gate, and the
+// gate never turns a stored-off switch on.
+test('b139d83617f3: aiMasterVerdict locks on the ceiling code whatever the stored switch', () => {
   for (const gate of [null, undefined, {}, { enabled: false }, { enabled: false, code: '' }, { enabled: false, code: 'KEY_MISSING' }, { enabled: true, code: null }]) {
     assert.deepEqual(aiMasterVerdict({ storedOn: true, gate }), { on: true, locked: false },
       `no lock on ${JSON.stringify(gate) ?? 'missing gate'}`);
+    assert.deepEqual(aiMasterVerdict({ storedOn: false, gate }), { on: false, locked: false },
+      `no lock on ${JSON.stringify(gate) ?? 'missing gate'} with stored-off`);
   }
-  assert.deepEqual(
-    aiMasterVerdict({ storedOn: false, gate: { enabled: false, code: 'LLM_SPACE_DISABLED' } }),
-    { on: false, locked: false }, 'a stored-off switch is manageable, never locked');
-  assert.deepEqual(
-    aiMasterVerdict({ storedOn: true, gate: { enabled: false, code: 'LLM_SPACE_DISABLED' } }),
-    { on: false, locked: true }, 'the ceiling case locks');
+  for (const storedOn of [true, false]) {
+    assert.deepEqual(
+      aiMasterVerdict({ storedOn, gate: { enabled: false, code: 'LLM_SPACE_DISABLED' } }),
+      { on: false, locked: true }, `the ceiling case locks with stored ${storedOn ? 'on' : 'off'}`);
+  }
 });
 
 // backlog:1a96094db71d (giro UX 11/11): Spazi e accessi stayed on «Carico…»
