@@ -200,7 +200,10 @@ All require `actor.type === "user"`, a reason, and confirmation. Linking writes 
 each carrying who decided and why. Unlinking withdraws those rows
 (`active` → `withdrawn` with reason and date) and returns the candidate to
 `unresolved`, so the two schede read separate again and every message reads
-under the right person.
+under the right person. Each separated member also gets one `work-activity`
+`note` row — written through the declared work `follow-up@1` edge, so the
+undo reads in the scheda cronologia with its reason and actor (no work
+package composed: the unlink still holds and says so).
 
 - **Nothing is deleted or rewritten.** The scenario fingerprints both business
   rows as bytes before and after and proves they are identical.
