@@ -10,7 +10,7 @@ capabilities. It **requires nothing**.
 | Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1`, `customer-channel-origins@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.unlink-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
 | Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins`, `extract-customer-enrichment`, `read-customer-enrichment-proposals`, `decide-enrichment-proposal`, `erase-customer` (ADR-032) |
-| Policies | `deterministic-customer-match@1` |
+| Policies | `deterministic-customer-match@2` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
 ## What it is
@@ -95,7 +95,7 @@ apply    →  one transaction: the run, one receipt row per input row, the recor
 
 ## Matching: exact, ordered, and it refuses to guess
 
-`deterministic-customer-match@1`, three rules in a fixed precedence:
+`deterministic-customer-match@2`, three rules in a fixed precedence:
 
 ```text
 1  external-identity      this system already named this record
@@ -107,6 +107,9 @@ Nothing scores, guesses or learns, and **no rule breaks a tie**. When the
 evidence is ambiguous the row is `skipped` with every candidate reported, and
 each pair becomes a `duplicate-candidate` carrying its rule, its evidence and
 the policy fingerprint — durable evidence for a person, never a decision.
+Since version 2 an exact email naming an archived or removed contact also
+resolves `unresolved` with the contact as candidate: a human restores it or
+creates a new record, the policy never reuses it silently.
 
 Changing a rule changes the fingerprint on every receipt and candidate it
 produced, so an old decision keeps naming the rules that actually made it.
@@ -117,7 +120,7 @@ produced, so an old decision keeps naming the rules that actually made it.
 Instagram, Facebook or TikTok id, an email address or a phone number — to its
 contact. It reuses the records and the rule above: the handle is looked up as
 the `external-identity` `${channel}:${handle}`, anything else resolves through
-`deterministic-customer-match@1`, and every resolved handle is recorded as an
+`deterministic-customer-match@2`, and every resolved handle is recorded as an
 `external-identity` against its contact. A second sighting refreshes
 `lastObserved`, never a second row.
 
