@@ -2409,6 +2409,11 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       if (!found || !found.agent) {
         const word = found?.typedName ?? '';
         state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
+      } else if (found.instruction === '') {
+        // backlog:02d29866d395 (review P3): a bare «@Pausato» with no
+        // instruction asks what to do — «Riprendi» must not flip the status
+        // as a side effect of a mention that assigns nothing.
+        state.mention = { typed, status: 'empty', agent: found.agent, space };
       } else if (found.agent.status === 'paused') {
         // backlog:02d29866d395: a paused agent takes no incarico — never an
         // «Affida» post bound to sit idle (the sweep only runs active
@@ -2418,8 +2423,6 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         // backlog:1f7cb20d3c30: a capped agent needs the cost of one run,
         // which this bar does not ask — never a post bound to refuse.
         state.mention = { typed, status: 'capped', agent: found.agent, space };
-      } else if (found.instruction === '') {
-        state.mention = { typed, status: 'empty', agent: found.agent, space };
       } else {
         state.mention = { typed, status: 'confirm', agent: found.agent, instruction: found.instruction, space };
       }
@@ -2431,17 +2434,23 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   async function confirmMention(once) {
     const mention = state.mention;
     if (!mention || mention.busy || !mention.agent || !mention.instruction || !mention.space) return;
-    // backlog:02d29866d395: paused while the card stood open — never an
-    // assign post to a paused agent; read again so the card says «Riprendi».
-    if (mention.agent.status === 'paused' && mention.status !== 'paused') {
-      await startMention(mention.typed);
-      return;
-    }
     // Review #661 P2: the space may have changed since the card resolved.
     // Never post to the space left behind: resolve again in the active one.
     if (readSpace() !== mention.space) {
       await startMention(mention.typed);
       return;
+    }
+    // backlog:02d29866d395 (review P1): mention.agent is the snapshot from
+    // the resolve — an agent paused after the card opened would still take
+    // the POST. Read fresh before writing; a card replaced meanwhile wins.
+    const fresh = await loadSpaceAgents(client, mention.space);
+    if (state.mention !== mention) return;
+    if (fresh !== null) {
+      const row = fresh.find((entry) => entry?.sourceKey === mention.agent.sourceKey);
+      if (!row || row.status === 'paused') {
+        await startMention(mention.typed);
+        return;
+      }
     }
     mention.busy = true;
     mention.once = once;

@@ -99,6 +99,39 @@ test('02d29866d395: «Riprendi» riattiva e riporta la menzione su «Affida»', 
   assert.equal(panel.getState().mentionStatus, 'done');
 });
 
+test('02d29866d395: «Affida» su agente andato in pausa dopo la card non scrive, torna a «Riprendi»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const attivo = { id: 9, sourceKey: 'agent:presti:attivo', spaceId: 'presti', name: 'Attivo', role: 'Ricontatta i clienti', status: 'active' };
+  const client = stubClient();
+  client.agents.push(attivo);
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, spaceId: () => 'presti' });
+  await panel.open('oggi', null, null, '@Attivo ogni lunedì ricontrolla i lead');
+  await flush();
+  assert.equal(panel.getState().mentionStatus, 'confirm');
+  assert.ok(findButton(mount, 'agent-assign'), 'a card aperta, agente attivo: «Affida» c’è');
+  client.agents.find((row) => row.sourceKey === attivo.sourceKey).status = 'paused';
+  findButton(mount, 'agent-assign').dispatch('click', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.path === '/api/agents/assign').length, 0, 'nessun POST assign su agente ora in pausa');
+  assert.equal(panel.getState().mentionStatus, 'paused', 'la card rilegge e torna in pausa');
+  assert.ok(findButton(mount, 'agent-resume'), 'al suo posto «Riprendi»');
+  assert.equal(findButton(mount, 'agent-assign'), null, 'niente «Affida» in pausa');
+});
+
+test('02d29866d395: «@Pausato» senza incarico chiede cosa fare, non «Riprendi»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, spaceId: () => 'presti' });
+  await panel.open('oggi', null, null, '@Pausato');
+  await flush();
+  assert.equal(panel.getState().mentionStatus, 'empty', 'senza istruzione: chiede cosa fare');
+  assert.equal(findButton(mount, 'agent-resume'), null, 'nessuna «Riprendi» senza incarico');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'niente scritto');
+  assert.equal(client.agents[0].status, 'paused', 'lo stato non cambia da solo');
+});
+
 test('02d29866d395: una «Riprendi» fallita resta in pausa e lo dice', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
