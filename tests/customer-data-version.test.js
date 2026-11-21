@@ -11,9 +11,14 @@ import { createCustomerDataPackage } from '../packages/customer-data/src/index.j
 // declared surface (propose-field-from-question, fill-ai-field-values).
 // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the composed
 // opportunity pipeline (pipelines option) so Pagato is won.
-test('customer-data is version 7 since the pipeline-aware open-value rule joined the surface', () => {
+// Version 8 (backlog:91c92940274c): archive/restore/remove joins the surface
+// (archivedAt/deletedAt in the row shape and every view filter,
+// tombstone-safe sync match, no recreate of archived rows).
+// Version 8 (backlog:d547f65e): unlinking a wrong merge writes one cronologia
+// note per separated member through the declared work follow-up@1 edge.
+test('customer-data is version 8 since archive/restore/remove and the unmerge timeline note joined the surface', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 7);
+  assert.equal(pkg.version, 8);
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),
     'the version-6 surface carries the AI field proposal operation (propose-field-from-question)');
   assert.ok(pkg.operations.some((operation) => operation.name === 'fill-ai-field-values'),

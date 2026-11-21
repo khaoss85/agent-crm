@@ -101,10 +101,15 @@ export function createCoreAdapters({ database, services, pipelines }) {
       return storageMaybeOne(database, {
         kind: 'select',
         table: 'contacts',
-        columns: ['id', 'company_id', 'email'],
+        columns: ['id', 'company_id', 'email', 'archived_at', 'deleted_at'],
         where: [{ column: 'email', op: 'eq', value: normalizeEmail(email) }],
       }, (row) => (row
-        ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) }
+        ? {
+          id: String(row.id), companyId: String(row.company_id), email: String(row.email),
+          // Voce 91c92940274c: la sync ritrova anche un contatto
+          // archiviato/eliminato e non lo ricrea (tombstone per email).
+          archivedAt: row.archived_at ?? null, deletedAt: row.deleted_at ?? null,
+        }
         : null));
     },
 

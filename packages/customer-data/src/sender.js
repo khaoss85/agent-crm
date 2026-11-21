@@ -1,7 +1,7 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, normalizeActor, normalizeCompanyName,
+  AppError, ConflictError, NotFoundError, ValidationError, normalizeActor, normalizeCompanyName,
 } from '../../core/index.js';
 import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
@@ -9,7 +9,7 @@ import {
 import { assertMatchResult } from './policy.js';
 import { isTechnicalLocalPart, labelFromEmail, nameWithoutAddressEchoes, readableName } from './display-name.js';
 import {
-  deciding, orderedPair, subjectFields, subjectKey, trusted,
+  deciding, optional, orderedPair, subjectFields, subjectKey, trusted,
 } from './store.js';
 
 /**
@@ -220,6 +220,17 @@ export function createPolicyReader({ modules, names, core }) {
       // Delegated: core owns email uniqueness and its normalization.
       if (!core || typeof core.findContactByEmail !== 'function') return null;
       return await core.findContactByEmail(email);
+    },
+    async contactById(id) {
+      // Voce 91c92940274c (review P1 giro 3 e 5): il ramo known-identity di
+      // decide() controlla qui il contatto nominato prima di riusarlo —
+      // get resta la verità sulla riga, tombstone comprese. Solo
+      // l'assenza del modulo/capability risponde null; un errore di
+      // lettura si propaga e il chiamante lo chiude in «da decidere»,
+      // mai in un riuso (fail closed, review giro 5 P1).
+      const contacts = optional(modules, 'contact');
+      if (!contacts || typeof contacts.get !== 'function') return null;
+      return await contacts.get(id);
     },
     async companiesByName(name) {
       if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
@@ -674,6 +685,48 @@ export function createChannelSenderResolution({
         });
       }
       if (knownContact) {
+        // Voce 91c92940274c (review P1 giro 3): lo stesso handle già
+        // associato non riaggancia in silenzio un contatto archiviato o
+        // eliminato — nasconderebbe posta viva in una riga che nessuna
+        // vista mostra. Come il ramo email, risponde «da decidere» con il
+        // contatto come candidato, senza collegare niente.
+        // Voce 91c92940274c (review P1 giro 5): una lettura non riuscita
+        // — riga sparita (NotFound) o errore transitorio — lascia il
+        // mittente da decidere con il contatto come candidato, senza
+        // collegare niente (fail closed, mai un riuso).
+        let named = null;
+        try {
+          named = await reader.contactById(knownContact.id);
+        } catch (error) {
+          const gone = error instanceof NotFoundError || error?.code === 'NOT_FOUND';
+          if (gone) {
+            return senderUnresolved(sender, actor, {
+              rule: 'external-identity',
+              candidates: [knownSubjectHere],
+              evidence: `channel handle ${sender.system} names a contact that no longer exists: a human decides, never a silent reuse`,
+            });
+          }
+          // Voce 91c92940274c (review P1 giro 6): la causa del guasto
+          // viaggia con l'esito — solo token sicuri (nome/codice, mai il
+          // messaggio: può contenere dati del contatto). Così un guasto
+          // resta distinguibile dal triage di routine.
+          const causeName = error instanceof Error ? error.name : 'Error';
+          const causeCode = error !== null && typeof error === 'object' && 'code' in error && error.code != null
+            ? String(error.code) : null;
+          const cause = causeCode ? `${causeName}/${causeCode}` : causeName;
+          return senderUnresolved(sender, actor, {
+            rule: 'external-identity',
+            candidates: [knownSubjectHere],
+            evidence: `channel handle ${sender.system} names a contact that could not be read (cause ${cause}): a human decides, never a silent reuse`,
+          });
+        }
+        if (named && (named.archivedAt != null || named.deletedAt != null)) {
+          return senderUnresolved(sender, actor, {
+            rule: 'external-identity',
+            candidates: [knownSubjectHere],
+            evidence: `channel handle ${sender.system} names an archived or eliminated contact: a human decides, never a silent reuse`,
+          });
+        }
         // A second sighting refreshes lastObserved, never a second row —
         // the recorded promise in the package metadata and README.
         const identity = await database.transactionAsync(async () => recordExternalIdentityRow({
