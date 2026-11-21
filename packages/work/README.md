@@ -144,6 +144,23 @@ const { task, activity, replayed } = await work.createFollowUp({
 work.findBySourceKey('my-package-thing:123');    // exact read, or null
 ```
 
+```js
+await work.recordTimelineNote({              // one operator note, no task
+  subject: { resource: 'contact', id: subject.id },  // contact|company, host-owned
+  body: 'Unione annullata: motivo…',         // safe text, at most 1000 chars
+  occurredAt: withdrawnAt,                   // business instant, defaults to now
+  source: { package: 'my-package', action: 'my-action' },
+});
+```
+
+The one note write a consuming package may make (customer-data's undo of a
+wrong merge): work resolves its own activity record — rename-safe — and
+allocates `seq`, and the row joins the caller's transaction. Subjects are
+contacts and companies only; `source.package` binds to the consumer like
+every other write on this edge; like a manual note it carries no idempotency
+key. Without the composed work package the caller reports the timeline as
+unavailable and still holds its own write.
+
 Because the capability is created with **your** `modules` handle, both rows are
 written inside **your** transaction. If your action fails afterwards, the task
 and its activity roll back with your own writes — and that is *checked*: a call

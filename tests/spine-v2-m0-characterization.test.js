@@ -235,7 +235,10 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   const opened = work.capabilities[0].create({
     modules: { get: () => ({ service: { listWhere: () => [] } }) },
   });
-  assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey']);
+  // backlog:d547f65e: the follow-up@1 edge also appends one operator note on
+  // a subject timeline (recordTimelineNote), so a domain action never reaches
+  // into this package's storage — moved here deliberately, like `postpone`.
+  assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey', 'recordTimelineNote']);
   const exactRead = await opened.findBySourceKey('m0:missing');
   assert.equal(exactRead, null);
   // Contract evolution (async record-module port): the exact read keeps its

@@ -299,11 +299,15 @@ test('the timer authority can open an ask and cannot close one', async (t) => {
   const seam = work.createFollowUpCapability().create({
     modules: { get: () => null }, actor: timerActor, now: () => AT, consumer: 'lifecycle',
   });
-  assert.deepEqual(Object.keys(seam).sort(), ['createFollowUp', 'findBySourceKey'],
-    'opening work and reading it back is all a consumer is handed');
+  // backlog:d547f65e: the follow-up@1 edge also appends one operator note on
+  // a subject timeline (recordTimelineNote). The human boundary lives with
+  // the implementation, so the timer is handed the seam and refused at the
+  // call — moved here deliberately, like the M0 freeze above.
+  assert.deepEqual(Object.keys(seam).sort(), ['createFollowUp', 'findBySourceKey', 'recordTimelineNote'],
+    'opening work, reading it back and handing a note to a human is all a consumer is handed');
 
   // And every closing decision refuses this actor by the package's own rule.
-  for (const decision of ['Completing a task', 'Cancelling a task', 'Adding a note']) {
+  for (const decision of ['Completing a task', 'Cancelling a task', 'Adding a note', 'Recording a timeline note']) {
     assert.throws(
       () => requireHumanActor(timerActor, decision),
       (error) => error.code === 'HUMAN_APPROVAL_REQUIRED' && error.status === 403,

@@ -1584,6 +1584,11 @@ export function createCustomerCardView(deps) {
       const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
         ? keptDraftWrap.getAttribute('data-structured-for') : null;
       if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      // Review #1065 (P2): the draft opened by «Scrivi tu» or by the AI-off
+      // answer stays open through a repaint, empty fields included.
+      if (typeof keptDraftWrap?.getAttribute === 'function' && keptDraftWrap.getAttribute('hidden') === null) {
+        keptVoice.draftShown = true;
+      }
       drafts.voice = keptVoice;
     }
     return Object.keys(drafts).length > 0 ? drafts : null;
@@ -2068,7 +2073,14 @@ export function createCustomerCardView(deps) {
       host: mount,
       customer: typeof card?.name === 'string' ? card.name : null,
       numbers,
-      ...(callAfterSave ? {} : { mode: 'save' }),
+      ...(callAfterSave ? {} : {
+        mode: 'save',
+        // backlog:28511aa43cc7: Annulla brings the composer back with the
+        // typed text — the draft survives through composerDrafts.
+        onCancel: typeof options.onCancel === 'function'
+          ? options.onCancel
+          : () => openComposer(card, navCtx, 'email'),
+      }),
       choose: async (number, held) => {
         if (held) {
           if (!callAfterSave) return null;
@@ -2992,16 +3004,26 @@ export function createCustomerCardView(deps) {
     // survives the window through composerDrafts, like through ✕.
     const missingPhone = channels.find((entry) => (entry.channel === 'whatsapp' || entry.channel === 'sms')
       && entry.recipient === null) ?? null;
+    // backlog:28511aa43cc7: the missing number reads on its own status
+    // line, never merged into the channels line below — one sentence per
+    // line, like the AI row reads them.
+    const offLines = [];
     if (missingPhone !== null) {
-      const line = el('span', undefined, `${missingPhone.label} manca perché il cliente non ha un numero. `);
+      const ownLine = el('p', 'bo-composer-off', `${missingPhone.label} manca perché il cliente non ha un numero. `);
       const add = el('button', 'bo-composer-add-phone', 'Aggiungi un numero');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'composer-add-phone');
       add.addEventListener('click', () => {
-        openNumberWindow(card, navCtx, [], { callAfterSave: false });
+        // backlog:28511aa43cc7: Annulla in the number window brings the
+        // composer back with the typed text — the draft survives through
+        // composerDrafts, like through ✕.
+        openNumberWindow(card, navCtx, [], {
+          callAfterSave: false,
+          onCancel: () => openComposer(card, navCtx, 'email'),
+        });
       });
-      line.appendChild(add);
-      offLine.appendChild(line);
+      ownLine.appendChild(add);
+      offLines.push(ownLine);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -3009,15 +3031,27 @@ export function createCustomerCardView(deps) {
     // collegato» line used to win — with nothing linked at all the one line
     // is the way to Connettori.
     const spaceUnlinked = !channels.some((entry) => entry.linked === true);
-    if (spaceUnlinked) {
-      offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
-    } else if (offLinked.length > 0) {
-      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
-      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+    if (missingPhone === null) {
+      if (spaceUnlinked) {
+        offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else if (offLinked.length > 0) {
+        offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      if (offLine.firstChild) offLines.push(offLine);
+    } else if (spaceUnlinked || offLinked.length > 0) {
+      const channelsLine = el('p', 'bo-composer-off', '');
+      if (spaceUnlinked) {
+        channelsLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      } else {
+        channelsLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        channelsLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
+      offLines.push(channelsLine);
     }
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
-    if (offLine.firstChild) body.appendChild(offLine);
+    for (const statusLine of offLines) body.appendChild(statusLine);
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
@@ -3025,7 +3059,7 @@ export function createCustomerCardView(deps) {
     // Collega when it links Connettori — the AI row then names it in words.
     const ai = composerAiRow({
       spaceId, navCtx, text,
-      connectorLink: Boolean(offLine.firstChild),
+      connectorLink: offLines.length > 0,
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
       restoreSubject: (value) => {
@@ -3261,16 +3295,35 @@ export function createCustomerCardView(deps) {
     offerMenu.setAttribute('role', 'menu');
     const offerMenuHidden = () => String(offerMenu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
     const syncOfferMenu = () => offer.setAttribute('aria-expanded', offerMenuHidden() ? 'false' : 'true');
-    const closeOfferMenu = () => {
+    // backlog:818092e31a15: opening the menu moves focus to its first
+    // voice; Freccia giù on the button enters that voice, Esc closes and
+    // gives focus back to the button.
+    const focusOfferFirstVoice = () => {
+      const first = offerMenu.querySelector('button');
+      if (typeof first?.focus === 'function') first.focus();
+    };
+    const openOfferMenu = () => {
+      offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu');
+      syncOfferMenu();
+      focusOfferFirstVoice();
+    };
+    const closeOfferMenu = (refocus = false) => {
       offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
       syncOfferMenu();
+      if (refocus && typeof offer.focus === 'function') offer.focus();
     };
     offer.addEventListener('click', () => {
-      offerMenu.setAttribute('class', offerMenuHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
-      syncOfferMenu();
+      if (offerMenuHidden()) openOfferMenu();
+      else closeOfferMenu();
     });
-    offer.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
-    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
+    offer.addEventListener('keydown', (event) => {
+      if (event?.key === 'ArrowDown') {
+        event.preventDefault?.();
+        if (offerMenuHidden()) openOfferMenu();
+        else focusOfferFirstVoice();
+      } else if (event?.key === 'Escape') closeOfferMenu(true);
+    });
+    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(true); });
     const offerAiName = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo cliente';
     const offerAi = uiAddOption(doc, {
       kind: 'ai', title: "Crea con l'AI", line: 'Descrivi l\u2019offerta all\u2019assistente',
@@ -3795,15 +3848,18 @@ export function createCustomerCardView(deps) {
       const row = el('p', 'bo-scheda-fact');
       row.appendChild(el('span', 'bo-scheda-fact-label', def?.label ?? def?.key ?? 'campo'));
       const shown = formatCustomValue(def, byKey.get(def?.key)?.value ?? null);
-      row.appendChild(el('span', undefined, shown ?? '—'));
-      const edit = el('button', undefined, 'Modifica');
+      // Restyle 19/11 (7de82665ac2a): the value itself opens the edit — no
+      // «Modifica» button per field; an empty field reads «Aggiungi».
+      const label = def?.label ?? def?.key ?? 'campo';
+      const edit = el('button', shown == null ? 'bo-campo-value is-empty' : 'bo-campo-value', shown ?? 'Aggiungi');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', `edit-field:${def?.key ?? ''}`);
+      edit.setAttribute('aria-label', shown == null ? `Aggiungi ${label}` : `Modifica ${label}: ${shown}`);
       edit.addEventListener('click', () => renderFieldForm(box, ctx, def));
       row.appendChild(edit);
       box.appendChild(row);
     }
-    const add = el('button', undefined, '+ Aggiungi campo');
+    const add = el('button', 'bo-campo-add-btn', '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
     const openAdd = (draft = null) => {
@@ -3848,6 +3904,15 @@ export function createCustomerCardView(deps) {
     box.setAttribute('data-editing-field', String(def?.key ?? ''));
     const classes = String(box.getAttribute('class') ?? '');
     if (!classes.split(/\s+/).includes('bo-campo-editing')) box.setAttribute('class', `${classes} bo-campo-editing`.trim());
+    // Verifica Mac 20/11 07:29Z: Salva (200) or Annulla must close the
+    // editor. The repaint below re-reads open editors as drafts
+    // (readDrafts, review #835), so the editing marks go first — otherwise
+    // the repaint brings the same editor back and it never closes.
+    const closeEditor = () => {
+      box.removeAttribute('data-editing-field');
+      const now = String(box.getAttribute('class') ?? '').split(/\s+/).filter((name) => name !== '' && name !== 'bo-campo-editing');
+      box.setAttribute('class', now.join(' '));
+    };
     box.appendChild(el('h4', undefined, 'Campi personalizzati'));
     const rows = Array.isArray(ctx.values) ? ctx.values : [];
     const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
@@ -3873,6 +3938,7 @@ export function createCustomerCardView(deps) {
           resource: ctx.resource, id: ctx.id, key: def?.key, value: entry.read(),
         });
         toast('Campo salvato');
+        closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
         entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
@@ -3880,6 +3946,7 @@ export function createCustomerCardView(deps) {
       }
     }));
     cancel.addEventListener('click', async () => {
+      closeEditor();
       await renderCard(ctx.resource, ctx.id);
     });
   }
@@ -4130,6 +4197,11 @@ export function createCustomerCardView(deps) {
       : runKey !== null ? enrichmentProposals.get(runKey) ?? [] : [];
     if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
+      // Restyle 19/11 (7de82665ac2a): the empty state says what the AI does.
+      if (typeof extract === 'function') {
+        box.appendChild(el('p', 'bo-muted bo-scheda-enrich-hint',
+          'Con «Aggiorna» l’AI legge i messaggi di questo cliente e propone nome, ruolo, azienda e telefono, ognuno con la sua fonte.'));
+      }
       return;
     }
     for (const item of items) {
@@ -4286,6 +4358,12 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+    // Restyle 19/11 (7de82665ac2a): the note and the dictation sit on top of
+    // the cronologia, where the new note lands — no scrolling past every
+    // row to write one.
+    const composerSlot = noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string'
+      ? el('div', 'bo-scheda-note-top') : null;
+    if (composerSlot !== null) box.appendChild(composerSlot);
     // backlog:5346ab531538: a cancelled appointment reads in the cronologia
     // as its own row, under «Tutti» only (it has no channel), at the moment
     // it was cancelled — the slot left the calendar grid, not the history.
@@ -4940,7 +5018,7 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(noteError);
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
-      box.appendChild(noteForm);
+      composerSlot.appendChild(noteForm);
       // Voce 5036bc435465: «Detta nota vocale» — after a call from any
       // phone (CRM-logged or tel: fallback) the operator dictates how it
       // went. The browser transcribes on the device (the `dictate` seam,
@@ -4986,6 +5064,8 @@ export function createCustomerCardView(deps) {
       let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
       let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
       let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      // Review #1065 (P2): whether the draft fields were open, carried like the words.
+      let draftShownCarried = keptVoice?.draftShown === true;
       const stopDictation = () => {
         try {
           voiceDictation?.stop?.();
@@ -5088,6 +5168,11 @@ export function createCustomerCardView(deps) {
         composer.appendChild(voiceBar);
         voicePanel.appendChild(composer);
         const voiceError = el('small', 'field-error', '');
+        // Verifica Mac 19/11: «Detta o scrivi prima…» goes as soon as the
+        // operator writes, like the note form's own error.
+        voiceInput.addEventListener('input', () => {
+          if (voiceError.textContent === 'Detta o scrivi prima com’è andata la chiamata.') voiceError.textContent = '';
+        });
         const structureButton = el('button', 'ui-btn ui-btn-secondary bo-voice-ai', 'Ordina con l’AI');
         structureButton.setAttribute('type', 'button');
         structureButton.setAttribute('data-action', 'structure-voice-note');
@@ -5099,6 +5184,9 @@ export function createCustomerCardView(deps) {
         manualButton.setAttribute('type', 'button');
         manualButton.setAttribute('data-action', 'voice-draft-manual');
         const showDraft = (on) => {
+          draftShownCarried = on;
+          if (on) voicePanel.setAttribute('data-step', 'draft');
+          else voicePanel.removeAttribute('data-step');
           if (on) {
             draftWrap.removeAttribute('hidden');
             manualButton.setAttribute('hidden', '');
@@ -5128,12 +5216,15 @@ export function createCustomerCardView(deps) {
         if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
         if (carriedPassi !== '') passiField.value = carriedPassi;
         if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
-        showDraft(structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
+        showDraft(draftShownCarried || structuredFor !== null || carriedRiassunto !== '' || carriedDecisioni !== '' || carriedPassi !== '');
         manualButton.addEventListener('click', () => {
           showDraft(true);
           riassuntoField.focus?.();
         });
-        const saveButton = el('button', 'ui-btn ui-btn-primary bo-voice-save', 'Salva in cronologia');
+        // Verifica Mac 19/11 (lente AI-native): before a draft the AI is the
+        // main action and «Salva» stays secondary; once a draft is on screen
+        // «Salva» takes the lead (data-step on the panel, CSS only).
+        const saveButton = el('button', 'ui-btn ui-btn-secondary bo-voice-save', 'Salva in cronologia');
         saveButton.setAttribute('type', 'button');
         saveButton.setAttribute('data-action', 'save-voice-note');
         structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
@@ -5165,6 +5256,11 @@ export function createCustomerCardView(deps) {
             if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
               voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
               showDraft(true);
+            } else if (Number(error?.status) === 400 || code === 'VALIDATION_ERROR') {
+              // Verifica Mac 19/11 14:57Z: a refused dictation is not a silent
+              // AI — say what the operator can do now, and open the draft.
+              voiceError.textContent = 'L’AI non è riuscita a ordinare questo testo: salvalo così com’è, oppure dividilo tu qui sotto.';
+              showDraft(true);
             } else {
               voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
             }
@@ -5178,9 +5274,12 @@ export function createCustomerCardView(deps) {
           const dictated = String(voiceInput.value ?? '').trim();
           // Without an AI draft the dictated text itself is the note, so the
           // AI-off path still saves — the option said why, it never blocks.
-          const body = riassunto !== '' || decisioni !== '' || passi !== ''
-            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
-            : dictated;
+          // Verifica Mac 19/11: only the parts written land — no empty
+          // «Decisioni:» in the cronologia.
+          const parts = [['Riassunto', riassunto], ['Decisioni', decisioni], ['Prossimi passi', passi]]
+            .filter(([, value]) => value !== '')
+            .map(([label, value]) => `${label}: ${value}`);
+          const body = parts.length > 0 ? parts.join('\n') : dictated;
           if (body === '') {
             voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
             return;
@@ -5258,7 +5357,7 @@ export function createCustomerCardView(deps) {
         buildVoicePanel();
       }
       voiceWrap.appendChild(voicePanel);
-      box.appendChild(voiceWrap);
+      composerSlot.appendChild(voiceWrap);
     }
   }
 
@@ -5509,16 +5608,35 @@ export function createCustomerCardView(deps) {
       const syncMenu = () => {
         button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
       };
-      const close = () => {
+      // backlog:818092e31a15: opening the menu moves focus to its first
+      // voice; Freccia giù on the button enters that voice, Esc closes
+      // and gives focus back to the button.
+      const focusStageFirstVoice = () => {
+        const first = menu.querySelector('button');
+        if (typeof first?.focus === 'function') first.focus();
+      };
+      const openStageMenu = () => {
+        menu.setAttribute('class', 'bo-scheda-stage-voices');
+        syncMenu();
+        focusStageFirstVoice();
+      };
+      const close = (refocus = false) => {
         if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
         syncMenu();
+        if (refocus && typeof button.focus === 'function') button.focus();
       };
       button.addEventListener('click', () => {
-        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-        syncMenu();
+        if (isClosed()) openStageMenu();
+        else close();
       });
-      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      button.addEventListener('keydown', (event) => {
+        if (event?.key === 'ArrowDown') {
+          event.preventDefault?.();
+          if (isClosed()) openStageMenu();
+          else focusStageFirstVoice();
+        } else if (event?.key === 'Escape') close(true);
+      });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(true); });
       const stageError = el('small', 'field-error', '');
       const stageStatus = el('small', 'bo-muted', '');
       stageStatus.setAttribute('role', 'status');
@@ -5997,7 +6115,11 @@ export function createCustomerCardView(deps) {
           id: `appointment-booked:${String(item?.id ?? '')}`,
           entry: 'appointment-booked',
           occurredAt: Number.isFinite(bookedMs) ? item.bookedAt : item?.startsAt,
-          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
+          // backlog:ece111d80305 / 9ff9a9ee1fea: the place rides the timeline
+          // read (#1092), so the row says where too — like the popover.
+          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot,
+            typeof item?.location === 'string' && item.location.trim() !== '' ? item.location.trim() : null]
+            .filter(Boolean).join(' · '),
           reason: null,
         };
       });

@@ -40,6 +40,7 @@ import {
   SPACE_AI_PERMISSION_DEFAULTS,
 } from '../packages/space-permissions/src/index.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
 import { spaceMenuItems } from '../apps/admin/public/admin-shell.js';
 
 const flush = async (rounds = 12) => {
@@ -118,6 +119,9 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
 }
 
 function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }], active = SPACE, doc = null } = {}) {
+  // The shell keeps /api/profile once per app start: each test is its own
+  // app start, so it opens with an empty cache (backlog:30f7ce51c87a).
+  forgetCachedProfile(null);
   const docNode = doc ?? createFakeDocument();
   const mount = createMount();
   const seen = { toast: [], picked: [], navigated: [] };
@@ -376,7 +380,12 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
 // for more than 10 s — eight reads one after the other, 2,5–4 s each. Now
 // the page paints at once with a skeleton, every read starts together, and
 // the data replaces the skeleton when the reads land.
-test('1a96094db71d: the page paints a skeleton at once and starts every read together', async () => {
+// Voce 785aeb28bd18: 1a96094db71d resta per i dati — la pagina dipinge
+// subito e ruolo, team, agenti e interruttori partono insieme. La statistica
+// delle card (profilo, connettori, clienti) non parte più con loro: verifica
+// Mac 19/11, il passo member faceva la coda dietro quelle letture (1,1–2,8 s),
+// quindi parte solo dopo che i dati sono arrivati.
+test('1a96094db71d: the page paints a skeleton at once, the team data starts together, the statistic follows', async () => {
   const pending = [];
   const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }];
   const base = stubClient({
@@ -384,31 +393,19 @@ test('1a96094db71d: the page paints a skeleton at once and starts every read tog
     connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
     customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
   });
-  // backlog:30f7ce51c87a: the page starts the one aggregate plus the kept
-  // profile, never the seven single reads it used to fly on its own.
-  const summary = {
-    spaceId: SPACE,
-    context: { identity: { subject: 'owner-1' }, membership: { subject: 'owner-1', role: 'owner' }, roles: { owner: [], operator: [], observer: [] } },
-    memberships: { items: members },
-    agents: { items: [] },
-    switches: { spaceId: SPACE, overrides: [] },
-    connectors: { spaceId: SPACE, connectors: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
-    customers: { items: [], page: 1, pageSize: 10, pages: 0, total: 3, totalIsExact: true },
-    fix: { issues: [], candidates: [], needsFix: 0 },
-  };
-  const withSummary = {
-    request(path, options = {}) {
-      if (path.startsWith('/api/spazi-accessi/summary')) return Promise.resolve(summary);
-      return base.request(path, options);
-    },
-  };
+  // Voce 785aeb28bd18: no summary stubbed here, so the load flies the
+  // single reads — data first, the statistic only after the data lands.
+  // The summary path lives in tests/admin-spazi-accessi-summary.test.js.
   const client = {
     request(path, options = {}) {
       return new Promise((resolve, reject) => {
-        pending.push({ path, release: () => withSummary.request(path, options).then(resolve, reject) });
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
       });
     },
   };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
   const { mount, view: v } = view({ client });
   const done = v.render();
   await flush();
@@ -420,21 +417,32 @@ test('1a96094db71d: the page paints a skeleton at once and starts every read tog
   assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton, not «Carico…»');
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
     'no switch to flip before its value is known');
+  // backlog:30f7ce51c87a: the one aggregate is tried first; this backend
+  // has none, so failing it drops the load onto the single reads below.
+  const noSummary = pending.find((entry) => entry.path.startsWith('/api/spazi-accessi/summary'));
+  assert.ok(noSummary, 'the aggregate is tried before the singles');
+  noSummary.release();
+  await flush();
   const started = pending.map((entry) => entry.path);
-  for (const expected of ['/api/spazi-accessi/summary', '/api/profile']) {
+  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective']) {
     assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
   }
-  for (const single of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers', '/api/modules/']) {
-    assert.ok(!started.some((path) => path.startsWith(single)), `${single} never flies beside the summary`);
+  assert.ok(!started.some((path) => isStat(path)), 'the statistic waits for the team data');
+  // Release the team data: it replaces the skeleton, then the statistic starts.
+  for (let round = 0; round < 6 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    for (const entry of pending.splice(0).filter((entry) => !isStat(entry.path))) entry.release();
+    await flush();
   }
-  // Release everything (and whatever the answers start), then the data replaces the skeleton.
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.ok(pending.some((entry) => isStat(entry.path)), 'the statistic starts once the team data is in');
+  // Release everything the data started, then the switches and the statistic arrive.
   for (let round = 0; round < 6 && pending.length > 0; round += 1) {
     for (const entry of pending.splice(0)) entry.release();
     await flush();
   }
   await done;
   await flush();
-  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton stays gone');
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
   assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });
@@ -2200,4 +2208,60 @@ test('dd570f6d501e: opening the new-space menu moves focus to its first voice', 
   const firstVoice = menu.querySelector('button');
   assert.ok(firstVoice, 'the menu has a first voice');
   assert.equal(firstVoice.__focused, true, 'opening the menu moves focus to the first voice');
+});
+
+// Voce 785aeb28bd18 (verifica Mac 19/11: su Spazi e accessi il passo member
+// sta fra 1,1 e 2,8 s, sotto 1 s su Oggi, scheda e Pipeline): la statistica
+// delle card (profilo, connettori, clienti) non parte mai insieme al roster —
+// parte solo dopo che i dati (ruolo, team, agenti, interruttori) sono arrivati,
+// così il roster non fa la coda dietro le letture lente delle card.
+test('785aeb28bd18: the card statistic reads start only after the team data lands', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const isStat = (path) => path === '/api/profile'
+    || path.startsWith('/api/connectors?')
+    || path.startsWith('/api/customer-data/customers?');
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // backlog:30f7ce51c87a: the one aggregate is tried first; this backend
+  // has none, so failing it drops the load onto the single reads below.
+  const noSummary = pending.find((entry) => entry.path.startsWith('/api/spazi-accessi/summary'));
+  assert.ok(noSummary, 'the aggregate is tried before the singles');
+  noSummary.release();
+  await flush();
+  const wave1 = pending.map((entry) => entry.path);
+  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective']) {
+    assert.ok(wave1.some((path) => path.startsWith(expected)), `${expected} starts at once with the team`);
+  }
+  assert.ok(!wave1.some((path) => path === '/api/profile'), 'the profile waits for the team data');
+  assert.ok(!wave1.some((path) => path.startsWith('/api/connectors?')), 'the connectors wait for the team data');
+  assert.ok(!wave1.some((path) => path.startsWith('/api/customer-data/customers?')), 'the customers wait for the team data');
+  // Release the team wave only: the team paints while the statistic is still out.
+  for (let round = 0; round < 8 && pending.some((entry) => !isStat(entry.path)); round += 1) {
+    for (const entry of pending.splice(0).filter((entry) => !isStat(entry.path))) entry.release();
+    await flush();
+  }
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the team data replaces the skeleton');
+  assert.match(text(mount), /Team dell\u2019organizzazione/, 'the team is on screen');
+  assert.ok(!/1 canale · 2 persone · 3 clienti/.test(text(mount)), 'no statistic before its reads');
+  assert.ok(pending.some((entry) => isStat(entry.path)), 'the statistic reads start once the team data is in');
+  for (let round = 0; round < 8 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });

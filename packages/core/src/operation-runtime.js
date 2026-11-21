@@ -62,9 +62,9 @@ import { runExternalOperation } from './external-operation.js';
  * every declared operation's `create(runtime)` receives the same frozen
  * context.
  *
- * @param {{database: any, modules: any, events: any, config?: Record<string, unknown>}} handles
+ * @param {{database: any, modules: any, events: any, config?: Record<string, unknown>, core?: any, pipelines?: any}} handles
  */
-export function createOperationRuntime({ database, modules, events, config, core }) {
+export function createOperationRuntime({ database, modules, events, config, core, pipelines = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('operation runtime needs database, modules and events');
   }
@@ -74,6 +74,10 @@ export function createOperationRuntime({ database, modules, events, config, core
     events,
     config: Object.freeze({ ...(config ?? {}) }),
     runExternal: runExternalOperation,
+    // backlog:1adf95307b31 — the composed pipeline registry (or null): the
+    // customer list resolves the opportunity pipeline through it so its
+    // open-value rule is the shared one with Reporting (Pagato is won).
+    pipelines: pipelines ?? null,
     // The ADR-013 core adapters — the same frozen handle a record action already
     // receives as `ctx.core`, added to this context by ADR-037 because a real
     // consumer needed it and the alternatives were both worse. Customer Data

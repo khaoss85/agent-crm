@@ -1008,8 +1008,24 @@ export function createPersonalizzazioneView(deps) {
           ? 'Le skill insegnano all\u2019AI come lavorare nel tuo studio.'
           : 'Un pacchetto mette insieme capacità del framework per il tuo settore.')
         : 'Prova a cambiare ricerca o scheda.';
-      box.appendChild(el(doc, 'p', { text: emptyTitle, cls: 'empty-title' }));
-      box.appendChild(el(doc, 'p', { text: emptySub, cls: 'empty' }));
+      // Restyle 19/11: the empty «I tuoi» is a state with a way forward —
+      // one button to the catalogue — not two lines of text.
+      const empty = el(doc, 'div', { cls: 'bo-perso-empty' });
+      empty.appendChild(el(doc, 'p', { text: emptyTitle, cls: 'empty-title' }));
+      empty.appendChild(el(doc, 'p', { text: emptySub, cls: 'empty' }));
+      if (state.view === 'tuoi') {
+        const browse = el(doc, 'button', {
+          text: state.tab === 'skill' ? 'Scopri le skill' : 'Scopri i pacchetti',
+          cls: 'ui-btn ui-btn-secondary ui-btn-small',
+          attrs: { type: 'button', 'data-action': 'perso-browse' },
+        });
+        browse.addEventListener('click', () => {
+          state.view = 'scopri';
+          render();
+        });
+        empty.appendChild(browse);
+      }
+      box.appendChild(empty);
       mount.appendChild(box);
       return;
     }
@@ -1021,7 +1037,7 @@ export function createPersonalizzazioneView(deps) {
 
   /** @param {any} box @param {Array<{entry: any, row: any}>} items */
   function renderMineTable(box, items) {
-    const table = el(doc, 'table', { cls: 'mine' });
+    const table = el(doc, 'table', { cls: 'mine bo-perso-mine' });
     const head = el(doc, 'tr');
     head.appendChild(el(doc, 'th', { text: state.tab === 'skill' ? 'Skill AI' : 'Pacchetto' }));
     head.appendChild(el(doc, 'th', { text: 'Stato' }));
@@ -1030,9 +1046,12 @@ export function createPersonalizzazioneView(deps) {
     for (const { entry, row } of items) {
       const line = el(doc, 'tr');
       line.appendChild(el(doc, 'td', { text: String(entry.label ?? entry.name) }));
-      line.appendChild(el(doc, 'td', { text: unitStatus({ entry, row }) === 'attiva' ? 'Attiva ✓' : 'Da attivare' }));
-      const cell = el(doc, 'td');
-      const toggle = el(doc, 'button', { text: 'Disattiva', attrs: { type: 'button' } });
+      const on = unitStatus({ entry, row }) === 'attiva';
+      const stateCell = el(doc, 'td');
+      stateCell.appendChild(el(doc, 'span', { cls: on ? 'bo-perso-state' : 'bo-perso-state is-off', text: on ? 'Attiva ✓' : 'Da attivare' }));
+      line.appendChild(stateCell);
+      const cell = el(doc, 'td', { cls: 'bo-perso-mine-action' });
+      const toggle = el(doc, 'button', { text: 'Disattiva', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
       toggle.disabled = state.busy;
       if (busyOn('/api/space-packages/deactivate', entry.name)) uiMarkBusy(toggle, 'Disattivo…');
       toggle.addEventListener('click', async () => {
@@ -1056,12 +1075,27 @@ export function createPersonalizzazioneView(deps) {
 
   /** @param {any} box @param {Array<{entry: any, row: any}>} items */
   function renderDiscoverCards(box, items) {
+    // Restyle 19/11 (Dan: «non si capisce cosa fanno»): a grid of compact
+    // cards — name with its state, one line of what it does, then the one
+    // clear action «Attiva» (green, it changes the space), «Prova» as the
+    // quiet look-before (it writes nothing) and «Dettagli» as a text link.
+    const grid = el(doc, 'div', { cls: 'bo-perso-grid' });
+    box.appendChild(grid);
+    box = grid;
     for (const { entry, row } of items) {
-      const card = el(doc, 'article', { cls: 'card', attrs: { 'data-unit': entry.name } });
-      card.appendChild(el(doc, 'h3', { text: String(entry.label ?? entry.name) }));
+      const active = unitStatus({ entry, row }) === 'attiva';
+      const card = el(doc, 'article', { cls: active ? 'card bo-perso-card is-active' : 'card bo-perso-card', attrs: { 'data-unit': entry.name } });
+      const head = el(doc, 'div', { cls: 'bo-perso-card-head' });
+      head.appendChild(el(doc, 'h3', { text: String(entry.label ?? entry.name) }));
+      if (active) head.appendChild(el(doc, 'span', { cls: 'bo-perso-state', text: 'Attiva ✓' }));
+      card.appendChild(head);
       if (entry.blurb) card.appendChild(el(doc, 'p', { text: String(entry.blurb), cls: 'muted' }));
       const actions = el(doc, 'div', { cls: 'card-actions' });
-      const proof = el(doc, 'button', { text: 'Prova', attrs: { type: 'button' } });
+      const proof = el(doc, 'button', {
+        text: 'Prova',
+        cls: 'ui-btn ui-btn-secondary ui-btn-small bo-perso-proof',
+        attrs: { type: 'button', title: 'Mostra cosa aggiungerebbe a questo spazio, senza scrivere nulla' },
+      });
       proof.disabled = state.busy;
       proof.addEventListener('click', async () => {
         state.previewFor = entry.name;
@@ -1079,9 +1113,11 @@ export function createPersonalizzazioneView(deps) {
         }
         renderList();
       });
-      actions.appendChild(proof);
-      const active = unitStatus({ entry, row }) === 'attiva';
-      const add = el(doc, 'button', { text: active ? '✓' : '+', attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` } });
+      const add = el(doc, 'button', {
+        text: active ? 'Attiva ✓' : 'Attiva',
+        cls: active ? 'ui-btn ui-btn-secondary ui-btn-small bo-perso-add is-on' : 'ui-btn ui-btn-cta ui-btn-small bo-perso-add',
+        attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` },
+      });
       add.disabled = state.busy || active;
       if (busyOn('/api/space-packages/activate', entry.name)) uiMarkBusy(add, 'Attivo…');
       if (!active) {
@@ -1099,13 +1135,16 @@ export function createPersonalizzazioneView(deps) {
           render();
         });
       }
-      actions.appendChild(add);
+      // An active unit wears its state in the head: no disabled button twice.
+      if (!active) actions.appendChild(add);
+      actions.appendChild(proof);
       // Skill cards open the BO-F4-02 detail: the seven sections of the
       // skill, from the cycle to the copyable coding-agent prompt.
       if (state.tab === 'skill' && typeof entry.name === 'string' && entry.name.startsWith('skill:')) {
         const slug = entry.name.slice('skill:'.length);
         const detail = el(doc, 'a', {
           text: 'Dettagli',
+          cls: 'bo-perso-link',
           attrs: { href: `#/personalizzazione/skill/${slug}` },
         });
         detail.addEventListener('click', (event) => {
@@ -1117,14 +1156,17 @@ export function createPersonalizzazioneView(deps) {
       card.appendChild(actions);
       box.appendChild(card);
     }
-    const dev = el(doc, 'article', { cls: 'card dev' });
+    const dev = el(doc, 'article', { cls: 'card dev bo-perso-card bo-perso-dev' });
     dev.appendChild(el(doc, 'h3', { text: 'Sviluppa per Accordo' }));
     dev.appendChild(el(doc, 'p', { text: 'Hai un settore con esigenze sue? Impacchetta capacità esistenti.', cls: 'muted' }));
-    const go = el(doc, 'button', { text: 'Come pubblicare un pacchetto', attrs: { type: 'button' } });
-    go.addEventListener('click', () => {
+    // Verifica Mac 20/11 11:56Z (fdc711253dbd): this button was named `go`
+    // and shadowed the view's go(hash) for the whole function, so every
+    // «Dettagli» click threw (TDZ) and opened nothing.
+    const howTo = el(doc, 'button', { text: 'Come pubblicare un pacchetto', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
+    howTo.addEventListener('click', () => {
       say(PACKAGE_AUTHORING_MESSAGE);
     });
-    dev.appendChild(go);
+    dev.appendChild(howTo);
     box.appendChild(dev);
   }
 
