@@ -11,13 +11,16 @@ import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library
 /**
  * @param {{
  *   doc: any, host: any, attr: string, action: string, title: string,
- *   customer?: string | null, extraClass?: string,
+ *   customer?: string | null, extraClass?: string, onClose?: (() => void) | null,
  * }} options `attr` marks the open window (`data-…="open"`), `action`
- *   prefixes the head buttons' data-action.
+ *   prefixes the head buttons' data-action. `onClose` runs after every
+ *   frame-owned close (Chiudi, the frame's Escape) so the opener can take
+ *   focus back; programmatic removals call no frame path and skip it.
  * @returns {{ panel: any, body: any, foot: any, shut: () => void, gone: () => boolean }}
  */
 export function openSchedaWindow(options) {
   const { doc, host, attr, action, title } = options;
+  const onClose = typeof options?.onClose === 'function' ? options.onClose : null;
   const el = elFor(doc);
   const old = host.querySelector(`div[${attr}="open"]`);
   if (old && old.parentNode) old.parentNode.removeChild(old);
@@ -27,7 +30,10 @@ export function openSchedaWindow(options) {
   panel.setAttribute('aria-label', title);
   host.appendChild(panel);
   const gone = () => panel.parentNode == null;
-  const shut = () => { if (panel.parentNode) panel.parentNode.removeChild(panel); };
+  const shut = () => {
+    if (panel.parentNode) panel.parentNode.removeChild(panel);
+    if (onClose) onClose();
+  };
 
   const head = el('div', 'bo-composer-head');
   const heading = el('h4', 'bo-composer-title', title);

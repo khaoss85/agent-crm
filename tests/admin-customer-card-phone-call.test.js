@@ -723,6 +723,70 @@ test('14d999de: opening Chiama closes the other windows (one at a time)', async 
   assert.equal(appointmentPanel(mount), null, 'the appointment window steps aside for Chiama');
 });
 
+// Voce 14d999de (P2 review muse giro 1 su #1036 + VERIFIER_BACK 18/11):
+// the retained Chiama panel kept dialing the old number across a
+// same-customer re-read after the phone changed. Repro: red before the
+// cure (the stale panel survives), green after (it is dropped).
+test('14d999de: a same-customer re-read after the phone changes drops the stale Chiama panel', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti' });
+  await view.renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel opens');
+  assert.ok(mount.textContent.includes('+393331234567'), 'it dials the held number');
+  client.state.card = {
+    ...CARD_WITH_PHONE,
+    phone: { available: true, value: '+393399998888', system: 'phone', reason: null },
+  };
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(callPanel(mount), null, 'the stale panel does not dial the old number after the phone changes');
+});
+
+// Voce 14d999de (seguito ANSWER supervisore 18/11 22:0xZ): right after the
+// click on Chiama, Escape did not close the popover because focus never
+// entered it. Repro: red before the cure (no focus, no document Escape),
+// green after (first control focused, document Escape closes, focus back
+// on the Chiama tile). Interface test: apri, Esc, popover chiuso, focus
+// sul pulsante.
+test('14d999de: Chiama focuses its first control; document Escape closes it and focus returns to Chiama', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const doc = createFakeDocument();
+  const heard = {};
+  doc.addEventListener = (type, handler) => { (heard[type] ??= []).push(handler); };
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  const opener = button(mount, 'call-customer');
+  opener.listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel opens');
+  const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
+  assert.ok(fallback, 'the device dialer is offered');
+  assert.equal(fallback.__focused, true, 'the first control takes focus on open');
+  assert.ok((heard.keydown ?? []).length > 0, 'Escape is listened at document level while the popover is open');
+  heard.keydown.forEach((handler) => handler({ key: 'Escape' }));
+  assert.equal(callPanel(mount), null, 'document Escape closes the popover');
+  assert.equal(opener.__focused, true, 'focus returns to the Chiama tile that opened it');
+  assert.equal(client.posts.length, 0, 'closing writes nothing');
+});
+
+test('14d999de: with a linked voice the outcome form takes focus when it lands', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const doc = createFakeDocument();
+  doc.addEventListener = () => {};
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel opens');
+  const outcome = mount.findAll('select')[0];
+  assert.ok(outcome, 'the outcome form lands');
+  assert.equal(outcome.__focused, true, 'the first control of the landed form takes focus');
+});
+
 test('14d999de: opening another window closes Chiama; a re-read keeps it like the other windows', async () => {
   const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
   const doc = createFakeDocument();

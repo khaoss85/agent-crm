@@ -687,13 +687,18 @@ const TIMELINE_PAGE = 20;
  * The open «Chiama dal CRM» panel, if any (voce 14d999de): one live view at
  * a time, like the calendar popover — set while the panel is painted,
  * cleared when it closes or the view routes away. A click outside the panel
- * closes it; Escape and Chiudi come from the shared window frame.
- * @type {{ shut: () => void, gone: () => boolean } | null}
+ * closes it through the document closer below; Escape closes it at document
+ * level and through the shared window frame; Chiudi through the frame. Every
+ * frame or document close hands focus back to the tile that opened it.
+ * @type {{ shut: () => void, drop: () => void, gone: () => boolean, phone: string } | null}
  */
 let openCallPanelHandle = null;
 
 /** The document the single outside-click closer for «Chiama dal CRM» is installed on, if any. */
 let callOutsideInstalledOn = null;
+
+/** The document the single document-level Escape closer for «Chiama dal CRM» is installed on, if any. */
+let callEscInstalledOn = null;
 
 /**
  * True when the click landed inside the «Chiama dal CRM» panel or on its
@@ -731,6 +736,30 @@ function installCallOutsideCloser(doc) {
       return;
     }
     if (insideCallPanel(event?.target)) return;
+    openCallPanelHandle = null;
+    current.shut();
+  });
+}
+
+/**
+ * Install once per document: Escape closes the open «Chiama dal CRM» panel
+ * no matter where focus is (seguito ANSWER supervisore 18/11: right after
+ * the click on Chiama the focus never entered the popover, so the frame's
+ * panel-level Escape never heard it). Documents without addEventListener
+ * (the fake document) skip the closer; the frame's Escape still works there.
+ * @param {any} doc
+ */
+function installCallEscCloser(doc) {
+  if (callEscInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
+  callEscInstalledOn = doc;
+  doc.addEventListener('keydown', (event) => {
+    if (event?.key !== 'Escape') return;
+    const current = openCallPanelHandle;
+    if (!current) return;
+    if (current.gone()) {
+      if (openCallPanelHandle === current) openCallPanelHandle = null;
+      return;
+    }
     openCallPanelHandle = null;
     current.shut();
   });
@@ -2009,7 +2038,7 @@ export function createCustomerCardView(deps) {
     call.setAttribute('data-action', 'call-customer');
     call.setAttribute('title', phone !== null ? `Chiama ${phone}` : 'Chiama: scegli o scrivi il numero');
     call.addEventListener('click', () => {
-      if (phone !== null && numbers.length <= 1) openCallPanel(card, navCtx, phone);
+      if (phone !== null && numbers.length <= 1) openCallPanel(card, navCtx, phone, call);
       else openNumberWindow(card, navCtx, numbers);
     });
     row.appendChild(call);
@@ -2137,45 +2166,107 @@ export function createCustomerCardView(deps) {
   // branch that cannot offer the CRM-logged form still offers the same
   // tel: fallback — no space, no linked voice, or a connectors read that
   // failed (404 not composed or any other error).
+  /**
+   * Voce 14d999de (seguito ANSWER supervisore 18/11): on open the focus goes
+   * to the first control of the «Chiama dal CRM» panel, so the frame's Escape
+   * hears it at once; the document-level closer below is the net while the
+   * focus has not entered yet. Query order is tab order: select, input,
+   * textarea, link, button.
+   * @param {{ body: any }} win
+   */
+  const focusFirstCallControl = (win) => {
+    const body = win?.body ?? null;
+    if (body === null || typeof body.querySelector !== 'function') return;
+    const first = body.querySelector('select') ?? body.querySelector('input')
+      ?? body.querySelector('textarea') ?? body.querySelector('a') ?? body.querySelector('button');
+    if (typeof first?.focus === 'function') first.focus();
+  };
   const appendDeviceDialFallback = (into, dialPhone) => {
-    const dialable = dialPhone.replaceAll(/[^\d+]/g, '');
+    const shown = typeof dialPhone === 'string' ? dialPhone.trim() : '';
+    if (shown === '') {
+      // Voce 14d999de (ANSWER 17/11): senza numero niente link.
+      into.appendChild(el('p', 'bo-muted', 'Nessun numero da chiamare.'));
+      return;
+    }
+    const dialable = shown.replaceAll(/[^\d+]/g, '');
     const dial = link(
-      `tel:${dialable === '' ? dialPhone : dialable}`,
-      `Chiama ${dialPhone} (tel:)`, 'call-fallback');
+      `tel:${dialable === '' ? shown : dialable}`,
+      `Chiama ${shown} (tel:)`, 'call-fallback');
     // Voce 14d999de: a /bo link, never the browser-default blue underline.
     dial.setAttribute('class', 'bo-call-fallback');
     into.appendChild(dial);
   };
-  function openCallPanel(card, navCtx, phone) {
+  function openCallPanel(card, navCtx, phone, opener = null) {
     // Voce 14d999de: the shared scheda window frame — the same dark head
     // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
     // so the panel reads as /bo and Escape/Chiudi close it. A click outside
-    // closes it too, through the document closer below.
+    // closes it too, through the document closers below.
     // Seguito ANSWER 17/11 (stessa trappola della #605): the fixed panel
     // hangs off the view, never the action card — inside the left column it
     // painted under the Offerta column, covering Riduci/Chiudi. One window
     // at a time, like Scrivi and the offer window.
     closeSchedaWindows();
     installCallOutsideCloser(doc);
+    installCallEscCloser(doc);
+    // Seguito ANSWER 18/11: every frame-owned close (Chiudi, the frame's
+    // Escape) hands focus back to the tile that opened the panel. The opener
+    // may be rebuilt by a re-read meanwhile, so a stored tile counts only
+    // while it is still on screen — else the live Chiama tile takes it.
+    const handleOpenerFocus = () => {
+      const live = opener !== null && mount.contains(opener) ? opener
+        : mount.querySelector('button[data-action="call-customer"]');
+      if (typeof live?.focus === 'function') live.focus();
+    };
+    // A drop (replace on open, retire on re-read) removes the panel without
+    // stealing focus; shut — every frame and document close — hands it back.
+    let silentDrop = false;
     const win = openSchedaWindow({
       doc, host: mount, attr: 'data-call', action: 'call',
       title: 'Chiama dal CRM',
       customer: typeof card?.name === 'string' ? card.name : null,
+      onClose: () => {
+        if (openCallPanelHandle === handle) openCallPanelHandle = null;
+        if (!silentDrop) handleOpenerFocus();
+      },
     });
-    if (openCallPanelHandle && !openCallPanelHandle.gone()) openCallPanelHandle.shut();
-    openCallPanelHandle = win;
-    const { body } = win;
+    // Review muse giro 1 su #1036 (P2): a retained Chiama panel kept the old
+    // number across a same-customer re-read after the phone changed. The
+    // handle carries the dialed number so a re-read can retire it; a drop
+    // (replace here, retire on re-read) removes without stealing focus,
+    // while shut — the frame and document closes — hands focus back.
+    const handle = {
+      ...win,
+      phone: typeof phone === 'string' ? phone.replace(/[\s\-().]/g, '') : '',
+      shut: () => win.shut(),
+      drop: () => {
+        if (win.gone()) return;
+        if (openCallPanelHandle === handle) openCallPanelHandle = null;
+        silentDrop = true;
+        try {
+          win.shut();
+        } finally {
+          silentDrop = false;
+        }
+      },
+    };
+    if (openCallPanelHandle && !openCallPanelHandle.gone()) openCallPanelHandle.drop();
+    openCallPanelHandle = handle;
+    const focusLanded = () => {
+      if (openCallPanelHandle === handle && !handle.gone()) focusFirstCallControl(handle);
+    };
+    const { body } = handle;
     const spaceId = activeSpaceId();
     if (spaceId === null) {
       body.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
       appendDeviceDialFallback(body, phone);
+      focusLanded();
       return;
     }
     const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
     body.appendChild(wait);
     client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        if (win.gone()) return;
+        if (handle.gone()) return;
         body.removeChild(wait);
         const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
         // The same gate the calls route enforces: active AND a non-empty
@@ -2190,12 +2281,14 @@ export function createCustomerCardView(deps) {
           body.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
           appendDeviceDialFallback(body, phone);
+          focusLanded();
           return;
         }
         buildCallForm(body, navCtx, spaceId, phone);
+        focusLanded();
       },
       (error) => {
-        if (win.gone()) return;
+        if (handle.gone()) return;
         body.removeChild(wait);
         body.appendChild(el('p', 'bo-muted',
           'La chiamata dal CRM non è disponibile qui: chiama dal telefono.'));
@@ -2203,6 +2296,7 @@ export function createCustomerCardView(deps) {
           failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
         })));
         appendDeviceDialFallback(body, phone);
+        focusLanded();
       },
     );
   }
@@ -6734,6 +6828,23 @@ export function createCustomerCardView(deps) {
     emitTitle(card?.name ?? null);
     knownNames?.remember(resource, id, card?.name);
     try {
+      // Voce 14d999de (P2 review muse giro 1 su #1036): the retained Chiama
+      // panel dials the card's number, so a same-customer re-read that changed
+      // the phone retires it instead of keeping the old number on screen. An
+      // unchanged number keeps the panel, like Scrivi keeps its draft.
+      const staleCall = openCallPanelHandle;
+      if (staleCall !== null && key === shownKey) {
+        if (staleCall.gone()) {
+          if (openCallPanelHandle === staleCall) openCallPanelHandle = null;
+        } else {
+          const held = card?.phone?.available === true && typeof card.phone.value === 'string'
+            && card.phone.value.trim() !== '' ? card.phone.value.replace(/[\s\-().]/g, '') : null;
+          if (held !== null && held !== staleCall.phone) {
+            openCallPanelHandle = null;
+            staleCall.drop();
+          }
+        }
+      }
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,
         companyProfile,
