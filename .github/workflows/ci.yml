@@ -73,11 +73,13 @@ jobs:
       cancel-in-progress: true
     # Cure lane (backlog:55ca4e0cb76d): a PR with the `cure` label heals a red
     # main, so it must not queue 3 h behind ordinary PRs on the two shared
-    # runners. It runs on the reserved `accordo-cure` runner instead; any PR
-    # without the label stays on today's `accordo-ci` runners and rank.
-    # The `|| ''` keeps this readable where there are no labels at all
-    # (any non-PR event): a missing list is today's lane, never an error.
-    runs-on: ${{ contains(github.event.pull_request.labels.*.name || '', 'cure') && fromJSON('["self-hosted", "accordo-cure"]') || fromJSON('["self-hosted", "accordo-ci"]') }}
+    # runners. The reserved `accordo-cure` runner is NOT registered yet (only
+    # the two `accordo-ci` runners answer: #1093 asked for `accordo-cure` and
+    # queued 24 h, then cancelled), so every PR stays on today's `accordo-ci`
+    # runners. A cure PR still jumps the server queue via CI_FAST_HEAVY_NAME
+    # below (rank 0). When the Leader Server registers the third runner,
+    # point the `cure` label back at `[self-hosted, accordo-cure]`.
+    runs-on: [self-hosted, accordo-ci]
     env:
       # The PR gate waits in the CI server's own queue too (scripts/ci-heavy.sh): in the shared
       # queue it waited 20-25 min behind other factories while holding a runner, and main's
@@ -154,10 +156,12 @@ jobs:
       - run: npm ci
       # Cure routing, visible in the job log (backlog:55ca4e0cb76d): which
       # runner this PR took and which heavy name (queue rank) the gate runs
-      # under. A `cure` PR reads `accordo-cure` / `fast-main-red-cure` here.
+      # under. Every PR reads runner `accordo-ci` until the reserved
+      # `accordo-cure` runner is registered; a `cure` PR reads heavy name
+      # `fast-main-red-cure` (rank 0 in the server queue), any other PR `fast`.
       - name: Cure routing (runner and queue rank)
         run: |
-          echo "cure routing: labels=[${{ join(github.event.pull_request.labels.*.name, ', ') }}] heavy-name=$CI_FAST_HEAVY_NAME"
+          echo "cure routing: labels=[${{ join(github.event.pull_request.labels.*.name, ', ') }}] runner=accordo-ci heavy-name=$CI_FAST_HEAVY_NAME"
       # The whole gate behind one lock: `scripts/ci-fast.sh` runs the nine
       # phases sequentially (check, touched tests and gtm, pilot browser,
       # smoke, recipe replay, truth agreement, verifier-fixture drift,

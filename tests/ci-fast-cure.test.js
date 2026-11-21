@@ -2,16 +2,22 @@
 
 /**
  * Cure lane (backlog:55ca4e0cb76d): a PR with the `cure` label heals a red
- * main, so the fast gate runs on the reserved `accordo-cure` runner and
- * takes the heavy name `fast-main-red-cure` (rank 0 in the CI server queue
- * via the `main-red-` glob in heavy-job-priority.json). Any other PR keeps
- * `fast`: today's lane and rank.
+ * main, so the fast gate takes the heavy name `fast-main-red-cure` (rank 0
+ * in the CI server queue via the `main-red-` glob in heavy-job-priority.json).
+ * Any other PR keeps `fast`: today's name and rank.
+ *
+ * The reserved `accordo-cure` runner is NOT registered yet (only the two
+ * `accordo-ci` runners answer: #1093 asked for `accordo-cure` and queued 24 h,
+ * then cancelled), so the workflow keeps every PR on today's `accordo-ci`
+ * runners and must never route `runs-on` by label to a reserved-only label.
+ * When the Leader Server registers the third runner, the `runs-on` below
+ * goes back to the `cure` label.
  *
  * The runner choice lives in `.github/workflows/ci.yml` (GitHub evaluates
  * it); what this file proves locally is the observable contract around it:
- * the workflow routes by the `cure` label, and `scripts/ci-fast-step.sh`
- * turns CI_FAST_HEAVY_NAME into the heavy name (or `fast` on anything
- * missing or malformed).
+ * the workflow names the cure heavy name by the `cure` label, and
+ * `scripts/ci-fast-step.sh` turns CI_FAST_HEAVY_NAME into the heavy name
+ * (or `fast` on anything missing or malformed).
  */
 
 import test from 'node:test';
@@ -82,9 +88,8 @@ test('a malformed heavy name never reaches the lock: it falls back to fast', () 
 
 test('the workflow routes the fast job by the cure label', () => {
   assert.match(workflow, /contains\(github\.event\.pull_request\.labels\.\*\.name, 'cure'\)/);
-  assert.match(workflow, /accordo-cure/, 'the reserved runner label');
-  assert.match(workflow, /accordo-ci/, 'a normal PR stays on today’s runners');
+  assert.match(workflow, /runs-on: \[self-hosted, accordo-ci\]/, 'every PR stays on today’s runners');
+  assert.doesNotMatch(workflow, /runs-on:.*accordo-cure/, 'no runs-on asks for the unregistered runner');
   assert.match(workflow, /fast-main-red-cure/, 'the cure heavy name');
-  assert.match(workflow, /labels\.\*\.name \|\| ''/, 'a missing label list stays valid');
   assert.match(workflow, /Cure routing/, 'the routing is visible in the job log');
 });
