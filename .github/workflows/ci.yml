@@ -44,6 +44,11 @@ on:
 # enough to hide a real defect through ten consecutive green local runs — it did, in the
 # first wave of this milestone. One file, read by `nvm`, by `actions/setup-node` and by a
 # human, is how the two stay the same number.
+# Each checkout has its own npm cache. The previous shared ~/.npm could
+# change during the nightly archive while another runner installed packages.
+env:
+  npm_config_cache: ${{ github.workspace }}/.ci-npm-cache
+
 jobs:
   # The PR gate. `push` is limited to `main` above, so this is every change
   # that is not yet merged: `npm run check`, the tests of the touched files
@@ -109,7 +114,7 @@ jobs:
       - name: Restore the verified npm cache (read-only)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.npm
+          path: .ci-npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
       - name: Fetch the PR base for touched-file selection
@@ -248,7 +253,7 @@ jobs:
       - name: Restore the verified npm cache (read-only)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.npm
+          path: .ci-npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
       # Second half of "at most once per window, and only when the head
@@ -472,7 +477,7 @@ jobs:
       - name: Restore the verified npm cache (read-only)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.npm
+          path: .ci-npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
       - run: npm ci
