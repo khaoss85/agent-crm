@@ -476,6 +476,11 @@ export function createCleanupProposals({ database, modules, policy, names, follo
 
       return Object.freeze({
         operation: 'propose-data-cleanup',
+        // The observable proof of the run (backlog:088b639d96a2): when the
+        // scan ran, so a worker log line can quote time, scope and counts
+        // and show the scan reached a space after the release. Identity and
+        // replay stay on the deterministic source keys, never on this time.
+        at: new Date().toISOString(),
         complete,
         scope: Object.freeze({ contacts: contacts.length, companies: companies.length }),
         counts: Object.freeze({
