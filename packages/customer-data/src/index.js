@@ -177,7 +177,11 @@ export function createCustomerDataPackage(options = {}) {
     // Version 8 (backlog:d547f65e): unlinking a wrong merge writes one
     // cronologia note per separated member through the declared work
     // follow-up@1 edge, never into work's storage directly.
-    version: 8,
+    // Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove
+    // to the surface under the old version 8, so the package moves to 9
+    // with that surface; the match policy moves to version 2 with its
+    // archived/removed `unresolved` rule in the same commit.
+    version: 9,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '

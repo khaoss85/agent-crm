@@ -261,6 +261,36 @@ test('Archiviati: la scansione di ricerca chiede solo archiviati in SQL', async 
     'the Tutti search never asks for archivedOnly');
 });
 
+test('voce b50c2f9d06a1: la policy v2 decide attivo, archiviato ed eliminato', async () => {
+  const policy = defineCustomerMatchPolicy({});
+  assert.equal(policy.version, 2, 'the archived/removed rule ships as policy version 2');
+  const stamp = '2026-11-20T00:00:00.000Z';
+  const row = {
+    system: 'email', externalId: null, email: 'apple.reply@email.apple.com',
+    companyName: null, domain: null,
+  };
+  const readerFor = (contact) => ({
+    externalIdentity: async () => null,
+    contactByEmail: async () => contact,
+    companiesByName: async () => [],
+  });
+  const active = await policy.resolve({
+    row, reader: readerFor({ id: 'c-live', email: row.email, archivedAt: null, deletedAt: null }),
+  });
+  assert.equal(active.outcome, 'matched', 'an active contact still matches by exact email');
+  assert.equal(active.subject?.id, 'c-live');
+  const archived = await policy.resolve({
+    row, reader: readerFor({ id: 'c-arch', email: row.email, archivedAt: stamp, deletedAt: null }),
+  });
+  assert.equal(archived.outcome, 'unresolved', 'an archived contact is never silently reused');
+  assert.deepEqual(archived.candidates.map((candidate) => candidate.id), ['c-arch']);
+  const removed = await policy.resolve({
+    row, reader: readerFor({ id: 'c-del', email: row.email, archivedAt: null, deletedAt: stamp }),
+  });
+  assert.equal(removed.outcome, 'unresolved', 'a removed contact is never silently reused');
+  assert.deepEqual(removed.candidates.map((candidate) => candidate.id), ['c-del']);
+});
+
 test('sync: una nuova mail su indirizzo archiviato resta da decidere, mai riuso', async () => {
   const stamp = '2026-11-20T00:00:00.000Z';
   const policy = defineCustomerMatchPolicy({});
