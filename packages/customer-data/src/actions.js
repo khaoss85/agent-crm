@@ -64,9 +64,16 @@ async function resolveCanonicalLinkRow(links, { sourceKey, decisionId }) {
   return { id: null, sourceKey: distinct };
 }
 
-/** @param {Record<string, string>} [config] */
-export function buildCustomerDataActions(config) {
+/**
+ * @param {Record<string, string>} [config]
+ * @param {{ timelineNotes?: any }} [edges] the opened work `follow-up@1`
+ *   capability definition from the composed work package (the same optional
+ *   edge the cleanup scan consumes). Absent when the composition wires no
+ *   work: unlinking still holds and reports the timeline as unavailable.
+ */
+export function buildCustomerDataActions(config, edges = {}) {
   const names = resolvedNames(config);
+  const timelineNotes = edges?.timelineNotes ?? null;
 
   return [
     /**
@@ -223,7 +230,10 @@ export function buildCustomerDataActions(config) {
      * stays where it was written, and the two schede read separate again
      * because the profile only aggregates `active` links. The candidate
      * returns to `unresolved` with its decision cleared, so a human can
-     * decide again. Human-only, with confirmation like every merge.
+     * decide again. Each separated member also gets one `work-activity` note
+     * row — written through the declared work `follow-up@1` edge, so the
+     * undo reads in the scheda cronologia with its reason and actor.
+     * Human-only, with confirmation like every merge.
      */
     {
       module: names.candidate,
@@ -271,10 +281,39 @@ export function buildCustomerDataActions(config) {
         step('customer-data.canonical-identity-unlinked', {
           candidateId: candidate.id, decisionId, withdrawn: active.length,
         });
+        // The scheda cronologia reads work-activity notes on the subject, so
+        // the undo leaves one row per separated member: each card shows what
+        // happened and why, with the same actor the withdrawn rows audit.
+        // Written through the declared work `follow-up@1` edge — the same
+        // optional edge the cleanup scan consumes — so work owns storage
+        // resolution (rename-safe) and `seq`, and the row joins this action's
+        // own transaction. Without a composed work package there is no
+        // timeline to feed, so the unlink still holds and the result says so.
+        // A refused note write propagates: the transaction rolls back and
+        // nothing is half-undone.
+        let timelineWritten = 0;
+        let timelineUnavailable = false;
+        if (timelineNotes !== null && typeof timelineNotes.create === 'function') {
+          const notes = await timelineNotes.create({ modules, actor, consumer: 'customer-data' });
+          for (const row of active) {
+            const member = subjectOf(row);
+            await notes.recordTimelineNote({
+              subject: { resource: member.resource, id: member.id },
+              body: `Unione annullata: questa scheda torna a leggere da sola. Motivo: ${reason}`,
+              occurredAt: withdrawnAt,
+              source: { package: 'customer-data', action: 'unlink-canonical-identity' },
+            });
+            timelineWritten += 1;
+          }
+        } else {
+          timelineUnavailable = true;
+        }
         return {
           candidate: { id: updated.id, status: updated.status },
           withdrawn: active.length,
           decidedById: actorId,
+          timelineNotes: timelineWritten,
+          timelineUnavailable,
           semantics: 'unmerged — the links are withdrawn, both records still exist, each card reads its own again',
         };
       },

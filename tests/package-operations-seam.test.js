@@ -122,7 +122,11 @@ test('the bounded operation context is frozen, and its key set is CLOSED', () =>
   // read of a core record and the alternatives were a 500-capped scan or raw
   // SQL from a package. A key is added when a consumer proves it necessary,
   // never in advance.
-  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'core', 'database', 'events', 'modules', 'runExternal']);
+  // `pipelines` joined the set for backlog:1adf95307b31: the customer list
+  // needs the composed opportunity pipeline so its open-value rule is the
+  // shared one with Reporting (Pagato is won) — the registry a record
+  // action already receives as `ctx.pipelines`, read-only through forModule.
+  assert.deepEqual(Object.keys(runtime).sort(), ['config', 'core', 'database', 'events', 'modules', 'pipelines', 'runExternal']);
   assert.equal(typeof runtime.runExternal, 'function');
   assert.equal('trace' in runtime, false, 'the deferred trace extension point is not shipped in v1');
   // Absent adapters are an empty frozen object, never undefined: an operation

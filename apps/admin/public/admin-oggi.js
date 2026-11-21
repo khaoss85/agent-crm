@@ -32,10 +32,10 @@
 //   700px like every other backoffice screen.
 
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
-import { customerInitials } from './admin-core.js';
+import { customerInitials, isStaleRead } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
 import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
@@ -318,6 +318,29 @@ function createReadGate(client, max = OGGI_MAX_IN_FLIGHT) {
 }
 
 /**
+ * Voce 5fc6709109fa: a read discarded as stale (its screen moved on — a
+ * space switch while the load was flying) proves nothing about the space,
+ * so the load re-issues it instead of painting it as a refusal. Bounded:
+ * after `attempts` stale answers the failure stands and the section
+ * degrades honest like any other refusal, never in a loop.
+ * @param {() => Promise<any>} work one read attempt
+ * @param {{ attempts?: number }} [options]
+ */
+const OGGI_STALE_ATTEMPTS = 3;
+async function readFresh(work, { attempts = OGGI_STALE_ATTEMPTS } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await work();
+    } catch (error) {
+      lastError = error;
+      if (!isStaleRead(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+/**
  * @param {unknown} value
  */
 function nonEmptyText(value) {
@@ -483,6 +506,65 @@ function channelCta(channel) {
  */
 function badgeInitials(label) {
   return customerInitials(label);
+}
+
+/**
+ * One advisor action from a written commitment (backlog:df9e199eb4ef
+ * follow-up): a promise the team wrote, or a customer request left
+ * unanswered. The CTA opens the customer record the commitment is about —
+ * creating the reminder and the durable «Ignora» are the declared
+ * follow-up (no store for either exists yet), so the card navigates
+ * instead of inventing a write. The note says the extraction used no AI:
+ * it is synchronous by construction, identical with the AI off.
+ * Malformed commitments (no key, no quote) contribute nothing, never a
+ * crash — same contract as the advisor signals.
+ * @param {Record<string, any>} commitment an open commitment from the `/api/oggi/commitments` feed
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+/** Commitment kinds, mirrored from packages/agents (the feed carries them; the bundle cannot import the package). */
+const COMMITMENT_CUSTOMER_REQUEST = 'customer-request';
+
+function commitmentAction(commitment, names = {}, now = new Date()) {
+  const key = nonEmptyText(commitment?.key);
+  const quote = nonEmptyText(commitment?.quote);
+  if (!key || !quote) return null;
+  const customerRef = commitment?.customerRef ?? {};
+  const subjectResource = nonEmptyText(customerRef?.subjectResource);
+  const subjectId = nonEmptyText(customerRef?.subjectId);
+  const label = subjectName({ subjectResource, subjectId }, names) ?? APPOINTMENT_GUEST_LABEL;
+  const dueLabel = nonEmptyText(commitment?.dueLabel);
+  const written = romeDayPhrase(commitment?.occurredAt, now, 'il');
+  const when = dueLabel !== null ? `, scade ${dueLabel}` : '';
+  const wrote = written !== '' ? ` scritto${written}` : ' scritto';
+  const why = commitment?.kind === COMMITMENT_CUSTOMER_REQUEST
+    ? `Richiesta senza risposta${wrote}${when} — ${label}: «${quote}».`
+    : `Impegno scritto${wrote}${when} — ${label}: «${quote}».`;
+  const card = subjectResource && subjectId
+    ? cardHrefForSubject({ subjectOwner: 'host', subjectResource, subjectId })
+    : null;
+  const sourceKind = commitment?.source?.kind === 'note' ? 'work-activity' : 'interaction-message';
+  const sourceId = nonEmptyText(commitment?.source?.id);
+  const href = card ?? (sourceId !== null ? recordDetailHref(sourceKind, sourceId) : null);
+  return Object.freeze({
+    id: `bo04:commitment:${key}`,
+    kind: commitment?.kind === COMMITMENT_CUSTOMER_REQUEST ? 'commitment-request' : 'commitment-promise',
+    mono: '✦',
+    channel: null,
+    title: quote,
+    why,
+    note: 'Rilevato dagli scritti, senza AI.',
+    cta: card !== null ? 'Apri scheda' : 'Vedi fonte',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: sourceKind, id: sourceId, label: `Impegno di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      quote: commitment?.quote ?? null,
+      occurredAt: commitment?.occurredAt ?? null,
+      dueAt: commitment?.dueAt ?? null,
+    }),
+  });
 }
 
 function followupAction(task, now = new Date()) {
@@ -815,7 +897,7 @@ export function buildSignalActions({ appointments = [], messages = [], conversat
  * read — a card whose words depend on them says so (`namePending`).
  * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, ownAddresses?: Array<string>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false, commitments = [] } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -829,6 +911,13 @@ export function buildAdvisorActions({ tasks = [], appointments = [], messages = 
   const actions = [];
   for (const task of open) {
     const action = followupAction(task, now);
+    if (action) actions.push(action);
+  }
+  // backlog:df9e199eb4ef follow-up: the written commitments the fixed-rule
+  // signals cannot see — after the open follow-ups, before the signals.
+  for (const commitment of Array.isArray(commitments) ? commitments : []) {
+    if (commitment == null) continue;
+    const action = commitmentAction(commitment, names, now);
     if (action) actions.push(action);
   }
   // backlog:d08331558c50: the signals read their own records — a missed
@@ -1100,22 +1189,20 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): the
     // contact's own channel or address, never the team person holding the
-    // slot (VERIFIER_BACK 2026-11-17 on backlog:57e3d1685e58: live «Prova
-    // verifica 40» read «daniele pelleri», the roster name of the
-    // operator, instead of the contact's email). The contact's own address
-    // from the stored label reads first (a synced invitee keeps its email
-    // there); the team member's real name is only the fallback when no
-    // contact address exists, then a short honest cue from the notes.
-    // Never invented when nothing exists, and never a technical id
-    // (production 10/11 read «broker+…@accordo.invalid» and «google|…»
-    // here). A team mailbox is never a name either (backlog:57e3d1685e58:
-    // the operator's own address read under the contact).
-    const team = memberLabel(row?.teamMemberId, members);
-    const teamName = team !== null && !team.includes('@') ? team : null;
+    // slot (OWNER_ANSWER 2026-11-19 15:3xZ on backlog:57e3d1685e58: under
+    // the contact the screen read the coach name instead of the contact's
+    // channel/email). The contact's own address from the stored label
+    // reads first (a synced invitee keeps its email there); when the
+    // label holds the contact name with no address in it, a short honest
+    // cue from the notes reads instead — the roster name of the slot
+    // holder never does. Never invented when nothing exists, and never a
+    // technical id (production 10/11 read «broker+…@accordo.invalid» and
+    // «google|…» here). A team mailbox is never a name either
+    // (backlog:57e3d1685e58: the operator's own address read under the
+    // contact).
     const labelMail = memberText(row?.subjectLabel);
     const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
     const cue = contactMail
-      ?? teamName
       ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -2002,6 +2089,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     workAvailable: false,
     appointmentsAvailable: false,
     channelsAvailable: false,
+    // Voce 5fc6709109fa: the schema names the space's modules. Until it is
+    // read Oggi knows nothing about them — an unreadable or shapeless
+    // schema is «not yet», never «not active» and never «done for today».
+    schemaUnknown: false,
     channelsPartial: false,
     // Backlog 0c0186a242af: without a readable space (no space id, or the
     // scoped read refused) Oggi does not know whether the channels are
@@ -2037,7 +2128,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     repliesPending: false,
     /** The names of «Da rispondere» are still reading (server view or profiles). */
     inboxNamesPending: false,
-    /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
+    /** Organization team (`GET /api/spine/memberships` items, fail-soft). */
     members: [],
     next: null,
   };
@@ -2066,11 +2157,24 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // Voce 57994a8c7287: one queue for every read of this load — essentials,
   // second wave and dependents alike — so the in-flight peak stays within
   // OGGI_MAX_IN_FLIGHT even with real data (next-call customer, names).
-  const reads = createReadGate(client);
+  const gate = createReadGate(client);
+  // Voce 5fc6709109fa: every read of this load goes through the stale
+  // retry — a read discarded because the screen moved on is re-issued,
+  // never painted as a refusal of this space.
+  const reads = { ...gate, request: (path, options) => readFresh(() => gate.request(path, options)) };
   let domains = {};
+  let schemaRead = true;
   try {
     const schema = await timed('schema', reads.request('/api/schema'));
-    domains = schema?.domains ?? {};
+    // A shapeless schema names nothing: unknown like a refused one, so a
+    // space with active modules is never painted «not active» before its
+    // schema is read. Only a read domains object counts as known — even
+    // empty, so a space with genuinely no modules keeps its honest lines.
+    if (schema == null || typeof schema !== 'object' || schema.domains == null || typeof schema.domains !== 'object') {
+      schemaRead = false;
+    } else {
+      domains = schema.domains;
+    }
     // The strip's Collega reads the shared channel state, like Stato sync
     // and #/connettori: without the composed adapters a channel nothing
     // serves would still be invited.
@@ -2081,8 +2185,15 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : null;
   } catch (error) {
     noteReadFailure('schema', error);
-    // Voce 57994a8c7287: nothing else started — no profile, no roster, no
-    // view — so a refused schema leaves no read flying behind this return.
+    schemaRead = false;
+  }
+  if (schemaRead !== true) {
+    // Voce 5fc6709109fa: the schema did not read — the space's modules
+    // are unknown, never absent. Nothing else started (voce 57994a8c7287:
+    // no profile, no roster, no view), so a refused schema leaves no read
+    // flying behind this return — and the render shows «not yet» with
+    // Riprova, never «not active» or «done for today».
+    outcome.schemaUnknown = true;
     outcome.timings = { ...stepMs, total: Math.max(0, nowMs() - loadStartedAt) };
     return outcome;
   }
@@ -2120,7 +2231,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // the profile never holds the essentials paint. Voce 57994a8c7287: since
   // the pin red it no longer even starts beside the essentials — it joins
   // the second wave and lands with the names below.
-  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
+  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage, commitmentsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -2131,6 +2242,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(reads, 'conversation').catch(() => null) : skip,
     submissionsRead,
+    // backlog:df9e199eb4ef follow-up: the written-commitment feed for the
+    // advisor — fail-soft like every other read, never holding the paint.
+    reads.request('/api/oggi/commitments').then(
+      (answer) => answer,
+      (error) => { noteReadFailure('commitments', error); return null; },
+    ),
   ]);
   // Voce 57994a8c7287: the second wave starts only now that the essentials
   // are in — profile, roster and the two customer-data views, each
@@ -2177,6 +2294,14 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   if (submissionsPage != null) {
     outcome.submissions = submissionsPage.rows;
     outcome.submissionsPartial = submissionsPage.capped === true;
+  }
+  // backlog:df9e199eb4ef follow-up: the feed is optional — without it the
+  // advisor simply shows no written-commitment proposal, never a failure.
+  if (commitmentsPage != null) {
+    outcome.commitments = Array.isArray(commitmentsPage.open) ? commitmentsPage.open : [];
+    outcome.commitmentsPartial = commitmentsPage.partial === true;
+  } else {
+    outcome.commitments = [];
   }
   if (connectionsPage != null) {
     outcome.connections = connectionsPage.rows;
@@ -2529,9 +2654,10 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     tasksPartial?: boolean,
  *     appointmentsPartial?: boolean,
  *     profile?: unknown,
+ *     schemaUnknown?: boolean,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
- *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void, openCalendarEvent?: (event: { id: string, day: string }) => void, onToggleNotifications?: (open: boolean) => void },
+ *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void, openCalendarEvent?: (event: { id: string, day: string }) => void, onToggleNotifications?: (open: boolean) => void, onRetrySchema?: () => void },
  *     disabled?: boolean,
  *     namesPending?: boolean,
  *     notificationsOpen?: boolean,
@@ -2598,6 +2724,10 @@ export function renderOggi({
   }
 
   const events = { ...(home.events ?? {}), navigate };
+  // Voce 5fc6709109fa: while the schema is unread the space's modules are
+  // unknown — no section may paint them «not active», and the day may not
+  // read «done». The sections below show «not yet» with Riprova instead.
+  const schemaUnknown = home.schemaUnknown === true;
   // backlog:bd5e84545021: while the names are still being read every action
   // waits too — a click that does nothing is worse than a grey button.
   const namesPending = home.namesPending === true;
@@ -2691,7 +2821,16 @@ export function renderOggi({
   // fills it in place (backlog:bab63e32acdb).
   const done = el(doc, 'div');
   done.setAttribute('data-oggi-done', 'true');
-  if (!allDone || home.inbox?.pending === true) {
+  if (schemaUnknown) {
+    // Voce 5fc6709109fa: the space did not read — «not yet» with Riprova,
+    // never «done for today» over an unread space.
+    done.appendChild(el(doc, 'p', 'bo-muted', 'Non sono riuscito a leggere questo spazio. Riprovo da solo tra poco.'));
+    const retry = uiButton(doc, { label: 'Riprova', attrs: { type: 'button', 'data-action': 'oggi-retry-schema' } });
+    retry.addEventListener('click', () => {
+      if (typeof events.onRetrySchema === 'function') events.onRetrySchema();
+    });
+    done.appendChild(retry);
+  } else if (!allDone || home.inbox?.pending === true) {
     // Nothing to say yet: the count of the messages waiting is still reading.
   } else if (waitingReplies === 0 && !waitingFloor && unreadText === null) {
     done.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
@@ -2706,12 +2845,24 @@ export function renderOggi({
   }
   advisor.appendChild(done);
   if (home.availability?.work === false) {
-    advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono attivi in questo spazio: niente azioni da proporre.'));
+    advisor.appendChild(el(doc, 'p', 'bo-muted', schemaUnknown
+      ? 'I follow-up non si sono potuti leggere in questo spazio.'
+      : 'I follow-up non sono attivi in questo spazio: niente azioni da proporre.'));
   }
   page.appendChild(advisor);
 
   // ---- Da rispondere: the conversations waiting for the team ----
-  if (home.inbox != null) {
+  if (home.inbox == null && schemaUnknown) {
+    // Voce 5fc6709109fa: the space did not read — the section stays, with
+    // «not yet» instead of silence.
+    const inbox = el(doc, 'section', 'bo-oggi-section bo-oggi-inbox');
+    inbox.setAttribute('data-oggi-section', 'inbox');
+    const inboxHead = el(doc, 'div', 'bo-oggi-head');
+    inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
+    inbox.appendChild(inboxHead);
+    inbox.appendChild(el(doc, 'p', 'bo-muted', 'Non ho potuto leggere i messaggi di questo spazio.'));
+    page.appendChild(inbox);
+  } else if (home.inbox != null) {
     const inbox = el(doc, 'section', 'bo-oggi-section bo-oggi-inbox');
     inbox.setAttribute('data-oggi-section', 'inbox');
     const inboxHead = el(doc, 'div', 'bo-oggi-head');
@@ -2908,7 +3059,9 @@ export function renderOggi({
   agenda.appendChild(el(doc, 'h3', undefined, 'Agenda di oggi'));
   const rows = Array.isArray(home.agenda) ? home.agenda : [];
   if (home.availability?.appointments === false) {
-    agenda.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio.'));
+    agenda.appendChild(el(doc, 'p', 'bo-muted', schemaUnknown
+      ? 'Non ho potuto leggere il calendario di questo spazio.'
+      : 'Il calendario non è attivo in questo spazio.'));
   } else if (rows.length === 0) {
     agenda.appendChild(el(doc, 'p', 'bo-muted', 'Niente appuntamenti oggi.'));
   } else {
@@ -2936,9 +3089,10 @@ export function renderOggi({
       } else {
         cell.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
       }
-      // The prototype's "chi" line under every appointment: who holds the
-      // slot or what the appointment is about. A shared muted token (no new
-      // stylesheet); the supervisor dresses the exact spacing.
+      // The prototype's "chi" line under every appointment: the contact's
+      // own channel/email or what the appointment is about, never the slot
+      // holder. A shared muted token (no new stylesheet); the supervisor
+      // dresses the exact spacing.
       if (entry?.whoPending === true) {
         cell.appendChild(pendingText(doc, 'div', 'bo-muted', '', true, '45%'));
       } else if (typeof entry?.who === 'string' && entry.who !== '') {
@@ -2986,7 +3140,9 @@ export function renderOggi({
     brief.appendChild(who);
     brief.appendChild(uiLoading(doc, { label: 'messaggi e chiamate da ripassare' }));
   } else if (home.availability?.appointments === false) {
-    brief.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio: qui comparirà il ripasso prima di ogni call.'));
+    brief.appendChild(el(doc, 'p', 'bo-muted', schemaUnknown
+      ? 'Non ho potuto leggere il calendario di questo spazio.'
+      : 'Il calendario non è attivo in questo spazio: qui comparirà il ripasso prima di ogni call.'));
   } else if (home.brief == null) {
     brief.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna call in programma. Quando ne fissi una, qui trovi messaggi e chiamate da ripassare prima.'));
   } else {
@@ -3041,7 +3197,7 @@ export function renderOggi({
     // Backlog 0c0186a242af: without a readable space the section is
     // unknown, never «not active» — Oggi did not read, so it cannot say.
     const note = el(doc, 'section', 'bo-oggi-section');
-    note.appendChild(el(doc, 'p', 'bo-muted', home.channelsUnknown === true
+    note.appendChild(el(doc, 'p', 'bo-muted', home.channelsUnknown === true || schemaUnknown
       ? 'I canali non si sono potuti leggere in questo spazio.'
       : 'I canali non sono attivi in questo spazio.'));
     const anchor = el(doc, 'a', 'bo-oggi-invite', 'Collega un canale →');
@@ -3211,9 +3367,50 @@ export function createOggiView(deps) {
    * The day paints as soon as the essentials are read (backlog
    * 2a075e2d9250, fc3fa62): `essentials` keeps that first answer, so a
    * redraw inside the round shows it again instead of «Carico…».
-   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null, essentials: any } | null}
+   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null, essentials: any, spaceId: string | null } | null}
    */
   let round = null;
+  /**
+   * Voce 5fc6709109fa: the automatic re-read of an unread space, with
+   * backoff. An unread schema is «not yet»: the view retries on its own a
+   * few times at growing delays, then leaves the Riprova button to the
+   * operator. The timer dies on every new render and on invalidate, so a
+   * retry never paints over a screen already left — and never loops.
+   */
+  const SCHEMA_RETRY_DELAYS_MS = [2000, 5000, 10000];
+  /** @type {{ timer: any } | null} */
+  let schemaRetry = null;
+  /** Fired automatic retries of the current cycle: a cycle ends at a read space, a new render or a manual Riprova. */
+  let schemaRetryFires = 0;
+  function clearSchemaRetry() {
+    if (schemaRetry !== null) clearTimer(schemaRetry.timer);
+    schemaRetry = null;
+  }
+  function armSchemaRetry() {
+    clearSchemaRetry();
+    if (last?.schemaUnknown !== true) {
+      schemaRetryFires = 0;
+      return;
+    }
+    if (schemaRetryFires >= SCHEMA_RETRY_DELAYS_MS.length) return;
+    const mine = renderToken;
+    const delay = SCHEMA_RETRY_DELAYS_MS[schemaRetryFires];
+    try {
+      schemaRetry = {
+        timer: setTimer(() => {
+          schemaRetry = null;
+          if (mine !== renderToken) return;
+          if (last?.schemaUnknown !== true) return;
+          schemaRetryFires += 1;
+          // The refresh below re-arms on its own when the space is still
+          // unread, so this tick never arms twice.
+          void refresh();
+        }, delay),
+      };
+    } catch {
+      schemaRetry = null;
+    }
+  }
   function endRound() {
     if (round !== null) clearTimer(round.timer);
     round = null;
@@ -3232,6 +3429,7 @@ export function createOggiView(deps) {
   }
   function invalidate() {
     renderToken += 1;
+    clearSchemaRetry();
     endRound();
   }
   /** Session-local triage: decided suggestions only, records stay the truth. */
@@ -3297,6 +3495,9 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       names: last.appointmentNames ?? {},
       pendingNames,
+      // backlog:df9e199eb4ef follow-up: without this the written-commitment
+      // feed loads but never paints — the verifier's 19/11 NON PASSA.
+      commitments: last.commitments ?? [],
     });
     lastBuilt = built;
     const merged = [...built.actions];
@@ -3369,7 +3570,7 @@ export function createOggiView(deps) {
       navigate,
       now: lastMeta.now,
       home: {
-        recapPending: inbox?.pending === true,
+        recapPending: inbox?.pending === true || last.schemaUnknown === true,
         recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: last.unreadSummary?.customers ?? (inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0), unreadMessages: last.unreadSummary?.messages ?? null, unreadMessagesExact: last.unreadSummary?.exact === true }),
         actions,
         triage,
@@ -3386,6 +3587,7 @@ export function createOggiView(deps) {
         tasksPartial: last.tasksPartial === true,
         appointmentsPartial: last.appointmentsPartial === true,
         profile: last.profile ?? null,
+        schemaUnknown: last.schemaUnknown === true,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,
@@ -3397,6 +3599,14 @@ export function createOggiView(deps) {
         notificationsOpen,
         pressed: busy ? pressed : null,
         events: {
+          onRetrySchema: () => {
+            // Voce 5fc6709109fa: Riprova redoes the request for the live
+            // space — the one the switcher names now, not a cached one —
+            // and restarts the backoff cycle from its first delay.
+            clearSchemaRetry();
+            schemaRetryFires = 0;
+            void refresh();
+          },
           openCalendarEvent,
           onToggleNotifications: (open) => {
             notificationsOpen = open === true;
@@ -3592,6 +3802,9 @@ export function createOggiView(deps) {
     if (token !== renderToken) return;
     if (data) last = data;
     paint();
+    // Voce 5fc6709109fa: Riprova redid the request — if the space is still
+    // unread, the backoff keeps retrying on its own from here.
+    armSchemaRetry();
   }
 
   const view = {
@@ -3602,14 +3815,21 @@ export function createOggiView(deps) {
      */
     async render({ spaceName = '', userName = '', links = [], now = new Date() } = {}) {
       const token = ++renderToken;
+      clearSchemaRetry();
+      schemaRetryFires = 0;
       lastMeta = { spaceName, userName, links, now };
+      // Voce 5fc6709109fa: the round belongs to one space. A render for a
+      // new space (Cambia spazio re-routes Oggi in place) drops the old
+      // round — its late answers are for the space just left behind, so
+      // the guards below discard them instead of painting stale data.
+      if (round !== null && round.spaceId !== readSpace()) endRound();
       // Backlog 2a075e2d9250: past the ceiling the loading line gives way to
       // a note with Riprova. The reads keep going: if they land while this
       // render still owns the screen, the home replaces the note. A redraw
       // inside the same round keeps the first deadline (and a note already
       // shown), never a fresh 10 s.
       if (round === null) {
-        const mine = { timer: null, stalled: false, load: null, essentials: null };
+        const mine = { timer: null, stalled: false, load: null, essentials: null, spaceId: readSpace() };
         mine.timer = setTimer(() => {
           // The day already painted from its essentials: no note over it.
           if (round !== mine || mine.essentials !== null) return;
@@ -3660,7 +3880,10 @@ export function createOggiView(deps) {
       if (data) last = data;
       else if (partialShown) last = { ...last, pending: false };
       else if (!last) {
+        // Voce 5fc6709109fa: the load itself threw — unknown, never an
+        // empty day: no «done for today» over reads that never answered.
         last = {
+          schemaUnknown: true,
           workAvailable: false, appointmentsAvailable: false, channelsAvailable: false,
           interactionsAvailable: false, tasks: [], appointments: [], connections: [],
           profile: null,
@@ -3670,6 +3893,9 @@ export function createOggiView(deps) {
         };
       }
       paint();
+      // Voce 5fc6709109fa: an unread space retries on its own with backoff;
+      // a read space clears any pending retry.
+      armSchemaRetry();
     },
     invalidate,
   };

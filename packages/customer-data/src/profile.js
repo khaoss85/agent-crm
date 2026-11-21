@@ -429,6 +429,11 @@ async function readIdentity({ modules, subject, cluster }) {
     contact: contact ? Object.freeze({
       id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,
       companyId: typeof contact.companyId === 'string' && contact.companyId !== '' ? contact.companyId : null,
+      // Voce 91c92940274c: la card deve portare archivedAt, se no un
+      // contatto archiviato aperto da «Archiviati» mostra Archivia invece
+      // di Ripristina.
+      archivedAt: contact.archivedAt ?? null,
+      deletedAt: contact.deletedAt ?? null,
     }) : null,
     note: company || contact ? null : 'the canonical record for this subject could not be read from the host application',
   });
