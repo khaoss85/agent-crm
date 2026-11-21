@@ -160,8 +160,13 @@ jobs:
       # `accordo-cure` runner is registered; a `cure` PR reads heavy name
       # `fast-main-red-cure` (rank 0 in the server queue), any other PR `fast`.
       - name: Cure routing (runner and queue rank)
+        env:
+          # Labels via env, never interpolated into run: (script injection:
+          # a label name could break out of the echo). The shell reads only
+          # $CURE_LABELS, which GitHub passes as a value, not as script.
+          CURE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
         run: |
-          echo "cure routing: labels=[${{ join(github.event.pull_request.labels.*.name, ', ') }}] runner=accordo-ci heavy-name=$CI_FAST_HEAVY_NAME"
+          echo "cure routing: labels=[$CURE_LABELS] runner=accordo-ci heavy-name=$CI_FAST_HEAVY_NAME"
       # The whole gate behind one lock: `scripts/ci-fast.sh` runs the nine
       # phases sequentially (check, touched tests and gtm, pilot browser,
       # smoke, recipe replay, truth agreement, verifier-fixture drift,

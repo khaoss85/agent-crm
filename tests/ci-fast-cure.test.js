@@ -101,3 +101,13 @@ test('the workflow routes the fast job by the cure label', () => {
   assert.match(workflow, /fast-main-red-cure/, 'the cure heavy name');
   assert.match(workflow, /Cure routing/, 'the routing is visible in the job log');
 });
+
+test('the cure routing step never interpolates labels into run: (script injection)', () => {
+  assert.match(workflow, /CURE_LABELS:.*join\(github\.event\.pull_request\.labels/, 'labels pass through env');
+  // Every line reading labels from the github context must be an env: or
+  // if:/contains() expression — never a shell line under run:, where GitHub
+  // substitutes the value into the script before the shell parses it.
+  const bad = workflow.split('\n').filter((line) => line.includes('github.event.pull_request.labels')
+    && !line.includes('CURE_LABELS') && !line.includes('contains('));
+  assert.deepEqual(bad, [], 'label reads live only in env/if, never in run:');
+});
