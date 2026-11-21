@@ -30,7 +30,7 @@ async function started(t) {
     await new Promise((resolve) => server.close(resolve));
     app.close();
   });
-  return { base };
+  return { base, app };
 }
 
 const userHeaders = { 'content-type': 'application/json', 'x-actor-type': 'user', 'x-actor-id': 'owner-1' };
@@ -54,16 +54,28 @@ test('30f7ce51c87a: the summary answers every section in one payload', async (t)
 });
 
 test('30f7ce51c87a: a refused section degrades, it never refuses the payload', async (t) => {
-  const { base } = await started(t);
-  const { status, payload } = await summary(base, '?spaceId=spazio-1');
+  const { base, app } = await started(t);
+  const baseline = await summary(base, '?spaceId=spazio-1');
+  assert.equal(baseline.status, 200);
+  // Force the connectors section to refuse: without this the owner-1
+  // fixture degrades nothing new and the measurement below cannot fail.
+  const refused = new Error('connectors refused for the measurement');
+  refused.code = 'CONNECTORS_REFUSED';
+  refused.status = 403;
+  const kept = app.readSyncState;
+  app.readSyncState = async () => { throw refused; };
+  let status;
+  let payload;
+  try {
+    ({ status, payload } = await summary(base, '?spaceId=spazio-1'));
+  } finally {
+    app.readSyncState = kept;
+  }
   assert.equal(status, 200);
-  for (const name of SECTIONS) {
-    const section = payload[name];
-    const degraded = section !== null && typeof section === 'object' && 'unavailable' in section;
-    if (degraded) {
-      assert.equal(typeof section.unavailable.code, 'string');
-      assert.ok(section.unavailable.status === null || typeof section.unavailable.status === 'number');
-    }
+  assert.ok(payload.connectors !== null && typeof payload.connectors === 'object');
+  assert.deepEqual(payload.connectors.unavailable, { code: 'CONNECTORS_REFUSED', status: 403 });
+  for (const name of SECTIONS.filter((section) => section !== 'connectors')) {
+    assert.deepEqual(payload[name], baseline.payload[name], `section ${name} is untouched by the refusal`);
   }
 });
 
