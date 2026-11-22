@@ -589,6 +589,27 @@ const V12_STATEMENTS = [
 ];
 
 /**
+ * Voce 91c92940274c: un contatto che il titolare non vuole si archivia o si
+ * elimina. Due marche temporali nullable, mai un hard delete. Byte-identical
+ * alla v13 rilasciata in database.js (controllata da
+ * spine-v2-m3a-dialect-intent); senza questo intent gli avvii PostgreSQL non
+ * hanno le colonne e ogni scrittura di contatti fallisce con 42703.
+ */
+const V13_STATEMENTS = [
+  {
+    kind: 'addColumn',
+    table: 'contacts',
+    column: text('archived_at'),
+  },
+  {
+    kind: 'addColumn',
+    table: 'contacts',
+    column: text('deleted_at'),
+    leading: 'single',
+  },
+];
+
+/**
  * Authoritative core schema intent. SQLite SQL is rendered from this structure
  * and must hash to the released checksums; PostgreSQL SQL is rendered from the
  * same structure and is never translated from SQLite text.
@@ -606,6 +627,7 @@ export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 10, name: 'spine_reconcilable_job_recovery', plane: 'data', statements: Object.freeze(V10_STATEMENTS) }),
   Object.freeze({ version: 11, name: 'opportunity_board_position', plane: 'data', statements: Object.freeze(V11_STATEMENTS) }),
   Object.freeze({ version: 12, name: 'company_placeholder_flag', plane: 'data', statements: Object.freeze(V12_STATEMENTS) }),
+  Object.freeze({ version: 13, name: 'contact_archive_delete', plane: 'data', statements: Object.freeze(V13_STATEMENTS) }),
 ]);
 
 /**

@@ -1107,6 +1107,11 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
+  // backlog:312dd81f83ba (ritorno 1): the new space has its own schema —
+  // the menu waits for it instead of keeping the space just left behind.
+  shellItems = buildShellNav({ schemaKnown: false });
+  syncShell(targetForHash(window.location.hash || '#/'));
+  void populateNav();
   // backlog 3136d15da7bd: the bar keeps the last words until the new
   // space's own master is read — no optimistic aiSpaceOff:false, which
   // would flash an inviting question for a space whose AI is off (or
@@ -1216,7 +1221,10 @@ if (boSidebar && boTopbar) {
   if (shellActiveSpace) shellView.setSpaces(shellSpaces, shellActiveSpace);
 }
 
-let shellItems = buildShellNav();
+// backlog:312dd81f83ba (ritorno 1): until the space's schema is read, the
+// menu waits («Spazio in caricamento…») instead of claiming packages the
+// space was never asked about are missing.
+let shellItems = buildShellNav({ schemaKnown: false });
 
 /** The Oggi home view, created once per session under a space mount. */
 let oggiView = null;
@@ -1329,9 +1337,46 @@ function stampSchemaIdentity(schema) {
   }
 }
 
+/** A schema read that failed stays diagnosable (backlog:312dd81f83ba). @param {unknown} error */
+function warnSchemaRead(error) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const cause = error instanceof Error ? error.name : (/** @type {any} */ (error)?.code ?? 'unknown');
+  console.warn('bo-nav schema unreadable:', cause, /** @type {any} */ (error)?.code ?? null);
+}
+
+/** @param {number} ms */
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One delayed re-read after a refused schema wait (backlog:312dd81f83ba). */
+const SCHEMA_NAV_RETRY_MS = 3000;
+
+/**
+ * The space's schema for the navigation (backlog:312dd81f83ba, ritorno 1):
+ * one delayed re-read covers a transient refusal (release, wake-up). The
+ * menu keeps its loading state — never a false «non composto».
+ */
+async function readNavSchema() {
+  try {
+    return await moduleClient.request('/api/schema');
+  } catch (error) {
+    warnSchemaRead(error);
+  }
+  await waitMs(SCHEMA_NAV_RETRY_MS);
+  try {
+    return await moduleClient.request('/api/schema');
+  } catch (retryError) {
+    warnSchemaRead(retryError);
+    throw retryError;
+  }
+}
+
 async function populateNav({ repaintScreen = true } = {}) {
   try {
-    const schema = await moduleClient.request('/api/schema');
+    // The space the wait left for: a switch meanwhile owns the repaint, so
+    // a late answer for the space just left never paints over the new one.
+    const waitedSpace = shellActiveSpace;
+    const schema = await readNavSchema();
+    if (shellActiveSpace !== waitedSpace) return;
     stampSchemaIdentity(schema);
     // Backoffice shell (BO-F0-02): generated modules are the
     // "personalizzati" group; the first composed pipeline backs Pipeline.
@@ -1340,7 +1385,7 @@ async function populateNav({ repaintScreen = true } = {}) {
     const input = shellNavInput(schema);
     const { customModules: modules, modulesSupported: supported } = input;
     shellCustomerData = input.customerDataAvailable;
-    shellItems = buildShellNav(input);
+    shellItems = buildShellNav({ ...input, schemaKnown: true });
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
@@ -1439,7 +1484,8 @@ async function populateNav({ repaintScreen = true } = {}) {
       }
     }
   } catch {
-    // A schema failure must not break the dashboard; leave nav empty silently.
+    // A refusal that stays leaves the loading menu and its warnings above;
+    // a failure can never break the dashboard.
   }
 }
 
@@ -1718,7 +1764,15 @@ async function route() {
   } catch (error) {
     // backlog:0d25ed7dc34f (review Muse #1009): a read dropped because its
     // screen moved on proves nothing — no toast, no failure paint.
-    if (isStaleRead(error)) return;
+    // backlog:f268787b: the drop still logs a sanitized warn (cause and
+    // view, never the payload) before the return, so a stale failure stays
+    // diagnosable like the stale branch below.
+    if (isStaleRead(error)) {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-nav stale read dropped:', error?.code ?? null, target.view);
+      }
+      return;
+    }
     if (navToken !== navSeq) {
       // A screen already left: its handle was inert and the operator is on
       // another screen, so no toast there — but the failure stays
