@@ -215,7 +215,7 @@ export function createCalendarSyncPackage(options = {}) {
         name: 'push-series',
         label: 'Push series',
         appMethod: 'pushSeriesToCalendar',
-        description: 'Export one local series head to Google as a single recurring event carrying its RRULE (human decision). The whole series lands at once; a retry reconciles instead of inserting twice. A repeated push with nothing changed is a no-op.',
+        description: 'Export one local series head to Google as a single recurring event carrying its RRULE (human decision). The whole series lands at once; a retry reconciles instead of inserting twice. A repeated push with nothing changed is a no-op. A push with a changed RRULE after the export answers conflict (recurrenceChanged) and writes nothing — recurrence edits ride the scope-edit follow-up.',
         input: [
           { ...SPACE_INPUT },
           { ...CALENDAR_INPUT },

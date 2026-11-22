@@ -218,6 +218,15 @@ export function assertSeriesRecurrence(recurrence) {
   return Object.freeze([...recurrence]);
 }
 
+// Two recurrence line sets match only in full (backlog:bb13ef1823ad): a
+// changed RRULE after the export is never a silent second series — the
+// existing-link path fails closed on drift and the reconcile path
+// refuses a foreign shape instead of linking it as healed.
+function seriesRecurrenceEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((line, index) => line === right[index]);
+}
+
 // Google event ids are calendar-scoped, but the appointment source key is
 // global: the calendar joins the key, so the same event id on two synced
 // calendars books two rows instead of colliding on the unique guard.
@@ -496,6 +505,31 @@ export function createCalendarSyncOperations(options = {}) {
   async function findLinkBySource(sourceKey) {
     const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
     return rows[0] ?? null;
+  }
+
+  /**
+   * One of our own exports, read back from Google
+   * (backlog:bb13ef1823ad, review rev-agent-crm-1136): listEvents expands
+   * an exported recurring master into per-occurrence items with different
+   * ids, so the link-id lookup misses them — without this guard the next
+   * pull would book its own occurrences as new appointments. An event
+   * carrying our source key whose series already has a link, or an
+   * occurrence whose master is linked, reads as already-tracked, never
+   * as a new booking.
+   */
+  async function ownSeriesEntry(calendarId, event) {
+    if (!event || typeof event !== 'object' || event.status === 'cancelled') return null;
+    const ownKey = event?.extendedProperties?.accordoSourceKey;
+    if (typeof ownKey === 'string' && ownKey !== '') {
+      const ownLink = await findLinkBySource(ownKey);
+      if (ownLink) return { status: 'already-tracked', eventId: event.id };
+    }
+    const masterId = event?.recurringEventId;
+    if (typeof masterId === 'string' && masterId !== '') {
+      const masterLink = await findLinkByEvent(calendarId, masterId);
+      if (masterLink) return { status: 'already-tracked', eventId: event.id };
+    }
+    return null;
   }
 
   /** Read through the capability, never around it — the module name in force is the capability's own. */
@@ -1041,6 +1075,12 @@ export function createCalendarSyncOperations(options = {}) {
 
     if (!link) {
       if (cancelled) return { status: 'ignored', eventId, reason: 'tombstone for an event never imported' };
+      // Our own exported series on the incremental path
+      // (backlog:bb13ef1823ad): an expanded occurrence carries a
+      // different id from its linked master, so it lands here — read it
+      // as already-tracked instead of booking it as a new appointment.
+      const own = await ownSeriesEntry(calendarId, event);
+      if (own) return own;
       const entry = await importSingle(handle, actor, calendarId, event, 0, null);
       if (entry.status !== 'imported') return keepPending(actor, calendarId, event, null, entry.reason);
       return entry;
@@ -1334,6 +1374,14 @@ export function createCalendarSyncOperations(options = {}) {
           }
           continue;
         }
+        // Our own exported series reads back as expanded occurrences
+        // (backlog:bb13ef1823ad): skip them before the import books its
+        // own occurrences as new appointments.
+        const own = await ownSeriesEntry(calendarId, event);
+        if (own) {
+          entries.push(own);
+          continue;
+        }
         const entry = await importSingle(handle, who, calendarId, event, 0, null);
         // A refusal (overlap) is kept pending and retried; a skip
         // (unmapped customer) is reported as-is — retrying it would heal
@@ -1559,6 +1607,30 @@ export function createCalendarSyncOperations(options = {}) {
       await requireLiveGrant(calendarId, spaceId);
       const existing = await findLinkBySource(sourceKey);
       if (existing) {
+        // A changed RRULE after the export never rides the single path
+        // silently (backlog:bb13ef1823ad, review rev-agent-crm-1136): the
+        // fingerprint pushAppointment compares carries no recurrence, so
+        // it would answer noop while Google keeps the old COUNT — with
+        // no error, no change flag, no mention that recurrence was
+        // ignored. Compare the requested lines with the linked series on
+        // the provider and fail closed on drift: recurrence edits ride
+        // the scope-edit follow-up. A cancelled head still delegates —
+        // the cancel converges the linked event whatever its RRULE.
+        const head = await bookHandle(who).appointmentBySourceKey(sourceKey);
+        if (head && head.status !== 'cancelled') {
+          const linked = await providerCall(calendarId, 'findByAccordoSourceKey',
+            { calendarId, sourceKey }, GRANT_PURPOSE_READ, who);
+          const live = Array.isArray(linked?.recurrence) ? linked.recurrence : null;
+          if (live !== null && !seriesRecurrenceEqual(live, lines)) {
+            return {
+              status: 'conflict',
+              sourceKey,
+              eventId: linked.id,
+              recurrenceChanged: true,
+              reason: 'la ricorrenza è cambiata dopo l’export: Google tiene ancora la vecchia serie e questa push non ha scritto niente — le modifiche alla ricorrenza arrivano con la modifica del perimetro',
+            };
+          }
+        }
         return api.pushAppointment(calendarId, sourceKey, { spaceId, actor: who });
       }
       const handle = bookHandle(who);
@@ -1595,6 +1667,16 @@ export function createCalendarSyncOperations(options = {}) {
         return { status: 'pushed', eventId: reconciled.id, sourceKey: row.sourceKey, change: 'cancelled', healed: true };
       }
       if (reconciled) {
+        // The reconciled event must carry the requested series
+        // (backlog:bb13ef1823ad, review rev-agent-crm-1136): a single
+        // non-recurring event that happens to carry the same sourceKey is
+        // never linked as an exported series — Google would hold one
+        // occurrence while the caller believes the whole series landed,
+        // and the link would hide the mismatch from every later pull.
+        if (!seriesRecurrenceEqual(reconciled.recurrence, lines)) {
+          throw syncError('CALENDAR_SYNC_SERIES_SHAPE_MISMATCH', 409,
+            'su Google c’è un evento singolo con questa chiave, non la serie richiesta: non lo collego come serie esportata — togli o rinomina l’evento singolo su Google e ripeti la push');
+        }
         await storeLink({
           linkKey: linkKeyFor(calendarId, reconciled.id),
           calendarId,

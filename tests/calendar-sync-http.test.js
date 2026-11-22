@@ -86,16 +86,18 @@ function createRestDouble({ expectedBearer, nowMs } = {}) {
     end: stored.end,
     status: stored.status,
     updated: stored.updated,
+    ...(stored.recurrence === undefined ? {} : { recurrence: [...stored.recurrence] }),
     extendedProperties: { private: { ...stored.privateProps } },
   });
 
   const api = {
     requests,
     setBearer: (next) => { bearer = next; },
-    seed(id, { summary = `Session ${id}`, start = null, end = null, privateProps = {} } = {}) {
+    seed(id, { summary = `Session ${id}`, start = null, end = null, privateProps = {}, recurrence } = {}) {
       const stored = {
         id, summary, description: '', start, end, status: 'confirmed',
         updated: new Date(nowMs()).toISOString(), privateProps: { ...privateProps },
+        ...(recurrence === undefined ? {} : { recurrence: [...recurrence] }),
       };
       events.set(id, stored);
       touch(id);
@@ -148,6 +150,7 @@ function createRestDouble({ expectedBearer, nowMs } = {}) {
           status: 'confirmed',
           updated: new Date(nowMs()).toISOString(),
           privateProps: { ...((body.extendedProperties && body.extendedProperties.private) ?? {}) },
+          ...(body.recurrence === undefined ? {} : { recurrence: [...body.recurrence] }),
         };
         events.set(id, stored);
         touch(id);
@@ -307,6 +310,31 @@ test('an Accordo booking becomes a Google event with the round-trip key', async 
   });
   assert.equal(reconciled.id, pushed.eventId);
   assert.equal(ctx.double.liveCount(), before);
+});
+
+test('series reconciliation reads the master with its RRULE, never an expanded instance', async (t) => {
+  // HTTP half of backlog:bb13ef1823ad (review rev-agent-crm-1136): the
+  // reconcile query asks for masters only, and the read carries the
+  // series RRULE — so the engine links the series instead of an
+  // occurrence instance and can validate the shape it linked.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  const WEEKLY4 = ['RRULE:FREQ=WEEKLY;COUNT=4'];
+  ctx.double.seed('series-master', {
+    ...slot('21', '09:00', '10:00'),
+    privateProps: { accordoSourceKey: 'gym:series:http' },
+    recurrence: WEEKLY4,
+  });
+  const reconciled = await ctx.provider.findByAccordoSourceKey({
+    calendarId: CAL, sourceKey: 'gym:series:http', secret: GRANT,
+  });
+  assert.equal(reconciled.id, 'series-master');
+  assert.deepEqual(reconciled.recurrence, WEEKLY4);
+  assert.equal(reconciled.recurringEventId, undefined, 'a master is not an occurrence');
+  const last = ctx.double.requests[ctx.double.requests.length - 1];
+  const params = new URL(last.url, 'https://www.googleapis.com').searchParams;
+  assert.equal(params.get('singleEvents'), 'false', 'reconciliation reads masters, not expanded instances');
 });
 
 test('an expired REST token reconciles instead of guessing', async (t) => {

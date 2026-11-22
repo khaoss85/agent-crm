@@ -128,9 +128,20 @@ export function toEngineEvent(wire) {
   const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
     ? { recurringEventId: wire.recurringEventId }
     : {};
+  // A recurring master carries its RRULE lines (backlog:bb13ef1823ad):
+  // without them the engine cannot tell the series it linked from an
+  // expanded occurrence, so reconciliation would link an instance id
+  // and drop the series shape. Bounded strings only, never a guess —
+  // a missing or unbounded value stays absent.
+  const recurrence = Array.isArray(wire.recurrence) && wire.recurrence.length > 0
+    && wire.recurrence.length <= 8
+    && wire.recurrence.every((line) => typeof line === 'string' && line !== '' && line.length <= 256)
+    ? { recurrence: Object.freeze([...wire.recurrence]) }
+    : {};
   return Object.freeze({
     id,
     ...recurring,
+    ...recurrence,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -318,7 +329,10 @@ export function createHttpGoogleCalendar(options = {}) {
      * writes (`extendedProperties.private.accordoSourceKey`), so a retry
      * after a lost link reconciles instead of inserting a duplicate —
      * the provider-side half of export idempotency, like the fake's
-     * `findByAccordoSourceKey`.
+     * `findByAccordoSourceKey`. A series reconciles to its master
+     * (backlog:bb13ef1823ad): `singleEvents=false` reads masters only,
+     * so the link names the series instead of an expanded occurrence
+     * instance — which a later cancel would only partly delete.
      */
     async findByAccordoSourceKey({ calendarId, sourceKey, secret } = {}) {
       assertSecret(secret, 'findByAccordoSourceKey');
@@ -328,7 +342,7 @@ export function createHttpGoogleCalendar(options = {}) {
       }
       const params = new URLSearchParams();
       params.set('privateExtendedProperty', `accordoSourceKey=${sourceKey}`);
-      params.set('singleEvents', 'true');
+      params.set('singleEvents', 'false');
       params.set('maxResults', '10');
       let body;
       try {

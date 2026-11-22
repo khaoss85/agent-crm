@@ -149,6 +149,80 @@ test('pushSeries on an existing link rides the single path: noop when nothing mo
   assert.equal(ctx.provider.eventCount(CAL), 1);
 });
 
+test('pushSeries on an existing link fails closed when the RRULE changed', async (t) => {
+  // Review rev-agent-crm-1136 P1: a changed RRULE after the export must
+  // never read as noop while Google keeps the old COUNT — the call
+  // names the drift instead of dropping the required recurrence param.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const appointment = await bookHead(ctx, 'gym:series:drift');
+  const first = await ctx.sync.pushSeries(CAL, appointment.sourceKey, { recurrence: WEEKLY4 });
+  assert.equal(first.status, 'exported');
+  const WEEKLY8 = ['RRULE:FREQ=WEEKLY;COUNT=8'];
+  const drifted = await ctx.sync.pushSeries(CAL, appointment.sourceKey, { recurrence: WEEKLY8 });
+  assert.equal(drifted.status, 'conflict');
+  assert.equal(drifted.recurrenceChanged, true);
+  assert.equal(drifted.eventId, first.eventId);
+  assert.equal(ctx.provider.eventCount(CAL), 1, 'no silent second series');
+  assert.deepEqual(ctx.provider.getEvent(CAL, first.eventId).recurrence, WEEKLY4, 'Google keeps the old COUNT');
+});
+
+test('pushSeries refuses to link a single event as an exported series', async (t) => {
+  // Review rev-agent-crm-1136 P1: reconciling any event with the same
+  // sourceKey without checking recurrence would link one occurrence as
+  // if the whole series had landed.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const appointment = await bookHead(ctx, 'gym:series:single');
+  // A single non-recurring event left on the calendar with our key.
+  ctx.provider.insertEvent({
+    calendarId: CAL,
+    summary: 'Appointment pt-single',
+    start: { dateTime: appointment.startsAt },
+    end: { dateTime: appointment.endsAt },
+    extendedProperties: { accordoSourceKey: appointment.sourceKey },
+  });
+  const countBefore = ctx.provider.eventCount(CAL);
+  await assert.rejects(
+    ctx.sync.pushSeries(CAL, appointment.sourceKey, { recurrence: WEEKLY4 }),
+    (error) => error?.code === 'CALENDAR_SYNC_SERIES_SHAPE_MISMATCH' && error?.status === 409,
+  );
+  assert.equal(ctx.provider.eventCount(CAL), countBefore, 'nothing inserted on refusal');
+  assert.equal(ctx.linkRows().length, 0, 'no link to a foreign shape');
+});
+
+test('importFuture after a series export books no new appointment', async (t) => {
+  // Review rev-agent-crm-1136 P1 regression: the exported recurring
+  // master expands on Google into occurrences with different ids, which
+  // used to miss the link-id invariant and re-import as new bookings.
+  // The fake expands only with both bounds, so the test seeds the
+  // production shape Google returns (`singleEvents=true`): instance
+  // items carrying the master identity and our source key.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const appointment = await bookHead(ctx, 'gym:series:roundtrip');
+  const first = await ctx.sync.pushSeries(CAL, appointment.sourceKey, { recurrence: WEEKLY4 });
+  assert.equal(first.status, 'exported');
+  for (const day of ['21', '28']) {
+    ctx.provider.seedEvent(CAL, {
+      id: `${first.eventId}_202610${day}T090000000Z`,
+      summary: 'Appointment pt-single',
+      start: { dateTime: `2026-10-${day}T09:00:00.000Z` },
+      end: { dateTime: `2026-10-${day}T10:00:00.000Z` },
+      recurringEventId: first.eventId,
+      extendedProperties: { accordoSourceKey: appointment.sourceKey },
+    });
+  }
+  const headsBefore = ctx.appointmentRows().length;
+  const imported = await ctx.sync.importFuture(CAL, {
+    timeMin: '2026-10-20T00:00:00.000Z',
+  });
+  assert.equal(ctx.appointmentRows().length, headsBefore, 'no duplicate bookings from our own series');
+  assert.ok(imported.entries.length > 0, 'the window covers the series');
+  assert.ok(imported.entries.every((entry) => entry.status === 'already-tracked'),
+    'every occurrence reads as already-tracked, none as imported');
+});
+
 test('malformed recurrence refuses before any Google write', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
