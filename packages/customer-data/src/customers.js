@@ -350,8 +350,10 @@ export const SEARCH_INFIX_MIN_CHARS = 4;
  * Digits in a query name a phone number, not words (backlog:7d82fd84,
  * review #678 giro-2 P3): the numeric words joined match as one substring
  * of the digits of a held phone, so «333» finds «+39333123456» while «ada»
- * still never matches inside «Canada». Fewer digits match nothing, so a
- * one- or two-digit query does not match every phone on the page.
+ * still never matches inside «Canada». Below the floor digits read as
+ * words instead (backlog:f6b9d189: «40» finds «Prova verifica 40
+ * NoteInvio»), still never on the held phone, so a one- or two-digit query
+ * does not match every phone on the page.
  */
 export const PHONE_SEARCH_MIN_DIGITS = 3;
 
@@ -408,6 +410,22 @@ export function searchRank(parts, needle, phone = '') {
     if (digits.length >= PHONE_SEARCH_MIN_DIGITS
       && phoneDigitsOf(phoneValue).includes(digits)) {
       return 1;
+    }
+    // backlog:f6b9d189 (owner 20/11: «40» must find «Prova verifica 40
+    // NoteInvio»): below the phone floor digits are words, not a number —
+    // judge them by word start on the shown text (never on the held phone,
+    // so «39» still matches no Italian phone, review agent-crm#707).
+    if (digits.length > 0 && digits.length < PHONE_SEARCH_MIN_DIGITS) {
+      let rank = 0;
+      for (const wanted of numeric) {
+        if (textWords.some((word) => word.startsWith(wanted))) continue;
+        if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+          rank = 1;
+          continue;
+        }
+        return -1;
+      }
+      return rank;
     }
     return -1;
   }
@@ -499,12 +517,14 @@ export function searchMatchFields(row, q) {
   if (needle.length === 0) return Object.freeze([]);
   const phoneValue = typeof row?.phone?.value === 'string' ? row.phone.value : '';
   const text = needle.filter((word) => !/^[0-9]+$/.test(word));
-  const digits = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
+  const numericWords = needle.filter((word) => /^[0-9]+$/.test(word));
+  const digits = numericWords.join('');
   // Digit words of a mixed needle also read the shown fields by the word
   // rules above (review #985 P2: «pizzeria 07» lists «Ada 07» of «Pizzeria»
   // through the mixed branch of searchRank, so «07» must blame the name or
-  // the row is dropped as company-only). A pure-digit needle still names
-  // ONLY the held phone below, never the shown fields.
+  // the row is dropped as company-only). A pure-digit needle at or above
+  // the phone floor still names ONLY the held phone below, never the shown
+  // fields; below the floor it reads the shown words (backlog:f6b9d189).
   const digitWords = text.length > 0 ? needle.filter((word) => /^[0-9]+$/.test(word)) : [];
   const hits = [];
   if (text.length > 0) {
@@ -517,6 +537,20 @@ export function searchMatchFields(row, q) {
       if (typeof value !== 'string' || value === '') continue;
       if (text.some((word) => searchRank([value], [word], '') >= 0)
         || digitWords.some((word) => digitWordHitInField(value, word))) hits.push(key);
+    }
+  }
+  // backlog:f6b9d189 (owner 20/11 «40»): the same short-digit fallback
+  // searchRank applies above — blame the shown fields the digits visibly sit
+  // in, so the picker can keep the row with its motive.
+  if (text.length === 0 && digits !== '' && digits.length < PHONE_SEARCH_MIN_DIGITS) {
+    const fields = [
+      ['name', row?.name],
+      ['email', row?.email],
+      ['company', row?.company?.name],
+    ];
+    for (const [key, value] of fields) {
+      if (typeof value !== 'string' || value === '') continue;
+      if (numericWords.some((word) => digitWordHitInField(value, word))) hits.push(key);
     }
   }
   if (digits !== '' && digits.length >= PHONE_SEARCH_MIN_DIGITS

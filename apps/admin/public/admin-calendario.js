@@ -1234,13 +1234,19 @@ function splitCustomerNeedle(query) {
     .filter((word) => !channelWords.has(word) && !CUSTOMER_QUERY_GLUE_WORDS.has(word));
   const textWords = words.filter((word) => !/^[0-9]+$/.test(word));
   const numericWords = words.filter((word) => /^[0-9]+$/.test(word));
+  const digits = numericWords.join('');
+  // backlog:f6b9d189 (owner 20/11 «40»): below the phone floor (mirrored
+  // from the server `PHONE_SEARCH_MIN_DIGITS`) digits are words, not a
+  // number — they read the shown fields like text, never the held phone.
+  const shortDigitWords = textWords.length === 0 && digits !== '' && digits.length < 3 ? numericWords : [];
   return {
-    textWords,
+    textWords: [...textWords, ...shortDigitWords],
     // Digit words of a mixed needle also blame the shown fields (the same
-    // rule the server `searchMatchFields` applies); a pure-digit needle
-    // still names ONLY the held phone below, never the shown fields.
+    // rule the server `searchMatchFields` applies); a pure-digit needle at
+    // or above the floor still names ONLY the held phone below, never the
+    // shown fields.
     digitWords: textWords.length > 0 ? numericWords : [],
-    digits: numericWords.join(''),
+    digits,
   };
 }
 
@@ -1354,11 +1360,13 @@ function customerAnchoredEmail(item, textWords, digitWords) {
 /**
  * backlog:f6b9d189 — the phone motive anchored on the searched digits: the
  * tail when it holds the digits («tel. …4567», the homonym shape), else a
- * four-digit window starting at the match («tel. …3331…»). Same partial
- * class as the homonym tails, never the whole number. Null below the digit
- * floor or when the held phone cannot show the digits (fewer than four
- * digits have no showable tail) — the row then has no visible phone
- * correspondence.
+ * window holding the whole matched run plus its neighbours
+ * («tel. 3933312…» for «333», «tel. …00000188…» for «000 001»), so phones
+ * sharing a run still read apart. Same partial class as the homonym tails,
+ * never the whole number (a window covering it falls back to the tail).
+ * Null below the digit floor or when the held phone cannot show the digits
+ * (fewer than four digits have no showable tail) — the row then has no
+ * visible phone correspondence.
  * @param {any} item one `/api/customer-data/customers` item
  * @param {string} digits the joined digit words of the query
  */
@@ -1369,7 +1377,11 @@ function customerAnchoredPhone(item, digits) {
   const tail = held.slice(-4);
   if (tail.includes(digits)) return `tel. …${tail}`;
   const at = held.indexOf(digits);
-  return `tel. …${held.slice(at, at + 4)}…`;
+  const start = Math.max(0, at - 2);
+  const end = Math.min(held.length, at + Math.max(digits.length, 4) + 2);
+  if (start === 0 && end === held.length) return `tel. …${tail}`;
+  const cut = `${start > 0 ? '…' : ''}${held.slice(start, end)}${end < held.length ? '…' : ''}`;
+  return `tel. ${cut}`;
 }
 
 /**
@@ -2054,6 +2066,8 @@ export function createCalendarioView(deps) {
     customerQuery: '',
     /** Latest customer search results (`GET /api/customer-data/customers` items). @type {Array<any>} */
     customerItems: [],
+    /** Server-side total of the latest search (pages beyond the first may still be unread). @type {number} */
+    customerServerTotal: 0,
     /** Customer search failure in the operator's own words, or null. @type {string|null} */
     customerError: null,
     /** The last customer search answer was read in part (complete:false). */
@@ -5028,6 +5042,12 @@ export function createCalendarioView(deps) {
    * page and shows five rows at most. Late answers paint the live results
    * box only — never a full re-render, so the operator keeps typing without
    * losing focus. Stale answers lose the token race and paint nothing.
+   * backlog:f6b9d189 (owner 20/11, regression on #1067: «pr» read «Nessun
+   * cliente» while the server found 19 — the first page held company-only
+   * rows the form hides, and the second page was never asked): when the
+   * visible filter empties the page, the search asks for the next pages
+   * until five visible rows or no more pages, never «nessun cliente» while
+   * the server still has rows to read.
    * @param {unknown} query
    */
   async function searchCustomers(query) {
@@ -5044,27 +5064,47 @@ export function createCalendarioView(deps) {
     // The space the search asked in: an answer never paints in another one.
     const askedSpace = readSpace();
     try {
-      const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
       const spaceId = askedSpace;
-      if (spaceId) params.set('spaceId', spaceId);
-      const controller = typeof AbortController === 'function' ? new AbortController() : null;
-      customerAbort = controller;
-      const answer = await client.request(
-        `/api/customer-data/customers?${params.toString()}`,
-        controller ? { signal: controller.signal } : {},
-      );
-      if (customerAbort === controller) customerAbort = null;
-      if (token !== customerSeq || readSpace() !== askedSpace) return;
-      state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      const read = [];
+      let page = 1;
+      let pages = 1;
+      let partial = false;
+      let serverTotal = 0;
+      // At most five pages of ten: bounded, sequential, same read-only list.
+      for (; page <= Math.min(pages, 5); page += 1) {
+        const params = new URLSearchParams({ q, page: String(page), pageSize: '10' });
+        if (spaceId) params.set('spaceId', spaceId);
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        customerAbort = controller;
+        const answer = await client.request(
+          `/api/customer-data/customers?${params.toString()}`,
+          controller ? { signal: controller.signal } : {},
+        );
+        if (customerAbort === controller) customerAbort = null;
+        if (token !== customerSeq || readSpace() !== askedSpace) return;
+        if (Array.isArray(answer?.items)) read.push(...answer.items);
+        if (answer?.complete === false) partial = true;
+        const answeredTotal = Number(answer?.total ?? 0);
+        if (Number.isFinite(answeredTotal) && answeredTotal > serverTotal) serverTotal = answeredTotal;
+        const totalPages = Number(answer?.pages ?? 1);
+        pages = Number.isFinite(totalPages) && totalPages >= 1 ? Math.floor(totalPages) : 1;
+        const visible = read.filter((item) => customerResultVisible(
+          item, Array.isArray(item?.searchMatch) ? item.searchMatch : null, q,
+        ));
+        if (visible.length >= 5) break;
+      }
+      state.customerItems = read;
+      state.customerServerTotal = serverTotal;
       // backlog:d128847d21fc: a list the server read only in part says so,
       // never a flat «nessun cliente».
-      state.customerPartial = answer?.complete === false;
+      state.customerPartial = partial;
       state.customerError = null;
     } catch (error) {
       // An aborted request belongs to a search a newer keystroke replaced.
       if (token !== customerSeq || error?.name === 'AbortError' || readSpace() !== askedSpace) return;
       state.customerPartial = false;
       state.customerItems = [];
+      state.customerServerTotal = 0;
       state.customerError = humanReadError(error, {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
       });
@@ -5105,13 +5145,19 @@ export function createCalendarioView(deps) {
     }
     if (String(state.customerQuery ?? '').trim().length < 2) return;
     const query = String(state.customerQuery ?? '');
+    // backlog:f6b9d189 (owner 20/11 «pr»): the search may have read several
+    // pages — the box still shows five rows at most.
     const explained = state.customerItems.filter((item) => customerResultVisible(
       item, Array.isArray(item?.searchMatch) ? item.searchMatch : null, query,
-    ));
+    )).slice(0, 5);
     if (explained.length === 0) {
+      // The server found rows but none the form can explain (company-only
+      // matches): honest about the read rows, never a flat «nessun cliente»
+      // while the server has more.
+      const readAny = state.customerItems.length > 0 || (state.customerServerTotal ?? 0) > 0;
       box.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: state.customerPartial
+        text: (state.customerPartial || readAny)
           ? 'Nessun cliente corrisponde tra quelli letti: l’elenco è parziale. Prova con nome o cognome.'
           : 'Nessun cliente corrisponde. Prova con un altro nome.',
       }));
@@ -5136,9 +5182,15 @@ export function createCalendarioView(deps) {
       const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
       const match = Array.isArray(item?.searchMatch) ? item.searchMatch : customerLocalBlame(item, query);
+      // backlog:f6b9d189 (owner 20/11 «-note@»/«.dan» nascosti nei puntini):
+      // when the name does not explain the query the anchored motive wins
+      // even between homonyms — the disambiguator («pr…@») would hide the
+      // matched piece. It falls back to the disambiguator only when no
+      // motive can print it.
+      const motive = customerNameExplains(item, match, query) ? null : customerMatchReason(item, match, query);
       const hint = (seen.get(name.toLowerCase()) ?? 0) > 1
-        ? customerHint(item, explained)
-        : (customerNameExplains(item, match, query) ? null : customerMatchReason(item, match, query));
+        ? (motive ?? customerHint(item, explained))
+        : motive;
       if (hint !== null) {
         pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
       }
