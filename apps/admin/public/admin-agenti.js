@@ -815,8 +815,10 @@ export function renderTeamAgentRows(doc, agents) {
     identity.appendChild(names);
     item.appendChild(identity);
     item.appendChild(uiBadge(doc, { authority: 'agent', text: 'Agente' }));
-    const link = el(doc, 'a', 'bo-agent-team-link', AGENT_STATUS_LABEL[row.status === 'paused' ? 'paused' : 'active']);
+    const statusLabel = AGENT_STATUS_LABEL[row.status === 'paused' ? 'paused' : 'active'];
+    const link = el(doc, 'a', 'bo-agent-team-link', statusLabel);
     link.setAttribute('href', '#/agenti');
+    link.setAttribute('aria-label', `Stato di ${String(row.name).trim()}: ${statusLabel}`);
     item.appendChild(link);
     wrap.appendChild(item);
   }
