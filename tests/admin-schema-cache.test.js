@@ -237,6 +237,27 @@ test('c048bf6f2dd3: a schema copy has an identity the shell can show', async () 
   assert.equal(cache.schemaStampOf({ version: 2 }).version, '2', 'a numeric version stamps as text');
 });
 
+// backlog:250b528ea22a: `/api/schema` answers `{ schema: { version } }` —
+// the stamp reads the nested version, so the shell root never stays empty.
+test('250b528ea22a: the stamp shows the version served under schema.version', async () => {
+  const cache = await import('../apps/admin/public/admin-schema-cache.js');
+  const envelope = { schema: { version: '0.1.0' }, generatedResourceContract: 1, pipelines: [] };
+  assert.equal(cache.schemaStampOf(envelope).version, '0.1.0', 'nested version is shown');
+  assert.match(cache.schemaStampOf(envelope).digest, /^[0-9a-f]{8}$/);
+  assert.equal(
+    cache.schemaStampOf({ version: '9', schema: { version: '0.1.0' } }).version,
+    '9',
+    'a top-level version still wins when present',
+  );
+  assert.equal(
+    cache.schemaStampOf({ schema: { version: 2 } }).version,
+    '2',
+    'a nested numeric version stamps as text',
+  );
+  const missing = cache.schemaStampOf({ pipelines: [] });
+  assert.equal(missing.version, '', 'no version anywhere stamps empty, never throws');
+  assert.match(missing.digest, /^[0-9a-f]{8}$/);
+});
 // backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): al primo
 // caricamento senza copia lo schema risponde 200 in meno di 1 s, ma la
 // lettura del boot viene scartata come vecchia (READ_STALE: route() alza il
