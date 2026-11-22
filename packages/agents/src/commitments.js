@@ -271,6 +271,19 @@ export function recalcCommitments({ commitments = [], messages = [], dismissed =
 }
 
 /**
+ * The one seam the readers call (backlog:df9e199eb4ef follow-up): extract
+ * the commitments written in the given rows, then re-check them against
+ * the latest messages, so a kept promise is already gone. Pure and
+ * synchronous like the two steps it composes — with the AI off the run
+ * is identical, and no row is stored here.
+ * @param {{ messages?: Array<Record<string, any>>, notes?: Array<Record<string, any>>, dismissed?: Record<string, unknown> }} [input]
+ */
+export function selectOpenCommitments({ messages = [], notes = [], dismissed = {} } = {}) {
+  const extracted = extractCommitments({ messages, notes });
+  return recalcCommitments({ commitments: [...extracted], messages, dismissed }).open;
+}
+
+/**
  * Record an «Ignora» on a proposal: the key never resurfaces while the
  * dismissal is passed back in. The reason is mandatory — a dismissal
  * without one is refused, never guessed.

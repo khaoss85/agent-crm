@@ -399,7 +399,7 @@ test('an undeclared package consumer is still refused, and the declaration is wh
     consumer: 'lifecycle', capability: 'follow-up', version: 1,
     context: { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' },
   });
-  assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey']);
+  assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey', 'recordTimelineNote']);
   assert.equal(Object.isFrozen(opened), true, 'no mutable service object escapes the seam');
 
   // …and for nobody else. A package that did not declare it is refused even

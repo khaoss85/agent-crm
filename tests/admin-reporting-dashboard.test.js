@@ -785,6 +785,28 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
+// backlog:02e4b848 (verifica 19/11: il sottotitolo di novembre dice «al 22 nov»,
+// tre giorni dopo oggi): con il tetto del server il sottotitolo si ferma a oggi.
+test('02e4b848: il sottotitolo del mese in corso non nomina giorni futuri', async () => {
+  const { channelsLede } = await import('../apps/admin/public/admin-reporting.js');
+  assert.equal(channelsLede({
+    total: 8,
+    weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }],
+    end: '2026-11-19',
+  }),
+  '8 primi contatti da un canale nelle 4 settimane dal 26 ott al 19 nov · ogni cliente conta una volta, nel canale del primo contatto');
+  // Un tetto illeggibile o fuori dalle settimane mostrate: la domenica dell'ultima settimana, come prima.
+  assert.equal(channelsLede({
+    total: 7,
+    weeks: [
+      { week: '2026-09-28' }, { week: '2026-10-05' }, { week: '2026-10-12' },
+      { week: '2026-10-19' }, { week: '2026-10-26' },
+    ],
+    end: 'non-una-data',
+  }),
+  '7 primi contatti da un canale nelle 5 settimane dal 28 set al 1 nov · ogni cliente conta una volta, nel canale del primo contatto');
+});
+
 // backlog:ed6bae5e5c0d (verifica indipendente 18/11: la colonna conta le
 // offerte aperte ma le chiama preventivi): l'intestazione dice «Offerte
 // aperte», ciò che conta davvero, e la riga mostra vinte e tasso del periodo.
@@ -814,4 +836,26 @@ test('channelsLede with a malformed week never throws', async () => {
     '1 primo contatto da un canale',
   );
   assert.equal(channelsLede({ total: 0, weeks: [] }), '0 primi contatti da un canale');
+});
+
+test('restyle 54b9a2a2706f: il valore aperto si legge «€ + USD», mai nascosto dietro «Solo EUR mostrati»', async () => {
+  const kpis = MODEL.kpis.map((kpi) => (kpi.id === 'open-value'
+    ? { ...kpi, also: { display: '30 USD', count: 1 } }
+    : kpi));
+  const { mount, view } = harness({ dashboard: { ...MODEL, kpis } });
+  await view.renderReporting();
+  const strong = mount.findAll('strong').map((node) => node.textContent);
+  assert.ok(strong.includes('26.000 € + 30 USD'), strong.join(' | '));
+  assert.ok(strong.includes('14.000 €'), 'a card without other currencies stays as it is');
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(!text.includes('Solo EUR mostrati'), text);
+  assert.ok(text.includes('Valore aperto e vinte contano anche USD'), text);
+});
+
+test('review Muse #1108: il conteggio segue il valore — «· 1 in altre valute»', async () => {
+  const kpis = MODEL.kpis.map((kpi) => (kpi.id === 'open-value' ? { ...kpi, also: { display: '30 USD', count: 1 } } : kpi));
+  const { mount, view } = harness({ dashboard: { ...MODEL, kpis } });
+  await view.renderReporting();
+  const spans = mount.findAll('span').map((node) => node.textContent);
+  assert.ok(spans.includes('6 preventivi aperti · 1 in altre valute'), spans.join(' | '));
 });

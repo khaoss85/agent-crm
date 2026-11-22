@@ -26,6 +26,7 @@ import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { AGENT_CATALOG, catalogAgentSourceKey, customAgentSourceKey } from '../../../packages/agents/src/catalog.js';
 import { SQUAD_TEMPLATES, checkCallerKey, squadSourceKey } from '../../../packages/agents/src/squads.js';
+import { selectOpenCommitments } from '../../../packages/agents/src/commitments.js';
 import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -1126,6 +1127,59 @@ export function buildRouter(app) {
     });
   }
 
+  // Oggi commitment proposals (backlog:df9e199eb4ef follow-up): the written
+  // promises the fixed-rule advisor cannot see — a team message promising
+  // something, a subject note setting a callback, a customer request left
+  // unanswered. The extraction runs here, server-side, over the same
+  // record modules Oggi already reads (MEM_ACC_REUSE: no second store
+  // and no duplicated signals — the admin bundle only wires ./ siblings,
+  // so the shell cannot import the package). Pure and synchronous: with
+  // the AI off the answer is identical. Each source is independently
+  // optional (reporting-dashboard precedent): a missing module reads as
+  // unavailable, never as zero, and a present-but-broken read still
+  // throws. Dismissals have no durable store yet, so the feed takes none.
+  router.add('GET', '/api/oggi/commitments', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    const readRows = async (name, pick) => {
+      let module;
+      try {
+        module = requireCapability(resolveGeneratedModule(app, name), 'list');
+      } catch (error) {
+        if (error instanceof NotFoundError) return { rows: null, available: false, partial: false };
+        throw error;
+      }
+      const listed = await module.service.list({ limit: 200 });
+      const rows = Array.isArray(listed) ? listed : listed?.items ?? [];
+      const picked = rows.filter(pick);
+      return { rows: picked, available: true, partial: rows.length >= 200 };
+    };
+    const messages = await readRows(
+      'interaction-message',
+      (row) => row != null && (row?.direction === 'inbound' || row?.direction === 'outbound'),
+    );
+    const activities = await readRows('work-activity', (row) => row != null && row?.kind === 'note');
+    const superseded = new Set();
+    for (const row of activities.rows ?? []) {
+      if (typeof row?.revisesId === 'string' && row.revisesId !== '') superseded.add(row.revisesId);
+    }
+    const notes = (activities.rows ?? [])
+      .filter((row) => row?.taskId == null && row?.withdrawn !== true && !superseded.has(row?.id))
+      .map((row) => ({
+        id: row?.id,
+        body: row?.body,
+        occurredAt: row?.occurredAt ?? null,
+        subjectResource: row?.subjectResource ?? null,
+        subjectId: row?.subjectId ?? null,
+        channel: row?.channel ?? null,
+      }));
+    return {
+      open: selectOpenCommitments({ messages: messages.rows ?? [], notes }),
+      messagesAvailable: messages.available,
+      notesAvailable: activities.available,
+      partial: messages.partial || activities.partial,
+    };
+  });
+
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial
   // it. Same enumerated-adapter shape as the notes route: the kernel owns
@@ -1895,6 +1949,30 @@ export function buildRouter(app) {
       throw new ValidationError(`Contact update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
     }
     return await app.services.contacts.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
+  });
+  // Voce 91c92940274c: archivia / ripristina / elimina un contatto.
+  // Solo servizio (regola UI di Dan): niente menu nella shell, quelli li
+  // scrive il Mac quando il servizio è online. L'eliminazione lascia la
+  // traccia di audit e non tocca le conversazioni degli altri contatti.
+  router.add('POST', '/api/contacts/:id/archive', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    return await app.services.contacts.archive(params.id, {
+      ...writeContext(app, { actor, identity, organizationId, headers }),
+      reason: input.reason,
+    });
+  });
+  router.add('POST', '/api/contacts/:id/restore', async ({ params, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    return await app.services.contacts.restore(params.id, writeContext(app, { actor, identity, organizationId, headers }));
+  });
+  router.add('DELETE', '/api/contacts/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    return await app.services.contacts.remove(params.id, {
+      ...writeContext(app, { actor, identity, organizationId, headers }),
+      reason: input.reason,
+    });
   });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {

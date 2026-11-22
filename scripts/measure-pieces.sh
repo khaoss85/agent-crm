@@ -46,6 +46,16 @@
 # killed and named — the piece fails in minutes instead of holding the lock
 # silent until PIECE_MAX_SEC (run 42754208151, backlog:3d560518f3e2).
 #
+# A red shard piece does NOT stop the run (backlog:e98e66c2adf7: run
+# 44578241261 stopped at red piece 2 of 6, so pieces 3-6 never ran and the
+# rest of main stayed unmeasured — every new red then cost another full,
+# ~2 h under load). Every piece still runs under its own lock with the same
+# maximum; reds are collected, and after the last piece a final summary
+# lists every red piece and the run exits non-zero with no combine — the
+# job stays red unless every piece is green. The check piece above keeps
+# its fail-fast: it runs the typecheck, and measuring six shards of a tree
+# that fails it would burn a full cycle for nothing.
+#
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
 #   into the measurement artifact); with --apply writes site/claims.json.
@@ -91,14 +101,26 @@ echo "measure-pieces: check piece under its own lock (max ${PIECE_MAX_SEC}s)…"
 HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="$PIECE_MAX_SEC" \
   scripts/ci-heavy.sh measure-check -- npm run check >&2
 
+red_pieces=""
+red_count=0
 for (( i = 1; i <= SHARDS; i++ )); do
   echo "measure-pieces: piece $i of $SHARDS (lock max ${PIECE_MAX_SEC}s)…" >&2
   start="$(date +%s)"
-  HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="$PIECE_MAX_SEC" \
+  if HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="$PIECE_MAX_SEC" \
     scripts/ci-heavy.sh "measure-$i-of-$SHARDS" -- \
-    node scripts/measure-suite.js --shard "$i/$SHARDS" --out "$scratch/shard-$i.json" >&2
-  echo "measure-pieces: piece $i of $SHARDS green in $(( $(date +%s) - start ))s; lock released." >&2
+    node scripts/measure-suite.js --shard "$i/$SHARDS" --out "$scratch/shard-$i.json" >&2; then
+    echo "measure-pieces: piece $i of $SHARDS green in $(( $(date +%s) - start ))s; lock released." >&2
+  else
+    echo "measure-pieces: piece $i of $SHARDS RED in $(( $(date +%s) - start ))s; lock released; continuing with the remaining pieces." >&2
+    red_pieces="${red_pieces} ${i}"
+    red_count=$(( red_count + 1 ))
+  fi
 done
+
+if [ "$red_count" -gt 0 ]; then
+  echo "measure-pieces: $red_count of $SHARDS pieces red (pieces: ${red_pieces# }) — no combine; every piece above ran, every red is listed here." >&2
+  exit 1
+fi
 
 if [ "$APPLY" = 1 ]; then
   node scripts/measure-suite.js --combine "$scratch"/shard-*.json --apply

@@ -162,8 +162,8 @@ test('Scopri shows cards with Prova and +, activating moves the unit to I tuoi',
   proof.dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('Canali: 1 riga'), 'the preview headline renders');
-  const add = mount.findAll('button').find((node) => node.textContent === '+');
-  assert.ok(add, 'a non-active unit offers +');
+  const add = mount.findAll('button').find((node) => node.textContent === 'Attiva');
+  assert.ok(add, 'a non-active unit offers Attiva');
   add.dispatch('click');
   await flush();
   assert.ok(calls.some((call) => call.path === '/api/space-packages/activate' && call.body?.unit === 'channels'));
@@ -834,8 +834,8 @@ test('a refused Skill or Pacchetti action names no channel', async () => {
     view.test.state.tab = tab;
     await view.render();
     await flush();
-    const add = mount.findAll('button').find((node) => node.textContent === '+');
-    assert.ok(add, `the + action renders on ${tab}`);
+    const add = mount.findAll('button').find((node) => node.textContent === 'Attiva');
+    assert.ok(add, `the Attiva action renders on ${tab}`);
     add.dispatch('click', {});
     await flush();
     assert.ok(!said.some((message) => message.includes('canale')), `the ${tab} refusal mentions no channel`);
@@ -1096,4 +1096,19 @@ test('6d0df351: with the pilot adapters Connettori offers Collega only where ser
     'Telegram served: Collega, coherent with Stato sync');
   assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
     'unknown adapters: the previous answer stays');
+});
+
+test('verifica Mac 20/11 (fdc711253dbd): «Dettagli» di una skill apre il suo dettaglio, senza errori', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const view = createPersonalizzazioneView({ doc, mount, client: stubClient({ rows: [] }), navigate: (hash) => navigated.push(hash), spaceId });
+  view.test.state.tab = 'skill';
+  await view.render();
+  await flush();
+  const detail = mount.findAll('a').find((node) => node.textContent === 'Dettagli');
+  assert.ok(detail, 'the skill card has its «Dettagli» link');
+  assert.equal(detail.getAttribute('href'), '#/personalizzazione/skill/debug-crm-run');
+  detail.listeners.click[0]({ preventDefault() {} });
+  assert.ok(navigated.includes('#/personalizzazione/skill/debug-crm-run'), JSON.stringify(navigated));
 });
