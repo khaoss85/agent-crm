@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, findStage, isOpenOfferStage, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, isOpenOfferRow, normalizeActor } from '../../core/index.js';
 import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
@@ -1386,27 +1386,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // lost never count. A customer with only won offers (or no open offer at
     // all) reads «—», never «0 €». Mixed currencies never sum into one naked
     // number: each currency keeps its own subtotal with its own code.
-    // The open rule is the shared one with Reporting
-    // (packages/core/src/pipeline-registry.js): a row moved to Pagato keeps
+    // The open rule is the ONE shared row rule with Reporting and the
+    // Pipeline board header (isOpenOfferRow in
+    // packages/core/src/pipeline-registry.js): a row moved to Pagato keeps
     // the canonical stage but names the paid pipeline stage, and Pagato is
     // won — so a pipeline-stage row on the composed pipeline reads through
     // its type, anything else through the canonical stage.
-    const openOffers = myOffers.filter((row) => {
-      const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
-      // Review giro 1 (agent-crm#1038, P2): a stage key belongs to the
-      // pipeline that defines it — only a row filed under the composed
-      // pipeline (pipelineKey names it) reads through its types, anything
-      // else through the canonical stage. A row with a pipeline stage but
-      // no pipeline key is not on any pipeline, so the canonical stage
-      // decides for it too.
-      const rowPipeline = typeof row?.pipelineKey === 'string' && row.pipelineKey !== '' ? row.pipelineKey : null;
-      if (key !== null && opportunityPipeline !== null
-        && rowPipeline === opportunityPipeline.name
-        && findStage(opportunityPipeline, key) !== null) {
-        return isOpenOfferStage(opportunityPipeline, key);
-      }
-      return isOpenOfferStage(null, row?.stage);
-    });
+    const openOffers = myOffers.filter((row) => isOpenOfferRow(opportunityPipeline, row));
     const openValue = openOffers
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
     const totalsByCurrency = new Map();

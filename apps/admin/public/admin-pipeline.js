@@ -1094,6 +1094,13 @@ export function createPipelineBoard(deps) {
     // silently hidden or misclassified into a column.
     const offDefinition = onBoard.filter((record) => !stageKeys.has(record.pipelineStage));
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
+    const placedSet = new Set(placed);
+    // backlog:1adf95307b31 (seguito 20/11): the header total reads the ONE
+    // row rule with the customer list — an offer off this board (another
+    // pipeline, no pipeline, a drifted stage) still holds value when its
+    // canonical stage is open. Only filter-matching records join the sum,
+    // like the shown cards; the count below still names the shown cards.
+    const offBoard = records.filter((record) => !placedSet.has(record) && matchesFilters(record, state));
     const offPipeline = records.length - onBoard.length;
     // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
     // the read is truncated the counts below are lower bounds.
@@ -1140,7 +1147,7 @@ export function createPipelineBoard(deps) {
       titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline, truncated));
     }
     const tools = renderToolbar(pipeline, onBoard);
-    tools.appendChild(renderSummary(pipeline, visible));
+    tools.appendChild(renderSummary(pipeline, visible, offBoard));
     panel.appendChild(tools);
 
     if (state.view === 'lista') {
@@ -1663,13 +1670,32 @@ export function createPipelineBoard(deps) {
    * summed a lost offer too): the amount is the value still open — won,
    * paid and lost offers are counted, never summed — and it says so.
    */
-  function renderSummary(pipeline, visible) {
+  // Canonical open stages, mirrored from OPPORTUNITY_STAGES in
+  // packages/core/src/schema.js (the bundle cannot import the package):
+  // every canonical stage but won/lost holds value. The mirror is the
+  // canonical fallback of isOpenOfferRow in
+  // packages/core/src/pipeline-registry.js — an unknown or empty stage
+  // reads closed here too, never open.
+  const CANONICAL_OPEN_STAGES = new Set(['discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation']);
+  function renderSummary(pipeline, visible, offBoard = []) {
     const summary = el(doc, 'p', { class: 'pipeline-summary', attrs: { 'data-summary': String(visible.length) } });
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key));
     const totals = new Map();
     for (const record of visible) {
       if (!Number.isSafeInteger(record.valueCents) || !openKeys.has(record.pipelineStage)) continue;
       totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
+    }
+    // backlog:1adf95307b31 (seguito 20/11): the off-board records read the
+    // same row rule as the customer list — a senza-pipeline or drifted-stage
+    // offer whose canonical stage is open joins the open value. The count
+    // above still names the shown cards only.
+    for (const record of offBoard) {
+      if (!Number.isSafeInteger(record.valueCents)) continue;
+      const code = typeof record?.currency === 'string' && record.currency !== '' ? record.currency : '';
+      if (code === '') continue;
+      const stage = typeof record?.stage === 'string' ? record.stage : '';
+      if (!CANONICAL_OPEN_STAGES.has(stage)) continue;
+      totals.set(code, (totals.get(code) ?? 0) + record.valueCents);
     }
     // BO-F6-10 C9: `<n> offerte · valore aperto <totale>`, updated by every filter/search.
     const parts = [`${visible.length} offert${visible.length === 1 ? 'a' : 'e'}`];
