@@ -1061,3 +1061,38 @@ test('3234cc917e0a: the list link paints even without a customer to go back to',
   assert.ok(list, 'the list link stays when back and offer links are missing');
   assert.equal(list.getAttribute('href'), '#/quotes');
 });
+
+// backlog:195568752d35 (verifica Mac 18/11, #/quotes/… sul live): the exit
+// row read «Apri l’offerta →Tutti i preventivi» — stuck together, purple and
+// underlined instead of green like the other links. The row paints the way
+// back, the offer and the list back to back (so the styles.css gap hooks
+// apply) with the shared accent top-link style.
+test('195568752d35: the detail exit row separates the offer and list links with the same style', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    entries: [ENTRY],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: 'quotes' });
+  const links = mount.findAll('a');
+  const back = links.find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  const offer = links.find((node) => node.getAttribute('data-action') === 'quote-open-offer');
+  const list = links.find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(back && offer && list, 'the exit row names the way back, the offer and the list');
+  assert.equal(offer.getAttribute('class'), 'quote-offer-link', 'the offer link keeps its style hook');
+  assert.equal(offer.textContent, 'Apri l’offerta →', 'the offer link keeps its label');
+  assert.equal(list.textContent, 'Tutti i preventivi', 'the list link names the list');
+  assert.equal(back.nextSibling, offer, 'the offer follows the way back with no node between (the CSS gap applies)');
+  assert.equal(offer.nextSibling, list, 'the list follows the offer with no node between (the CSS gap applies)');
+  assert.match(list.getAttribute('class') ?? '', /^quote-(offer|list)-link$/, 'the list link shares the accent top-link style, never the browser default');
+
+  const noOffer = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: noOffer, client: stubClient() }).renderQuoteDetail('q1', { from: 'quotes' });
+  const noOfferLinks = noOffer.findAll('a');
+  const noOfferBack = noOfferLinks.find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  const noOfferList = noOfferLinks.find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(noOfferBack && noOfferList, 'the exit row stays even when the offer is unreadable');
+  assert.equal(noOfferBack.nextSibling, noOfferList, 'the list still follows the way back with no node between');
+});

@@ -223,20 +223,24 @@ export const SCHEMA_STORAGE_PREFIX = 'bo-schema:';
 
 /**
  * Identity of one schema copy for the shell's stamp (backlog:c048bf6f2dd3,
- * ritorno 1): the version when the schema names one, plus a short FNV-1a
- * digest of the copy — the same algorithm as spaceBadgeIndex in
- * admin-shell.js, kept here so this module stays standalone and
- * node-testable. A content change without a version bump still moves the
- * stamp. A missing or unserializable value stamps empty, never throws. The
- * schema is the application's own description (modules, fields, workflows,
- * pipelines, providers, the spine's declared contract): no customer record,
- * no person's name, e-mail or phone — safe to show.
+ * ritorno 1, backlog:250b528ea22a): the version when the schema names one,
+ * plus a short FNV-1a digest of the copy — the same algorithm as
+ * spaceBadgeIndex in admin-shell.js, kept here so this module stays
+ * standalone and node-testable. `/api/schema` answers an envelope whose
+ * description lives under `schema` (CRM_SCHEMA, version 0.1.0), so the
+ * version is read there when the top level does not name one. A content
+ * change without a version bump still moves the stamp. A missing or
+ * unserializable value stamps empty, never throws. The schema is the
+ * application's own description (modules, fields, workflows, pipelines,
+ * providers, the spine's declared contract): no customer record, no
+ * person's name, e-mail or phone — safe to show.
  * @param {unknown} schema
  */
 export function schemaStampOf(schema) {
   const empty = { version: '', digest: '' };
   if (schema === null || typeof schema !== 'object') return empty;
-  const rawVersion = /** @type {any} */ (schema).version;
+  const root = /** @type {any} */ (schema);
+  const rawVersion = root.version ?? root.schema?.version ?? '';
   const version = typeof rawVersion === 'string' || typeof rawVersion === 'number' ? String(rawVersion) : '';
   let text = '';
   try {

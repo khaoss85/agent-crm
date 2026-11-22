@@ -162,6 +162,67 @@ export const CONNECTOR_CATALOG = Object.freeze([
 ]);
 
 /**
+ * Snapshot of the list data the `#/connettori` screen already read: the
+ * live adapters from `/api/schema` plus the connection rows of
+ * GET /api/connectors for one space. The detail (`#/connettori/<canale>`)
+ * reuses them so a warm open skips its own schema+connectors reads and only
+ * fetches the unit catalog for display labels (backlog:9a1c9a94).
+ *
+ * Module-local on purpose: both views live in the same page (`app.js`
+ * builds each once), so the list write and the detail read meet without a
+ * new storage key or prop threading. Tests reset it explicitly.
+ */
+let connectorListSnapshot = null;
+
+/**
+ * A warm snapshot lives only briefly (Codex P2 on #1062): a connection
+ * revoked or synced elsewhere must show fresh on the next detail open, not
+ * the rows the list read minutes ago. The list-to-detail walk takes
+ * seconds; anything older re-reads.
+ */
+export const CONNECTOR_SNAPSHOT_TTL_MS = 60_000;
+
+/**
+ * @param {{ spaceId: string, adapters: Array<any>, entries: Array<any>, channelsReady: boolean } | null} snap
+ * @param {number} [now]
+ */
+export function rememberConnectorListSnapshot(snap, now = Date.now()) {
+  connectorListSnapshot = snap !== null && typeof snap === 'object'
+    ? Object.freeze({
+      spaceId: typeof snap.spaceId === 'string' ? snap.spaceId : '',
+      adapters: Array.isArray(snap.adapters) ? snap.adapters : [],
+      entries: Array.isArray(snap.entries) ? snap.entries : [],
+      channelsReady: snap.channelsReady === true,
+      at: typeof now === 'number' && Number.isFinite(now) ? now : Date.now(),
+    })
+    : null;
+}
+
+/**
+ * A snapshot warms a detail open only for its own space, with adapters and
+ * a fresh stamp — never an undated or expired one.
+ * @param {any} snap @param {string} spaceId @param {number} [now]
+ */
+export function snapshotCoversSpace(snap, spaceId, now = Date.now()) {
+  return snap !== null && typeof snap === 'object'
+    && typeof spaceId === 'string' && spaceId !== ''
+    && snap.spaceId === spaceId
+    && snap.channelsReady === true
+    && Array.isArray(snap.adapters)
+    && typeof snap.at === 'number' && Number.isFinite(snap.at)
+    && now - snap.at >= 0
+    && now - snap.at < CONNECTOR_SNAPSHOT_TTL_MS;
+}
+
+export function readConnectorListSnapshot() {
+  return connectorListSnapshot;
+}
+
+export function clearConnectorListSnapshot() {
+  connectorListSnapshot = null;
+}
+
+/**
  * The channel badge of every list row, like the Google rows above it: a
  * 2–3 letter tile with a timeline tint (`apps/admin/public/admin-ui.js`
  * names the same tints for the timeline chips; Telegram has no timeline
@@ -439,6 +500,14 @@ export function createConnectorsView(deps) {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(state.spaceId.trim())}`);
       state.entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
       state.loaded = true;
+      // The detail opens from here: leave the rows it needs behind so it
+      // can render without re-reading schema+connectors (backlog:9a1c9a94).
+      rememberConnectorListSnapshot({
+        spaceId: state.spaceId.trim(),
+        adapters: state.adapters,
+        entries: state.entries,
+        channelsReady: state.channelsReady,
+      });
     } catch (error) {
       state.loadError = errorOf(error);
     }

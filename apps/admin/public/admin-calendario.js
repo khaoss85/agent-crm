@@ -1000,6 +1000,13 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:afa97ffe5a4d (production 18/11: 502 LLM_PROVIDER_FAILED, even
+  // after the retry) — the assistant is not answering: say so in Italian
+  // and offer the manual form (aiBlockOf 'down' paints «Compila a mano»
+  // beside this sentence).
+  if (isProviderFailure(error)) {
+    return 'L’assistente non risponde: riprova tra poco, oppure compila l’appuntamento a mano.';
+  }
   // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
   // event: the slot is held, the reminder would strand, or the booking is
   // closed and moves nowhere. The event stays where it was.
@@ -1491,22 +1498,41 @@ export function customerMatchReason(item, match, query = '') {
  * @param {any} row
  */
 export function isMovableAppointment(row) {
+  // A masked «Occupato» row (backlog:9aa5c073) is someone else's private
+  // booking: it never moves, opens no edit form and offers no cancellation
+  // to this viewer — the server masked it, the grid keeps it still.
+  if (row?.masked === true) return false;
   const status = String(row?.status ?? 'booked');
   return status === 'booked' || status === 'confirmed';
 }
 
 /**
- * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
- * 'off' (AI switched off or not configured for the space) or 'cap' (the
- * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
- * other refusal.
+ * backlog:afa97ffe5a4d — whether the phrase POST met the AI provider
+ * failing (production 18/11: 502 LLM_PROVIDER_FAILED), not the pilot
+ * refusing: the POST retries once, then the card says the assistant is
+ * not answering and offers the manual form. Pure and DOM-free,
+ * unit-tested without a browser.
  * @param {unknown} error
- * @returns {'off'|'cap'|null}
+ */
+export function isProviderFailure(error) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  return /** @type {any} */ (record).code === 'LLM_PROVIDER_FAILED';
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space), 'cap' (the
+ * daily AI spend ceiling, 429) or 'down' (the provider failed, even after
+ * the retry — the next phrase may still work). All three offer
+ * «Compila a mano»; null for any other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|'down'|null}
  */
 export function aiBlockOf(error) {
   const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
   if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
+  if (isProviderFailure(error)) return 'down';
   return null;
 }
 
@@ -2010,7 +2036,7 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
-    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    /** The last phrase refusal blocked the AI ('off', 'cap' or 'down'): the card offers «Compila a mano». @type {'off'|'cap'|'down'|null} */
     aiBlocked: null,
     /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
     phraseNoDraft: false,
@@ -3951,6 +3977,9 @@ export function createCalendarioView(deps) {
    * name; the free notes move to the detail card.
    */
   function titleOf(row) {
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the grid reads only «Occupato» — never the service, never the customer.
+    if (row?.masked === true) return 'Occupato';
     const service = serviceLabel(row?.serviceKey, state.services);
     const customer = displayNameOf(row, subjectKeyOf(row));
     return customer ? `${service} · ${customer}` : service;
@@ -4120,6 +4149,20 @@ export function createCalendarioView(deps) {
       className: 'cal-pop-when',
       text: `${day} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`,
     }));
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the card reads «Occupato», the time and the team person — never the
+    // customer, the service, the note or the origin. No edit, no
+    // cancellation: isMovableAppointment already shut those tools above.
+    if (row?.masked === true) {
+      const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
+      if (typeof member === 'string' && member !== '') {
+        const person = el(doc, 'p', { className: 'cal-pop-row cal-pop-person', attrs: { 'data-role': 'event-member' } });
+        person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
+        person.appendChild(el(doc, 'span', { text: member }));
+        pop.appendChild(person);
+      }
+      return pop;
+    }
     // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
     // refusal, beside the event it belongs to. It clears on the next
     // selection change (the click handler above).
@@ -4638,15 +4681,35 @@ export function createCalendarioView(deps) {
   async function phraseAnswer({ resumeId = null, seq }) {
     let requestId = resumeId;
     if (requestId === null) {
+      // backlog:afa97ffe5a4d (production 18/11: the phrase POST met a 502
+      // LLM_PROVIDER_FAILED and the card gave up): a provider error retries
+      // the same POST once — the pilot's provider hiccups, the sentence is
+      // still there, so the operator never retypes it.
+      // Codex P2 on #1062: the retry resends the phrase (and space) that
+      // asked — never a later edit of the still-enabled field — and never
+      // after a newer submission owned the card.
+      const sentPhrase = state.phrase;
+      const sentSpace = readSpace();
+      const postPhrase = () => client.request('/api/appointments/phrase', {
+        method: 'POST',
+        body: { spaceId: sentSpace, phrase: sentPhrase },
+      });
+      let failed;
       try {
-        return await client.request('/api/appointments/phrase', {
-          method: 'POST',
-          body: { spaceId: readSpace(), phrase: state.phrase },
-        });
+        return await postPhrase();
       } catch (error) {
-        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
-        if (requestId === null) throw error;
+        failed = error;
       }
+      if (isProviderFailure(failed)) {
+        if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+        try {
+          return await postPhrase();
+        } catch (error) {
+          failed = error;
+        }
+      }
+      requestId = pendingRequestId(failed, 'BO_PHRASE_PENDING');
+      if (requestId === null) throw failed;
     }
     // A route away (or a newer search) during the POST owns the mount now:
     // never paint the waiting card over it (review #664, backlog:607f33ee).
@@ -5194,6 +5257,9 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // Team visibility (backlog:9aa5c073): the slot Conferma books the claim
+    // the operator sees — the live select value, like the manual Conferma.
+    const slotVisibility = manualValue('visibility');
     const claim = bookingClaim({
       spaceId: readSpace(),
       customer: pickedCustomer(),
@@ -5203,6 +5269,7 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
+      visibility: slotVisibility === '' ? undefined : slotVisibility,
       location: manualValue('location') === '' ? null : manualValue('location'),
       locationUrl: manualValue('locationUrl') === '' ? null : manualValue('locationUrl'),
     });
@@ -5751,6 +5818,32 @@ export function createCalendarioView(deps) {
       if (name === 'locationUrl') linkBox = box;
       form.appendChild(box);
     }
+    // Team visibility (backlog:9aa5c073), like Google Calendar: «Predefinita
+    // / Pubblico / Privato». Predefinita is the team default (everyone
+    // reads everything); Privato reads as «Occupato» for everyone but the
+    // creator and the administrators. The select owns the claim value, like
+    // the service menu: the claim reads the live node, never a copy.
+    const visibilityWrap = uiSelect(doc, {
+      name: 'visibility',
+      value: 'default',
+      options: [
+        { value: 'default', label: 'Predefinita' },
+        { value: 'public', label: 'Pubblico' },
+        { value: 'private', label: 'Privato' },
+      ],
+    });
+    const visibilitySelect = visibilityWrap.querySelector('select') ?? visibilityWrap;
+    if (typeof state.manual?.visibility === 'string' && state.manual.visibility !== '') {
+      visibilitySelect.value = state.manual.visibility;
+    }
+    const trackVisibility = () => {
+      state.manual = { ...(state.manual ?? {}), visibility: String(visibilitySelect.value ?? '') };
+      state.manualTyped.add('visibility');
+    };
+    visibilitySelect.addEventListener('input', trackVisibility);
+    visibilitySelect.addEventListener('change', trackVisibility);
+    form.appendChild(fieldBox('Visibilità', visibilityWrap, { wide: true }));
+    inputs.visibility = visibilitySelect;
     // Restyle 19/11 (ece111d80305, regola AI-native: meno campi): «Link
     // riunione» shows only when the place says Online, or a link is
     // already there — an in-person booking never sees an empty extra field.
@@ -5911,6 +6004,7 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        visibility: read('visibility'),
         location: read('location') === '' ? null : read('location'),
         locationUrl: read('locationUrl') === '' ? null : read('locationUrl'),
       }),
@@ -6274,6 +6368,10 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    // Team visibility (backlog:9aa5c073): the live select value, or absent
+    // when the form never painted one — the server reads absent as the team
+    // default and refuses anything outside default/public/private.
+    visibility: input.visibility === '' || input.visibility == null ? undefined : input.visibility,
     ...(location === null ? {} : { location }),
     ...(locationUrl === null ? {} : { locationUrl }),
     sourceKey: member !== '' && input.startsAt

@@ -6097,13 +6097,28 @@ export function createCustomerCardView(deps) {
    * (the Mac saw two cancellations with no fissato row before them): the
    * cancellation row follows it at the decided instant, newest first. The
    * title still names the slot; only the grouping instant is the event.
+   * backlog:df364d3027e5 — a cancelled booking with no recorded booking
+   * instant reads no fissato row: its row would fall back to the slot, so
+   * a slot still ahead would paint a green «fixed» check for a future that
+   * will not happen. Only the «Appuntamento annullato» row stays. A
+   * cancelled booking fixed at a known instant keeps its row (backlog:
+   * 0d68c387, newest first), and a past slot stays documented either way.
    * @param {any} timeline
    * @param {Map<string, string> | null} serviceNames
    */
   function bookedAppointmentEntries(timeline, serviceNames = null) {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    const nowMs = Date.now();
     return items
-      .filter((item) => ['booked', 'confirmed', 'cancelled'].includes(String(item?.status ?? '')))
+      .filter((item) => {
+        const status = String(item?.status ?? '');
+        if (status === 'booked' || status === 'confirmed') return true;
+        if (status !== 'cancelled') return false;
+        const bookedMs = Date.parse(String(item?.bookedAt ?? ''));
+        if (Number.isFinite(bookedMs)) return true;
+        const startsMs = Date.parse(String(item?.startsAt ?? ''));
+        return Number.isFinite(startsMs) && startsMs < nowMs;
+      })
       .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
       .map((item) => {
         const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');

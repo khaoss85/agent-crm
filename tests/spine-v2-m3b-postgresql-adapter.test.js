@@ -282,43 +282,53 @@ test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {
 
   await t.test('SERIALIZABLE concurrent updates surface a bounded conflict', async () => {
     await storage.execute(insertCompany('race', 'Start'));
-    let releaseFirst;
-    const firstReady = new Promise((resolve) => { releaseFirst = resolve; });
-    let holdFirst;
-    const firstHold = new Promise((resolve) => { holdFirst = resolve; });
+    // Doppia barriera (backlog:a466d9023f3f): nessuno scrittore tocca la
+    // riga finché entrambi hanno letto lo stesso snapshot. Prima la
+    // sovrapposizione dipendeva da uno sleep fisso di 50 ms: sotto carico
+    // il secondo scrittore partiva dopo il commit del primo, entrambi
+    // committavano e il test falliva senza conflitto.
+    let releaseWrites;
+    const writesReleased = new Promise((resolve) => { releaseWrites = resolve; });
+    let firstRead;
+    const firstReadDone = new Promise((resolve) => { firstRead = resolve; });
+    let secondRead;
+    const secondReadDone = new Promise((resolve) => { secondRead = resolve; });
+    const updateRace = (name) => ({
+      kind: 'update', table: 'companies', values: [{ column: 'name', value: name }],
+      where: [{ column: 'id', op: 'eq', value: 'race' }],
+    });
     const first = storage.transaction(async (tx) => {
       await tx.maybeOne(selectName('race'));
-      releaseFirst();
-      await firstHold;
-      await tx.execute({
-        kind: 'update', table: 'companies', values: [{ column: 'name', value: 'First' }],
-        where: [{ column: 'id', op: 'eq', value: 'race' }],
-      });
+      firstRead();
+      await writesReleased;
+      await tx.execute(updateRace('First'));
     });
+    const second = storage.transaction(async (tx) => {
+      await tx.maybeOne(selectName('race'));
+      secondRead();
+      await writesReleased;
+      await tx.execute(updateRace('Second'));
+    });
+    const settled = (promise) => promise.then(
+      (value) => ({ status: 'fulfilled', value }),
+      (reason) => ({ status: 'rejected', reason }),
+    );
     try {
-      await firstReady;
-      const second = storage.transaction(async (tx) => {
-        await tx.maybeOne(selectName('race'));
-        await tx.execute({
-          kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Second' }],
-          where: [{ column: 'id', op: 'eq', value: 'race' }],
-        });
-      });
-      const secondResult = second.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      holdFirst();
-      const firstResult = await first.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-      const other = await secondResult;
-      const rejected = [firstResult, other].filter((entry) => entry.status === 'rejected');
+      await Promise.all([firstReadDone, secondReadDone]);
+      releaseWrites();
+      const [firstResult, secondResult] = await Promise.all([settled(first), settled(second)]);
+      const rejected = [firstResult, secondResult].filter((entry) => entry.status === 'rejected');
       assert.ok(rejected.length >= 1, 'SERIALIZABLE must refuse at least one overlapping writer');
       for (const entry of rejected) {
         assert.equal(entry.reason.code, 'CONFLICT');
         assert.equal(entry.reason.details?.transient, true);
         assertNoSecrets(entry.reason);
       }
+      const finalName = (await storage.maybeOne(selectName('race'))).name;
+      assert.ok(finalName === 'First' || finalName === 'Second', 'the surviving writer leaves a bounded value');
     } finally {
-      try { holdFirst(); } catch { /* already released */ }
-      await first.catch(() => {});
+      try { releaseWrites(); } catch { /* already released */ }
+      await Promise.allSettled([first, second]);
     }
   });
 
