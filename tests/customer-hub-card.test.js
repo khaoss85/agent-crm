@@ -168,6 +168,25 @@ test('reading the card creates no master customer record', async (t) => {
   assert.deepEqual(counts(db), countsBefore, 'a card read adds no row anywhere');
 });
 
+test('voce 91c92940274c: the card of an archived contact carries archivedAt', async (t) => {
+  const root = projectWithHub(t);
+  const context = await boot(root, join(root, 'data', 'hub-card-archived.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  await app.applyCustomerImport({ actor: ACTOR, system: 'whatsapp', rows: [row('+39 333 1234567')] });
+  const listed = await app.services.contacts.list();
+  assert.equal(listed.length, 1, 'the import created exactly one contact');
+
+  const live = await app.readCustomerCard({ resource: 'contact', id: listed[0].id });
+  assert.equal(live.archivedAt, null, 'a live contact card carries no archivedAt');
+
+  const archived = await app.services.contacts.archive(listed[0].id, { actor: ACTOR });
+  assert.ok(archived.archivedAt !== null, 'the contact is archived');
+  const card = await app.readCustomerCard({ resource: 'contact', id: listed[0].id });
+  assert.equal(card.archivedAt, archived.archivedAt, 'the archived contact card carries archivedAt');
+});
+
 test('the hub package owns no records by declaration', async (t) => {
   const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
   const definition = createCustomerHubPackage();

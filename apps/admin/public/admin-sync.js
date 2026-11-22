@@ -26,6 +26,7 @@ import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } fr
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
+import { buildTeamRows, duplicateTeamHints } from './admin-labels.js';
 import {
   CHANNEL_STATE_LABELS,
   channelConnectRoute,
@@ -863,6 +864,24 @@ export function syncIdentityCards(candidates) {
 }
 
 /**
+ * backlog:6563edf41aab — the team duplicates the Impostazioni badge counts
+ * as cards the Stato sync list can show: one card per colliding painted
+ * name, from the same roster rows through the same hints Spazi e accessi
+ * paints. The card names the duplicate («Doppione nel team») and routes to
+ * Spazi e accessi, where the honest warning lives — it never merges or
+ * removes anything itself. A shapeless roster reads as no cards.
+ * @param {unknown} members the `GET /api/spine/memberships` items
+ */
+export function syncTeamCards(members) {
+  const rows = buildTeamRows(Array.isArray(members) ? members : []);
+  return duplicateTeamHints(rows).map((hint) => ({
+    title: `Doppione nel team: «${hint.name}»`,
+    detail: hint.text,
+    route: '#/spazi-accessi',
+  }));
+}
+
+/**
  * Rome clock for the live feed (`hh:mm:ss`, never UTC, never ISO).
  * Unparseable instants read '—', never "now".
  * @param {unknown} iso
@@ -984,6 +1003,8 @@ export function createSyncView(deps) {
     /** @type {any} */ profile: null,
     /** @type {Array<any>} */ candidates: [],
     candidatesError: /** @type {string | null} */ (null),
+    /** @type {Array<any>} */ teamMembers: [],
+    teamError: /** @type {string | null} */ (null),
     loaded: false,
     loadError: null,
     /** @type {Set<string>} */ syncing: new Set(),
@@ -1028,6 +1049,8 @@ export function createSyncView(deps) {
     state.profile = null;
     state.candidates = [];
     state.candidatesError = null;
+    state.teamMembers = [];
+    state.teamError = null;
     const space = state.spaceId.trim();
     /** @param {Promise<any>} promise */
     const settle = (promise) => promise.then((value) => ({ ok: true, value, error: null }), (error) => ({ ok: false, value: null, error }));
@@ -1046,6 +1069,10 @@ export function createSyncView(deps) {
     // page bound must never hide an outstanding decision. The cards still
     // ignore anything but unresolved, so an unfiltered answer stays safe.
     const candidatesRead = space === '' ? null : ask('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
+    // backlog:6563edf41aab: the same team roster the Impostazioni badge
+    // counts — the team is one per organization, so it reads from its own
+    // endpoint, fail-soft like the candidates above.
+    const teamRead = space === '' ? null : ask('/api/spine/memberships');
     const schema = await schemaRead;
     if (!current()) return;
     if (!schema.ok) {
@@ -1071,7 +1098,7 @@ export function createSyncView(deps) {
     state.activity = activity.value;
     state.loaded = true;
     if (typeof onMinimum === 'function') onMinimum();
-    const [profile, candidates] = await Promise.all([profileRead, candidatesRead]);
+    const [profile, candidates, team] = await Promise.all([profileRead, candidatesRead, teamRead]);
     if (!current()) return;
     state.profile = profile !== null && profile.ok && profile.value !== null && typeof profile.value === 'object'
       ? profile.value : null;
@@ -1094,6 +1121,30 @@ export function createSyncView(deps) {
         if (typeof console !== 'undefined' && typeof console.warn === 'function') {
           console.warn(
             'bo-sync candidates unreadable:',
+            error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+            `spaceId=${state.spaceId}`,
+          );
+        }
+      }
+    }
+    if (team !== null && team.ok) {
+      state.teamMembers = Array.isArray(team.value?.items) ? team.value.items : [];
+      state.teamError = null;
+    } else if (team !== null) {
+      const error = team.error;
+      state.teamMembers = [];
+      // Like the candidates: an uncomposed spine is an expected absence,
+      // not a fault — zero cards, silent. A failed read is a distinct
+      // state: the screen must not claim everything is fixed while the
+      // team roster was never read. Only the error name or code plus the
+      // workspace id reach the log, never the message or personal data.
+      if (isNotComposedFailure(error) || isUnsupportedContractFailure(error)) {
+        state.teamError = null;
+      } else {
+        state.teamError = 'Il team non si è potuto leggere. Riprova più tardi.';
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            'bo-sync team unreadable:',
             error instanceof Error ? error.name : (error?.code ?? 'unknown'),
             `spaceId=${state.spaceId}`,
           );
@@ -1135,7 +1186,7 @@ export function createSyncView(deps) {
   // afterwards the previous title returns.
   function renderHero(box, activity) {
     const syncing = state.syncingAll || state.syncing.size > 0;
-    const extraCount = syncIdentityCards(state.candidates).length;
+    const extraCount = syncIdentityCards(state.candidates).length + syncTeamCards(state.teamMembers).length;
     const indicator = syncIndicator(activity, Date.now(), { syncing, extraCount });
     box.appendChild(settingsTabs(doc, { activeId: 'stato-sync', fixCount: indicator.count, navigate: go }));
     box.appendChild(el(doc, 'p', 'bo-kicker', 'Stato sync'));
@@ -1242,11 +1293,15 @@ export function createSyncView(deps) {
     const items = syncFixItems(activity);
     const grants = syncGrantCards(activity, Date.now());
     const identities = syncIdentityCards(state.candidates);
-    const total = items.length + grants.length + identities.length;
+    // backlog:6563edf41aab: the same team duplicates the Impostazioni
+    // badge counts — count and list share the source, so the screens can
+    // never contradict each other again.
+    const team = syncTeamCards(state.teamMembers);
+    const total = items.length + grants.length + identities.length + team.length;
     const locked = readOnly();
     // BO-F6-16: the section names its count like the prototype
     // (`Da sistemare <n>`); the quiet banner is the prototype wording.
-    if (total === 0 && state.candidatesError === null) {
+    if (total === 0 && state.candidatesError === null && state.teamError === null) {
       // Prototype: with nothing open the section hides and the quiet
       // banner stands alone (C15). A linked row reading Da sistemare with
       // no card of its own still needs a look (backlog:e381c48581fa): the
@@ -1282,6 +1337,13 @@ export function createSyncView(deps) {
       renderRouteLink(node, 'Decido io', CLIENTI_IMPORT_ROUTE);
       list.appendChild(node);
     }
+    for (const card of team) {
+      const node = el(doc, 'div', 'bo-sync-fix bo-sync-fix-team');
+      node.appendChild(el(doc, 'p', 'bo-sync-fix-title', card.title));
+      node.appendChild(el(doc, 'p', 'bo-sync-fix-detail', card.detail));
+      renderRouteLink(node, 'Vedi in Spazi e accessi', card.route);
+      list.appendChild(node);
+    }
     for (const item of items) {
       const card = el(doc, 'div', 'bo-sync-fix');
       card.appendChild(el(doc, 'p', 'bo-sync-fix-title', item.title));
@@ -1306,6 +1368,10 @@ export function createSyncView(deps) {
     // names what it could not read, without counting it as a fix.
     if (state.candidatesError !== null) {
       box.appendChild(el(doc, 'p', 'bo-sync-note', state.candidatesError));
+    }
+    // Same for the team roster: no all-clear while it was never read.
+    if (state.teamError !== null) {
+      box.appendChild(el(doc, 'p', 'bo-sync-note', state.teamError));
     }
   }
 

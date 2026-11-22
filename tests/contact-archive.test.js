@@ -1,0 +1,335 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAccordoApp } from '../packages/app/src/index.js';
+import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
+import {
+  CUSTOMER_SCAN_LIMIT,
+  filterCustomerRows,
+  isDeletedCustomerRow,
+  parseCustomerListQuery,
+  shapeCustomerRow,
+} from '../packages/customer-data/src/customers.js';
+import { defineCustomerMatchPolicy } from '../packages/customer-data/src/policy.js';
+
+/**
+ * Voce 91c92940274c (Presti, 19/11): un contatto che il titolare non
+ * vuole — per esempio un mittente automatico arrivato dalla sync della
+ * posta come «Apple Reply» — si archivia o si elimina.
+ *
+ * Cosa prova, dal vivo:
+ * - archivia: sparisce da lista e conteggi, resta nel filtro Archiviati;
+ * - ripristina: torna in lista;
+ * - elimina: chiede la regola (con offerte solo archivio, 409), lascia
+ *   l'audit e non tocca gli altri contatti;
+ * - sync: l'email archiviata resta trovata e non si ricrea un doppione.
+ */
+
+const ACTOR = { type: 'user', id: 'titolare' };
+
+async function scene(t) {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const company = await app.services.companies.create({ name: 'Presti Group' });
+  const auto = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Apple', lastName: 'Reply',
+    email: 'apple.reply@email.apple.com',
+  });
+  const other = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti',
+    email: 'guido@prestigroup.example',
+  });
+  return { app, company, auto, other };
+}
+
+test('archivia: sparisce dalla lista, resta nel filtro Archiviati con audit', async (t) => {
+  const { app, auto } = await scene(t);
+  const archived = await app.services.contacts.archive(auto.id, { actor: ACTOR });
+  assert.equal(archived.archivedAt === null, false, 'archivedAt is set');
+
+  const list = await app.services.contacts.list({});
+  assert.ok(!list.some((row) => row.id === auto.id), 'archived contact leaves the list');
+
+  const only = await app.services.contacts.list({ includeArchived: true, archivedOnly: true });
+  assert.ok(only.some((row) => row.id === auto.id), 'archived contact is found in Archiviati');
+  assert.ok(only.every((row) => row.archivedAt !== null), 'Archiviati lists only archived rows');
+
+  const scan = await app.services.contacts.scan({});
+  assert.ok(!scan.some((row) => row.id === auto.id), 'archived contact leaves the search scan too');
+
+  const actions = app.audit.list({ entityType: 'contact' }).map((event) => event.action);
+  assert.ok(actions.includes('contact.archived'), 'the archive is audited');
+});
+
+test('ripristina: torna in lista', async (t) => {
+  const { app, auto } = await scene(t);
+  await app.services.contacts.archive(auto.id, { actor: ACTOR });
+  const restored = await app.services.contacts.restore(auto.id, { actor: ACTOR });
+  assert.equal(restored.archivedAt, null, 'archivedAt is cleared');
+
+  const list = await app.services.contacts.list({});
+  assert.ok(list.some((row) => row.id === auto.id), 'restored contact is back in the list');
+
+  const actions = app.audit.list({ entityType: 'contact' }).map((event) => event.action);
+  assert.ok(actions.includes('contact.restored'), 'the restore is audited');
+});
+
+test('elimina: senza offerte sparisce ovunque ma resta per audit e sync', async (t) => {
+  const { app, auto, other } = await scene(t);
+  const deleted = await app.services.contacts.remove(auto.id, { actor: ACTOR });
+  assert.equal(deleted.deletedAt === null, false, 'deletedAt is set');
+
+  const list = await app.services.contacts.list({});
+  assert.ok(!list.some((row) => row.id === auto.id), 'deleted contact leaves the list');
+  const archived = await app.services.contacts.list({ includeArchived: true, archivedOnly: true });
+  assert.ok(!archived.some((row) => row.id === auto.id), 'deleted contact is not even in Archiviati');
+
+  const reread = await app.services.contacts.get(auto.id);
+  assert.equal(reread.id, auto.id, 'get still reads the row for audit and sync');
+  const actions = app.audit.list({ entityType: 'contact' }).map((event) => event.action);
+  assert.ok(actions.includes('contact.deleted'), 'the elimination is audited');
+
+  const survivors = await app.services.contacts.list({});
+  assert.ok(survivors.some((row) => row.id === other.id), 'other contacts are untouched');
+});
+
+test('elimina: con offerte collegate solo archivio, mai elimina (409)', async (t) => {
+  const { app, company, auto } = await scene(t);
+  await app.services.opportunities.create({
+    companyId: company.id, contactId: auto.id,
+    name: 'Abbonamento sala', valueCents: 50000, owner: 'coach-guido',
+  });
+
+  await assert.rejects(
+    () => app.services.contacts.remove(auto.id, { actor: ACTOR }),
+    (error) => error?.code === 'CONTACT_HAS_OPPORTUNITIES' && error?.status === 409,
+    'a contact with offers refuses elimination with 409',
+  );
+  const archived = await app.services.contacts.archive(auto.id, { actor: ACTOR });
+  assert.ok(archived.archivedAt !== null, 'the same contact archives fine instead');
+  const reread = await app.services.contacts.get(auto.id);
+  assert.equal(reread.deletedAt, null, 'the refused elimination wrote nothing');
+});
+
+test('offerta: mai legata a un contatto archiviato o eliminato (409)', async (t) => {
+  const { app, company, auto, other } = await scene(t);
+  await app.services.contacts.archive(auto.id, { actor: ACTOR });
+  await assert.rejects(
+    () => app.services.opportunities.create({
+      companyId: company.id, contactId: auto.id,
+      name: 'Abbonamento sala', valueCents: 50000, owner: 'coach-guido',
+    }, { actor: ACTOR }),
+    (error) => error?.code === 'CONTACT_ARCHIVED' && error?.status === 409,
+    'an offer on an archived contact refuses with 409 CONTACT_ARCHIVED',
+  );
+
+  await app.services.contacts.remove(other.id, { actor: ACTOR });
+  await assert.rejects(
+    () => app.services.opportunities.create({
+      companyId: company.id, contactId: other.id,
+      name: 'Abbonamento sala', valueCents: 50000, owner: 'coach-guido',
+    }, { actor: ACTOR }),
+    (error) => error?.code === 'CONTACT_DELETED' && error?.status === 409,
+    'an offer on an eliminated contact refuses with 409 CONTACT_DELETED',
+  );
+});
+
+test('visibilità: un eliminato non si mostra in nessuna vista (tabella dei due giri)', () => {
+  // Giro 1 (testa 1954bb5d): gli eliminati rientravano dalla ricerca per
+  // telefono esatta perché niente su quel percorso guardava deletedAt.
+  // Giro 2 (testa ed86865f): riga e filtro in memoria non conoscevano
+  // deletedAt. La cura generale è una sola fonte (isDeletedCustomerRow,
+  // applicata in filterCustomerRows per OGNI vista): questa tabella tiene
+  // ogni caso di entrambi i giri.
+  const shaped = (extra) => shapeCustomerRow({
+    contact: {
+      id: 'c-x', companyId: null, firstName: 'Apple', lastName: 'Reply',
+      email: 'apple.reply@email.apple.com', ...extra,
+    },
+    company: null,
+  }, {});
+  const visibleIn = (row, vista) => {
+    const query = parseCustomerListQuery(vista === 'archiviati' ? { vista: 'archiviati' } : {});
+    return filterCustomerRows([row], query, query.view).includes(row);
+  };
+  const stamp = '2026-11-20T00:00:00.000Z';
+  const cases = [
+    ['attivo in Tutti si vede', {}, 'tutti', true],
+    ['attivo in Archiviati no', {}, 'archiviati', false],
+    ['archiviato in Tutti no', { archivedAt: stamp }, 'tutti', false],
+    ['archiviato in Archiviati sì', { archivedAt: stamp }, 'archiviati', true],
+    ['eliminato in Tutti no', { deletedAt: stamp }, 'tutti', false],
+    ['eliminato in Archiviati no', { deletedAt: stamp }, 'archiviati', false],
+    ['eliminato già archiviato in Archiviati no', { archivedAt: stamp, deletedAt: stamp }, 'archiviati', false],
+  ];
+  for (const [name, extra, vista, visible] of cases) {
+    const row = shaped(extra);
+    assert.equal(isDeletedCustomerRow(row), extra.deletedAt != null, `${name}: la fonte unica nomina l'eliminato`);
+    assert.equal(visibleIn(row, vista), visible, name);
+  }
+});
+
+test('eliminato: non rientra dalla ricerca per telefono esatta', async () => {
+  // Lo scenario del P1: il contatto eliminato tiene ancora l'identità
+  // telefono, la ricerca per cifre lo ritrova per identità esatta, ma la
+  // riga non si dipinge in nessuna vista.
+  const stamp = '2026-11-20T00:00:00.000Z';
+  const deleted = {
+    id: 'd-tel', companyId: null, firstName: 'Ada', lastName: 'Rossi',
+    email: 'ada+deleted-d-tel@email.apple.com', archivedAt: null, deletedAt: stamp,
+  };
+  const identities = [{
+    sourceKey: 'phone:+393331234567', system: 'phone', externalId: '+393331234567',
+    subjectResource: 'contact', subjectId: 'd-tel', status: 'active',
+  }];
+  const fillers = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({
+    id: `f${index}`, companyId: null, firstName: 'Riempitivo', lastName: `${index}`,
+    email: null, archivedAt: null, deletedAt: null,
+  }));
+  const modules = new Map([
+    ['contact', {
+      service: {
+        get: async (id) => {
+          if (id === 'd-tel') return deleted;
+          throw Object.assign(new Error(`Unknown contact ${id}`), { code: 'NOT_FOUND' });
+        },
+        list: async () => fillers,
+        scan: async () => [],
+      },
+    }],
+    ['company', {
+      service: {
+        get: async (id) => {
+          throw Object.assign(new Error(`Unknown company ${id}`), { code: 'NOT_FOUND' });
+        },
+        list: async () => [],
+        scan: async () => [],
+      },
+    }],
+    ['external-identity', {
+      service: {
+        listWhere: async (shape = {}) => identities.filter((entry) => Object.entries(shape)
+          .every(([key, value]) => (Array.isArray(value) ? value.includes(entry?.[key]) : entry?.[key] === value))),
+        list: async () => identities,
+      },
+    }],
+  ]);
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { q: '+393331234567', pageSize: '10' },
+  );
+  assert.ok(!page.items.some((item) => item.id === 'd-tel'), 'the deleted tombstone never re-enters through the phone path');
+});
+
+test('Archiviati: la scansione di ricerca chiede solo archiviati in SQL', async () => {
+  const fillers = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({
+    id: `f${index}`, companyId: null, firstName: 'Riempitivo', lastName: `${index}`,
+    email: null, archivedAt: null, deletedAt: null,
+  }));
+  const contactScans = [];
+  const modules = new Map([
+    ['contact', {
+      service: {
+        get: async (id) => {
+          throw Object.assign(new Error(`Unknown contact ${id}`), { code: 'NOT_FOUND' });
+        },
+        list: async () => fillers,
+        scan: async (options = {}) => { contactScans.push(options); return []; },
+      },
+    }],
+    ['company', {
+      service: {
+        list: async () => [],
+        scan: async () => [],
+      },
+    }],
+  ]);
+  await listCustomerRecords(
+    { modules, core: {}, names: {} },
+    { vista: 'archiviati', q: 'guido', pageSize: '10' },
+  );
+  assert.ok(contactScans.length > 0, 'the text search scans past the display bound');
+  assert.ok(contactScans.every((options) => options.archivedOnly === true && options.includeArchived === true),
+    'every search scan of Archiviati carries archivedOnly, so actives never starve old archived matches');
+
+  contactScans.length = 0;
+  await listCustomerRecords(
+    { modules, core: {}, names: {} },
+    { q: 'guido', pageSize: '10' },
+  );
+  assert.ok(contactScans.length > 0, 'the Tutti search scans too');
+  assert.ok(contactScans.every((options) => options.archivedOnly !== true),
+    'the Tutti search never asks for archivedOnly');
+});
+
+test('voce b50c2f9d06a1: la policy v2 decide attivo, archiviato ed eliminato', async () => {
+  const policy = defineCustomerMatchPolicy({});
+  assert.equal(policy.version, 2, 'the archived/removed rule ships as policy version 2');
+  const stamp = '2026-11-20T00:00:00.000Z';
+  const row = {
+    system: 'email', externalId: null, email: 'apple.reply@email.apple.com',
+    companyName: null, domain: null,
+  };
+  const readerFor = (contact) => ({
+    externalIdentity: async () => null,
+    contactByEmail: async () => contact,
+    companiesByName: async () => [],
+  });
+  const active = await policy.resolve({
+    row, reader: readerFor({ id: 'c-live', email: row.email, archivedAt: null, deletedAt: null }),
+  });
+  assert.equal(active.outcome, 'matched', 'an active contact still matches by exact email');
+  assert.equal(active.subject?.id, 'c-live');
+  const archived = await policy.resolve({
+    row, reader: readerFor({ id: 'c-arch', email: row.email, archivedAt: stamp, deletedAt: null }),
+  });
+  assert.equal(archived.outcome, 'unresolved', 'an archived contact is never silently reused');
+  assert.deepEqual(archived.candidates.map((candidate) => candidate.id), ['c-arch']);
+  const removed = await policy.resolve({
+    row, reader: readerFor({ id: 'c-del', email: row.email, archivedAt: null, deletedAt: stamp }),
+  });
+  assert.equal(removed.outcome, 'unresolved', 'a removed contact is never silently reused');
+  assert.deepEqual(removed.candidates.map((candidate) => candidate.id), ['c-del']);
+});
+
+test('sync: una nuova mail su indirizzo archiviato resta da decidere, mai riuso', async () => {
+  const stamp = '2026-11-20T00:00:00.000Z';
+  const policy = defineCustomerMatchPolicy({});
+  const archived = {
+    id: 'c-arch', email: 'apple.reply@email.apple.com', archivedAt: stamp, deletedAt: null,
+  };
+  const reader = {
+    externalIdentity: async () => null,
+    contactByEmail: async () => archived,
+    companiesByName: async () => [],
+  };
+  const answer = await policy.resolve({
+    row: {
+      system: 'email', externalId: null, email: 'apple.reply@email.apple.com',
+      companyName: null, domain: null,
+    },
+    reader,
+  });
+  assert.equal(answer.outcome, 'unresolved', 'an archived contact is never silently reused for new inbound mail');
+  assert.deepEqual(answer.candidates.map((candidate) => candidate.id), ['c-arch'],
+    'the archived contact stays a candidate for a human');
+});
+
+test('sync: un archivio non si ricrea dalla stessa email', async (t) => {
+  const { app, auto } = await scene(t);
+  await app.services.contacts.archive(auto.id, { actor: ACTOR });
+
+  // La riga resta: la sync ritrova la stessa email e riusa il contatto
+  // archiviato invece di crearne uno nuovo (niente doppione no-reply).
+  const tombstone = await app.services.contacts.get(auto.id);
+  assert.equal(tombstone.email, 'apple.reply@email.apple.com', 'the archived row still resolves by id');
+  assert.ok(tombstone.archivedAt !== null, 'and it stays archived, not resurrected');
+
+  await assert.rejects(
+    () => app.services.contacts.create({
+      companyId: auto.companyId, firstName: 'Apple', lastName: 'Reply',
+      email: 'apple.reply@email.apple.com',
+    }, { actor: ACTOR }),
+    (error) => error?.name === 'ConflictError',
+    'a second sync row with the same email refuses instead of duplicating',
+  );
+});

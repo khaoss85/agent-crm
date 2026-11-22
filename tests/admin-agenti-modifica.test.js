@@ -355,12 +355,17 @@ test('7d169a3b1dd2: Affida dice che l’incarico aspetta il motore, o che è spe
   assert.equal(posts(first.client, '/api/agents/assign').length, 1);
   assert.ok(first.mount.textContent.includes(AGENT_WAIT_ENGINE_DONE), 'aspetta il motore e parte da solo');
 
+  // Restyle 19/11 (ac104d4ff904): a paused card takes no incarico — no
+  // Affida, Riattiva is its main action and the card says why.
   const second = await paintedView({ agents: [{ ...plain, status: 'paused' }] });
   const paused = second.mount.querySelector(`article[data-agent="${MANO.sourceKey}"]`);
-  paused.querySelector(`input[name="talk-${MANO.sourceKey}"]`).value = 'ogni lunedì fai gli auguri';
-  paused.querySelector('form').dispatch('submit', {});
-  await flush();
-  assert.ok(second.mount.textContent.includes(AGENT_PAUSED_DONE), 'in pausa: l’incarico resta fermo');
+  assert.equal(paused.querySelector(`input[name="talk-${MANO.sourceKey}"]`), null, 'in pausa niente campo incarico');
+  assert.equal(paused.querySelector('form'), null, 'in pausa niente Affida');
+  assert.ok(paused.textContent.includes('In pausa: riattivalo per dargli un incarico.'));
+  const resume = paused.querySelector('button[data-action="retire-agent"]');
+  assert.equal(resume.textContent, 'Riattiva');
+  assert.ok(String(resume.getAttribute('class')).includes('ui-btn-primary'), 'Riattiva è l’azione principale');
+  assert.equal(posts(second.client, '/api/agents/assign').length, 0);
 });
 
 test('7d169a3b1dd2: al rientro la lista è subito quella buona, poi si rilegge', async () => {
