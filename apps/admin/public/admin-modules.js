@@ -376,17 +376,35 @@ export function createModuleAdmin(deps) {
       const companyId = 'field-opportunity-company';
       customerRow.appendChild(el(doc, 'label', { text: 'Cliente (azienda)', attrs: { for: companyId } }));
       companySelect = el(doc, 'select', { attrs: { id: companyId, name: 'company' } });
-      // Voce 6740cea450b7: lo stesso cliente si elenca una sola volta —
-      // la lista del server può ripetere una riga, il menu no.
+      // Voce 6740cea450b7 (segue #1098, prova del Mac del 20/11 sul live):
+      // lo stesso cliente si elenca una sola volta — la lista del server
+      // può ripetere una riga, il menu no. I domini riservati di prova
+      // (esempio.invalid e, in generale, i nomi che finiscono con
+      // .invalid) non sono clienti veri e restano fuori dal menu. Lo
+      // stesso nome visibile vale una riga sola anche con id diversi, e
+      // le voci sono ordinate per nome cosi un cliente con un numero nel
+      // nome sta in posizione prevedibile.
+      const shownNameOf = (company) => (typeof company.name === 'string' && company.name !== ''
+        ? company.name
+        : String(company.id));
       const seenCompanies = new Set();
+      const companyOptions = [];
       for (const company of companies) {
         if (company?.id === undefined || company?.id === null) continue;
         const key = String(company.id);
-        if (seenCompanies.has(key)) continue;
+        const name = shownNameOf(company);
+        if (name.trim().toLowerCase().endsWith('.invalid')) continue;
+        const nameKey = `name:${name.trim().toLowerCase()}`;
+        if (seenCompanies.has(key) || seenCompanies.has(nameKey)) continue;
         seenCompanies.add(key);
+        seenCompanies.add(nameKey);
+        companyOptions.push({ key, name });
+      }
+      companyOptions.sort((a, b) => a.name.localeCompare(b.name, 'it', { numeric: true, sensitivity: 'base' }));
+      for (const option of companyOptions) {
         companySelect.appendChild(el(doc, 'option', {
-          text: typeof company.name === 'string' && company.name !== '' ? company.name : String(company.id),
-          attrs: { value: key },
+          text: option.name,
+          attrs: { value: option.key },
         }));
       }
       customerRow.appendChild(companySelect);
@@ -418,15 +436,28 @@ export function createModuleAdmin(deps) {
           contactHint.setAttribute('class', 'field-error');
           return;
         }
+        // Voce 6740cea450b7 (segue #1098): anche i referenti si elencano
+        // una volta sola per nome visibile e in ordine alfabetico, cosi
+        // un referente con un numero nel nome si trova in posizione
+        // prevedibile. I referenti non si filtrano per dominio: un
+        // contatto di prova resta scegliibile finche la sua azienda e
+        // nel menu.
         const seenContacts = new Set();
+        const contactOptions = [];
         for (const contact of contacts) {
           if (contact?.id === undefined || contact?.id === null) continue;
           const key = String(contact.id);
-          if (seenContacts.has(key)) continue;
-          seenContacts.add(key);
           const label = [contact.firstName, contact.lastName].filter((part) => typeof part === 'string' && part !== '').join(' ')
             || contact.email || String(contact.id);
-          contactSelect.appendChild(el(doc, 'option', { text: label, attrs: { value: key } }));
+          const labelKey = `name:${label.trim().toLowerCase()}`;
+          if (seenContacts.has(key) || seenContacts.has(labelKey)) continue;
+          seenContacts.add(key);
+          seenContacts.add(labelKey);
+          contactOptions.push({ key, label });
+        }
+        contactOptions.sort((a, b) => a.label.localeCompare(b.label, 'it', { numeric: true, sensitivity: 'base' }));
+        for (const option of contactOptions) {
+          contactSelect.appendChild(el(doc, 'option', { text: option.label, attrs: { value: option.key } }));
         }
       };
       companySelect.addEventListener('change', reloadContacts);
@@ -466,7 +497,13 @@ export function createModuleAdmin(deps) {
           // Voce 6740cea450b7: la casella sta dentro la sua etichetta, mai
           // staccata — il testo nomina l'offerta e attiva la casella.
           const pickLabel = el(doc, 'label', { class: 'catalog-pick-label' });
+          // Voce 6740cea450b7 (segue #1098, prova del Mac del 20/11): la
+          // casella sta accanto al testo, mai su una riga sua. Il sistema
+          // visivo allarga gli input a tutta riga: qui la casella resta a
+          // larghezza naturale dentro un'etichetta flex inline.
+          pickLabel.setAttribute('style', 'display:inline-flex;align-items:center;gap:8px;');
           const checkbox = el(doc, 'input', { attrs: { type: 'checkbox', name: `product-${offer.offerId}` } });
+          checkbox.setAttribute('style', 'flex:none;width:auto;margin:0;');
           checkbox.setAttribute('aria-label', `Aggiungi ${offer.name}`);
           pickLabel.appendChild(checkbox);
           pickLabel.appendChild(el(doc, 'span', {

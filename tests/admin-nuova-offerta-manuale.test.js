@@ -91,6 +91,10 @@ test('6740cea450b7: il messaggio di errore del Valore usa la virgola decimale', 
 });
 
 test('6740cea450b7: ogni cliente compare una sola volta nel menu', async () => {
+  // Owner answer 20/11 12:3xZ (prova del Mac sul live con #1098): i domini
+  // di prova vanno esclusi dal menu, quindi «esempio.invalid» non compare
+  // piu — ne una volta sola. Il caso del doppione con id diversi vive in
+  // admin-nuova-offerta-segue-1098.test.js.
   const { mount } = await renderOfferForm({
     companies: [
       { id: 'c9', name: 'esempio.invalid' },
@@ -101,7 +105,7 @@ test('6740cea450b7: ogni cliente compare una sola volta nel menu', async () => {
   const companySelect = mount.findAll('select').find((node) => node.getAttribute('name') === 'company');
   assert.ok(companySelect, 'the Cliente menu exists');
   const dupes = companySelect.childNodes.filter((node) => node.getAttribute('value') === 'c9');
-  assert.equal(dupes.length, 1, 'the same customer is listed once');
+  assert.equal(dupes.length, 0, 'a test domain is never listed');
 });
 
 test('6740cea450b7: le caselle dei prodotti sono attaccate alle etichette', async () => {
