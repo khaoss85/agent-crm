@@ -613,9 +613,10 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
   async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
-    // backlog:1a96094db71d: the two reads start at once, beside the team
-    // and permission reads; only the statistic waits for the member count
-    // and the profile it formats with.
+    // Voce 785aeb28bd18: this runs in the second wave only (beginStatReads
+    // starts it after the team data lands), so the two reads below never
+    // start beside the roster. Only the statistic waits for the member
+    // count and the profile it formats with.
     const reads = Promise.allSettled([
       readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
       readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
@@ -714,11 +715,14 @@ export function createSpaziAccessiView(deps) {
   }
 
   /**
-   * Every read the page needs, started at once (backlog:1a96094db71d: they
-   * used to run one after the other — context, team, agents, permissions,
-   * profile, then the space cards — eight round trips of 2,5–4 s each in
-   * production). The data reads paint first; the statistic reads resolve in
-   * the second phase.
+   * The data the page paints — role, team, agents and permissions — started
+   * at once (backlog:1a96094db71d: they used to run one after the other —
+   * context, team, agents, permissions, profile, then the space cards —
+   * eight round trips of 2,5–4 s each in production). Voce 785aeb28bd18:
+   * the card statistic (profile, connectors, customers) no longer starts
+   * here — {@link beginStatReads} starts it only after this data lands, so
+   * the member step never queues behind the slow card reads (verifica Mac
+   * 19/11: 1,1–2,8 s su questa schermata, sotto 1 s sulle altre).
    * @param {string} space
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
@@ -734,6 +738,21 @@ export function createSpaziAccessiView(deps) {
     const switchesRead = settle(Promise.resolve().then(() => readsClient.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
     )));
+    return { contextRead, membersRead, agentsRead, switchesRead };
+  }
+
+  /**
+   * Voce 785aeb28bd18: the card statistic starts only after the data above
+   * landed and painted — profile, connectors and customers of the open
+   * space, never beside the roster. The statistic counts what the team list
+   * shows: rendered rows only, so a malformed membership never leaks into
+   * the card number.
+   * @param {string} space
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any> }} data the landed team reads
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   * (backlog:2de01913d276): concurrent identical GETs share one request.
+   */
+  function beginStatReads(space, { membersRead, contextRead }, readsClient = client) {
     const ids = readSpaces()
       .filter((entry) => entry !== null && typeof entry === 'object'
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
@@ -742,8 +761,6 @@ export function createSpaziAccessiView(deps) {
     // The profile describes the session's own space: its links count on
     // that card only, never on another space's (review #782 P1).
     const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
-    // The statistic counts what the team list shows: rendered rows only, so a
-    // malformed membership never leaks into the card number.
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
       ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));
@@ -756,7 +773,7 @@ export function createSpaziAccessiView(deps) {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
       if (stat !== null) state.stats.set(id, stat);
     }));
-    return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+    return { statsRead };
   }
 
   /**
@@ -834,9 +851,12 @@ export function createSpaziAccessiView(deps) {
     if (!resetLoadState(space)) return;
     // backlog:2de01913d276: one load reads once — the post-write reread
     // shares one coalescing wrapper like the entry load above.
-    const reads = beginReads(space, coalesceSpaceReads(client));
+    const readsClient = coalesceSpaceReads(client);
+    const reads = beginReads(space, readsClient);
     await loadCore(reads);
-    await loadStats(reads);
+    // Voce 785aeb28bd18: the card statistic follows the data here too —
+    // never beside the roster.
+    await loadStats(beginStatReads(space, reads, readsClient));
     state.statsPending = false;
   }
 
@@ -1566,15 +1586,21 @@ export function createSpaziAccessiView(deps) {
     const countRead = space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
     const reads = hasSpace ? beginReads(space, readsClient) : null;
-    // A statistic that already landed paints as data, never as pending:
-    // the flag flips in the settlement turn, before the data paint below.
+    // Voce 785aeb28bd18: the card statistic starts only after the data below
+    // landed and painted — never beside the roster. The flag flips in the
+    // settlement turn, before the data paint below, so a statistic that
+    // already landed paints as data, never as pending.
     let statsDone = false;
-    if (reads !== null) {
-      reads.statsRead.then(
+    let stats = null;
+    const startStats = () => {
+      if (stats !== null || reads === null) return stats;
+      stats = beginStatReads(space, reads, readsClient);
+      stats.statsRead.then(
         () => { statsDone = true; },
         () => { statsDone = true; },
       );
-    }
+      return stats;
+    };
     // backlog:1a96094db71d: on entry the page paints at once — tabs,
     // header, space cards and a skeleton where team and AI switches will
     // be — instead of «Carico…» for the whole of the reads. A refresh after
@@ -1602,6 +1628,9 @@ export function createSpaziAccessiView(deps) {
     if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
     if (reads === null) return;
+    // Voce 785aeb28bd18: the second wave starts only now that the data is
+    // on screen — the roster never queued behind the card reads.
+    const statsNow = startStats();
     // The statistic fills its tiles and the card line late. A space move
     // meanwhile belongs to the newer refresh; a repaint with nothing new
     // to show would only steal focus.
@@ -1614,7 +1643,7 @@ export function createSpaziAccessiView(deps) {
     const paintedPending = state.statsPending;
     const statBefore = state.stats.get(space);
     const connsBefore = state.spaceConns.get(space);
-    await loadStats(reads);
+    if (statsNow !== null) await loadStats(statsNow);
     state.statsPending = false;
     if (mine !== generation) return;
     if (space === '' || readActiveSpace().trim() !== space) return;

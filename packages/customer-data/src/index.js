@@ -180,13 +180,23 @@ export function createCustomerDataPackage(options = {}) {
     // old one. Version 5: the erasure reason is a code from a closed list.
     // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
     // declared surface (propose-field-from-question, fill-ai-field-values).
-    // Version 7 (backlog:e80c6aee42c5): the contact-fit score joined the
-    // list surface (punteggio column, fit sort, spaceId-scored reads).
-    // Version 8 (backlog:e80c6aee42c5, review agent-crm#987 P1): the scorer
-    // is no longer imported from the intelligence sources — it arrives as
-    // the fitScorer composition option, so the list operation's declared
-    // wiring changed with it.
-    version: 8,
+    // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the
+    // composed opportunity pipeline (pipelines option) so Pagato is won.
+    // Version 8 (backlog:91c92940274c): archive/restore/remove joins the
+    // surface (archivedAt/deletedAt in the row shape and every view filter,
+    // tombstone-safe sync match, no recreate of archived rows).
+    // Version 8 (backlog:d547f65e): unlinking a wrong merge writes one
+    // cronologia note per separated member through the declared work
+    // follow-up@1 edge, never into work's storage directly.
+    // Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove
+    // to the surface under the old version 8, so the package moves to 9
+    // with that surface; the match policy moves to version 2 with its
+    // archived/removed `unresolved` rule in the same commit.
+    // Version 10 (backlog:e80c6aee42c5): the contact-fit score joined the
+    // list surface (punteggio column, fit sort, spaceId-scored reads). The
+    // scorer arrives as the fitScorer composition option (review
+    // agent-crm#987 P1), never as an intelligence import.
+    version: 10,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -206,7 +216,7 @@ export function createCustomerDataPackage(options = {}) {
       createChannelSenderCapability({ config, policy }),
       createChannelOriginsCapability(config),
     ],
-    actions: buildCustomerDataActions(config),
+    actions: buildCustomerDataActions(config, { timelineNotes: offeredFollowUp }),
 
     // The match policy is a declared, fingerprinted definition (ADR-015), so a
     // changed rule is a changed fingerprint on every receipt it produced.
@@ -531,7 +541,7 @@ export function createCustomerDataPackage(options = {}) {
           const operations = createCustomerDataOperations({
             database: runtime.database, modules: runtime.modules, events: runtime.events,
             config: runtime.config, core: runtime.core, policy, names,
-            interactions: readState, fitScorer,
+            interactions: readState, fitScorer, pipelines: runtime.pipelines ?? null,
           });
           return (request) => operations.listCustomerRecords(request);
         },

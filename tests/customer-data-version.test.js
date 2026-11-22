@@ -10,13 +10,25 @@ import { CUSTOMER_COLUMNS, CUSTOMER_SORTS } from '../packages/customer-data/src/
 // Version 5: the erasure reason is a code from a closed list.
 // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
 // declared surface (propose-field-from-question, fill-ai-field-values).
-// Version 7 (backlog:e80c6aee42c5): the contact-fit score joined the list
-// surface (punteggio column, fit sort, spaceId-scored reads).
-// Version 8 (review agent-crm#987 P1): the scorer arrives as the fitScorer
-// composition option instead of an intelligence import.
-test('customer-data is version 8 since the scorer became a composition option', () => {
+// Version 7 (backlog:1adf95307b31): listCustomerRecords reads the composed
+// opportunity pipeline (pipelines option) so Pagato is won.
+// Version 8 (backlog:91c92940274c): archive/restore/remove joins the surface
+// (archivedAt/deletedAt in the row shape and every view filter,
+// tombstone-safe sync match, no recreate of archived rows).
+// Version 8 (backlog:d547f65e): unlinking a wrong merge writes one cronologia
+// note per separated member through the declared work follow-up@1 edge.
+// Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove to
+// the surface under the old version 8, so the package moves to 9.
+// Version 10 (backlog:e80c6aee42c5): the contact-fit score joined the list
+// surface (punteggio column, fit sort, spaceId-scored reads), with the
+// scorer as the fitScorer composition option (review agent-crm#987 P1).
+test('customer-data is version 10 since the fit score joined the archive/restore/remove surface', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 8);
+  assert.equal(pkg.version, 10);
+  const policy = pkg.policies.find((entry) => entry.kind === 'customer-match-policy');
+  assert.ok(policy, 'the package declares its customer-match-policy');
+  assert.equal(policy.definition.version, 2,
+    'the archived/removed unresolved rule ships as match policy version 2');
   assert.ok(pkg.operations.some((operation) => operation.name === 'propose-field-from-question'),
     'the version-6 surface carries the AI field proposal operation (propose-field-from-question)');
   assert.ok(pkg.operations.some((operation) => operation.name === 'fill-ai-field-values'),

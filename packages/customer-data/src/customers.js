@@ -140,6 +140,9 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // conversation whose last message is a person's, never answered after —
   // notifications (core/sender-kind.js) never wait. Newest waiting first.
   { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
+  // «Archiviati» (voce 91c92940274c): i contatti archiviati spariscono da
+  // viste e conteggi e si ritrovano solo qui. Mai gli eliminati.
+  { id: 'archiviati', label: 'Archiviati', filters: Object.freeze({ archiviati: true }) },
 ]);
 
 /**
@@ -545,6 +548,18 @@ export function viewFilters(view) {
 }
 
 /**
+ * Voce 91c92940274c: un contatto eliminato non si mostra in nessuna vista
+ * — né in Tutti né in Archiviati. La riga resta per audit e sync (la
+ * lettura `get` la vede ancora), ma la lista non la dipinge mai. Unica
+ * fonte in memoria per questa regola: la usano il filtro di ogni vista e
+ * il test a tabella che tiene ogni caso dei due giri di review.
+ * @param {{deletedAt?: unknown}} row a shaped customer row
+ */
+export function isDeletedCustomerRow(row) {
+  return row?.deletedAt != null;
+}
+
+/**
  * The row-matching stage of the list query, without sorting or pagination.
  * Pure, so the endpoint reuses it for the per-view pill counts: a pill count
  * is the same predicate the page itself applies, with that view's filters.
@@ -592,6 +607,16 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
     // «Da rispondere»: only rows with a conversation waiting for the team.
     if (viewExtra.daRispondere === true && !((row?.awaitingReplyCount ?? 0) > 0)) return false;
+    // Voce 91c92940274c (review P1 su #1077, giro 2 + giro 1 su 1954bb5d):
+    // un'unica fonte per la visibilità di una riga — lo strato SQL
+    // (contacts.list/scan escludono deleted_at) e questo strato in memoria
+    // applicano la stessa regola, così un percorso che aggira la lista
+    // (il top-up da identità telefonica esatta) non fa rientrare le
+    // tombstone. Il giro 1 curava solo lo strato SQL: la cura generale è
+    // questa, con il test a tabella che tiene ogni caso di entrambi i giri.
+    if (isDeletedCustomerRow(row)) return false;
+    if (viewExtra.archiviati === true && !row?.archivedAt) return false;
+    if (viewExtra.archiviati !== true && row?.archivedAt) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -786,6 +811,10 @@ export function shapeCustomerRow(subject, reads = {}) {
     // while neither reads like a call, which carries no text. When the empty
     // message carried a file, the row names it like the Oggi inbox does
     // ('Allegato', see apps/admin/public/admin-oggi.js).
+    // Voce 91c92940274c: la vista «Archiviati» filtra su questa marca, e
+    // le tombstone restano fuori da ogni vista (isDeletedCustomerRow).
+    archivedAt: contact?.archivedAt ?? null,
+    deletedAt: contact?.deletedAt ?? null,
     lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
       ?? (isMessageActivity(activity)
         ? (activity.hasAttachment === true ? 'Allegato' : MESSAGE_NO_TEXT) : null),

@@ -10,6 +10,7 @@ import {
   affineStorageFor,
   isSyncStorage,
   runWithAffineStorage,
+  settleStorageRead,
   storageMany,
   storageMaybeOne,
 } from '../../core/src/storage-runtime.js';
@@ -210,7 +211,10 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
           // on this, never on the name — same contract as the v1 adapters.
           placeholder: row.placeholder === true || row.placeholder === 1,
         }));
-      return storageMany(database, {
+      // storageMany maps per row: the array filter runs here, on the whole
+      // result, like the v1 adapters — never as the row mapper. The read
+      // settles through the shared storage helper (sync or async).
+      const rows = storageMany(database, {
         kind: 'select',
         table: 'companies',
         columns: ['id', 'name', 'domain', 'placeholder', 'created_at'],
@@ -218,7 +222,8 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
         ],
-      }, mapRows);
+      });
+      return settleStorageRead(database, rows, mapRows);
     },
     findContactByEmail(email) {
       if (typeof email !== 'string' || email.trim() === '') {
@@ -227,10 +232,16 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
       return storageMaybeOne(database, {
         kind: 'select',
         table: 'contacts',
-        columns: ['id', 'company_id', 'email'],
+        columns: ['id', 'company_id', 'email', 'archived_at', 'deleted_at'],
         where: [{ column: 'email', op: 'eq', value: normalizeEmail(email) }],
       }, (row) => (row
-        ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) }
+        ? {
+          id: String(row.id), companyId: String(row.company_id), email: String(row.email),
+          // Voce 91c92940274c (review P1 giro 6): la stessa parità di
+          // core-adapters — senza tombstone la guardia della policy non
+          // distingue un archiviato e la sync lo riusa in silenzio.
+          archivedAt: row.archived_at ?? null, deletedAt: row.deleted_at ?? null,
+        }
         : null));
     },
     createCompany(input, context) {
@@ -481,6 +492,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
       signatureTimeoutMs: options.signatureTimeoutMs,
     },
     core: coreAdapters,
+    pipelines,
   });
   const { aliases: operationAliases } = composePackageOperations({
     registry: domains,

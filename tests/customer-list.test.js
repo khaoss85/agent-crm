@@ -139,10 +139,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the seven quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 7);
+test('the eight quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 8);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere', 'archiviati']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
@@ -484,6 +484,141 @@ test('backlog:1adf95307b31: solo vinte o nessuna aperta legge null, valute miste
   const leo = page.items.find((item) => item.id === 'c3');
   assert.equal(leo.offerValueCents, null, 'nessuna offerta: «—»');
   assert.equal(leo.offerParts, null);
+});
+
+test('backlog:1adf95307b31: un\u2019offerta in Pagato non conta come aperta', async () => {
+  // Supervisor Mac 17/11: a single offer moved to Pagato still summed 20 €
+  // in the open value — move-stage sets closedAt but leaves the canonical
+  // stage on qualification, and the list excluded only the won/lost keys
+  // while Reporting already counts Pagato among the won. One shared
+  // closed/won rule now decides in both places: Pagato is won.
+  const SALES_LIKE = {
+    name: 'accordo-sales',
+    module: 'opportunity',
+    defaultStage: 'richiesta-info',
+    stages: [
+      { key: 'richiesta-info', type: 'open', order: 10 },
+      { key: 'prova', type: 'open', order: 20 },
+      { key: 'proposta', type: 'open', order: 30 },
+      { key: 'pagato', type: 'paid', order: 40 },
+      { key: 'perso', type: 'lost', order: 50 },
+    ],
+  };
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      {
+        id: 'op-paid', companyId: 'co1', contactId: 'c1', valueCents: 2000, currency: 'EUR',
+        stage: 'qualification', pipelineKey: 'accordo-sales', pipelineStage: 'pagato',
+        closedAt: '2026-11-17T08:00:00.000Z',
+      },
+    ],
+  });
+  const page = await listCustomerRecords(
+    {
+      modules,
+      core: {},
+      names: { identity: 'external-identity' },
+      pipelines: { forModule: (name) => (name === 'opportunity' ? SALES_LIKE : null) },
+    },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, null, 'Pagato e vinta: nessun valore aperto');
+  assert.equal(ada.offerCurrency, null);
+  assert.equal(ada.offerParts, null);
+});
+
+test('backlog:1adf95307b31: una riga di un\u2019altra pipeline legge lo stadio canonico', async () => {
+  // Review giro 1 (agent-crm#1038, P2): an open offer filed under another
+  // pipeline keeps its value even when its stage key coincides with a paid
+  // stage of the composed pipeline — the key belongs to its own pipeline.
+  const SALES_LIKE = {
+    name: 'accordo-sales',
+    module: 'opportunity',
+    defaultStage: 'richiesta-info',
+    stages: [
+      { key: 'richiesta-info', type: 'open', order: 10 },
+      { key: 'prova', type: 'open', order: 20 },
+      { key: 'proposta', type: 'open', order: 30 },
+      { key: 'pagato', type: 'paid', order: 40 },
+      { key: 'perso', type: 'lost', order: 50 },
+    ],
+  };
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      {
+        id: 'op-foreign', companyId: 'co1', contactId: 'c1', valueCents: 2000, currency: 'EUR',
+        stage: 'qualification', pipelineKey: 'previous-sales', pipelineStage: 'pagato',
+        closedAt: '2026-11-17T08:00:00.000Z',
+      },
+    ],
+  });
+  const page = await listCustomerRecords(
+    {
+      modules,
+      core: {},
+      names: { identity: 'external-identity' },
+      pipelines: { forModule: (name) => (name === 'opportunity' ? SALES_LIKE : null) },
+    },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, 2000, 'altra pipeline: lo stadio canonico aperto conta');
+  assert.equal(ada.offerCurrency, 'EUR');
+});
+
+test('backlog:1adf95307b31: riga senza chiave pipeline legge lo stadio canonico', async () => {
+  // Review giro 1 (agent-crm#1038, P2): a row with a pipeline stage but no
+  // pipeline key is not on any pipeline, so the canonical stage decides.
+  const SALES_LIKE = {
+    name: 'accordo-sales',
+    module: 'opportunity',
+    defaultStage: 'richiesta-info',
+    stages: [
+      { key: 'richiesta-info', type: 'open', order: 10 },
+      { key: 'pagato', type: 'paid', order: 40 },
+      { key: 'perso', type: 'lost', order: 50 },
+    ],
+  };
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      {
+        id: 'op-keyless', companyId: 'co1', contactId: 'c1', valueCents: 2000, currency: 'EUR',
+        stage: 'qualification', pipelineStage: 'pagato',
+        closedAt: '2026-11-17T08:00:00.000Z',
+      },
+    ],
+  });
+  const page = await listCustomerRecords(
+    {
+      modules,
+      core: {},
+      names: { identity: 'external-identity' },
+      pipelines: { forModule: (name) => (name === 'opportunity' ? SALES_LIKE : null) },
+    },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, 2000, 'senza chiave: lo stadio canonico aperto conta');
+  assert.equal(ada.offerCurrency, 'EUR');
 });
 
 test('backlog:0acf5809: a company row sums the contact offers and the company offers', async () => {

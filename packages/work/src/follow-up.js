@@ -792,4 +792,61 @@ export const bounds = Object.freeze({
   reason: MAX_REASON,
 });
 
+/**
+ * Append one operator note on a subject timeline through the declared
+ * `follow-up@1` edge — the one note write a consuming package may make.
+ *
+ * A domain action that needs a timeline row (customer-data's undo of a wrong
+ * merge) must not reach into this package's storage: the record name can be
+ * renamed through `moduleNames`, the `seq` allocation is this package's own
+ * serial section, and the write must join the caller's transaction. All three
+ * live here, behind the capability the composition opened — the same scoping
+ * `createFollowUp` already uses — so a rename can never silently turn a
+ * composed timeline into "unavailable".
+ *
+ * Provenance binds like every other write on this edge: `source.package`
+ * must name the consumer the capability was opened for, else
+ * `WORK_SOURCE_PACKAGE_MISMATCH`. Like a manual note it carries no
+ * idempotency key: two identical notes are two statements. The caller proves
+ * the subject exists by running on its own record inside the committing
+ * transaction, exactly as `record-subject-note` does.
+ *
+ * Fails closed: without a transaction (`WORK_TRANSACTION_REQUIRED`), without
+ * the activity record (`WORK_STORAGE_INVALID`), with a non-human actor, or
+ * with a subject outside contact/company, it throws and the caller's
+ * transaction rolls back — nothing half-written.
+ *
+ * @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context
+ *   the caller's own runtime handles — `modules` is what makes this the
+ *   caller's transaction rather than a second connection. `consumer` is added
+ *   by `PackageRegistry.capability()` and is never supplied by a caller.
+ * @param {{subject: {resource: string, id: string, owner?: string}, body: unknown,
+ *   occurredAt?: unknown, source: {package: string, action: string}}} request
+ */
+export async function recordTimelineNote(context, request) {
+  const scoped = { ...context, modules: context?.modules ?? null };
+  const { tasks, activities } = services(scoped);
+  requireCallerTransaction(tasks, activities);
+  requireHumanActor(context?.actor, 'Recording a timeline note');
+  const subject = validateSubject({ ...(request?.subject ?? null), owner: 'host' });
+  if (subject.resource !== 'contact' && subject.resource !== 'company') {
+    throw new AppError('a timeline note needs a contact or company subject', {
+      code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
+    });
+  }
+  const body = safeNoteText(request?.body, 'body', bounds.noteBody);
+  const now = typeof context?.now === 'function' ? context.now : () => new Date().toISOString();
+  const occurredAt = optionalIsoDate(request?.occurredAt, 'occurredAt') ?? now();
+  const source = bindSourcePackage(validateSource(request?.source), context?.consumer);
+  return recordActivity({ activities, actor: context?.actor }, {
+    sourceKey: null,
+    kind: 'note',
+    subject: { resource: subject.resource, id: subject.id },
+    taskId: null,
+    body,
+    occurredAt,
+    source,
+  });
+}
+
 export { safeText, optionalSafeText };

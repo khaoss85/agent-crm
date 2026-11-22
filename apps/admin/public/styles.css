@@ -731,7 +731,7 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px;
 }
-.bo-setting-label { font-size: 14px; font-weight: 700; }
+.bo-setting-label { font-size: 14px; font-weight: 700; flex: 1 1 auto; }
 .bo-setting-link { font-size: 13px; font-weight: 700; color: var(--accent); }
 .bo-setting-coming { font-size: 12px; color: var(--dim); }
 
@@ -3057,6 +3057,37 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
 .pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
 .pipeline-off-list .pipeline-off-meta { color: var(--muted); }
+/* Restyle 19/11 (Dan: Personalizzazione «brutta, non si capisce cosa fanno»):
+ * compact cards in a grid — name and state, one line, then «Attiva» (the
+ * green action that changes the space), «Prova» (look before, writes
+ * nothing) and «Dettagli» as a text link. */
+.plist .bo-perso-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.plist .card.bo-perso-card { display: flex; flex-direction: column; gap: 6px; min-height: 0; margin: 0; padding: 16px 18px; border: 1px solid var(--line-soft); border-radius: 14px; background: var(--surface); transition: border-color .15s ease; }
+.plist .card.bo-perso-card:hover { border-color: var(--line); }
+.plist .card.bo-perso-card.is-active { border-color: var(--stripe); }
+.plist .bo-perso-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.plist .bo-perso-card h3 { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.3; letter-spacing: -.005em; }
+.plist .bo-perso-card p.muted { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); flex: 1 1 auto; }
+.plist .bo-perso-card .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.plist .bo-perso-card .card-actions .ui-btn { height: 32px; min-height: 0; padding: 0 12px; border-radius: 9px; font-size: 13px; }
+.plist .bo-perso-card .card-actions .bo-perso-proof { border-color: var(--line-soft); background: transparent; color: var(--ink); }
+.plist .bo-perso-card .card-actions .bo-perso-proof::before { content: "◎ "; color: var(--muted); }
+.plist a.bo-perso-link { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
+.plist a.bo-perso-link:hover, .plist a.bo-perso-link:focus-visible { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.plist .bo-perso-state { flex: none; padding: 3px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.plist .bo-perso-state.is-off { background: var(--surface-soft); color: var(--muted); }
+.plist .card.bo-perso-dev { border-style: dashed; background: transparent; }
+.plist table.bo-perso-mine { width: 100%; border-collapse: collapse; font-size: 14px; }
+.plist table.bo-perso-mine th { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.plist table.bo-perso-mine td { padding: 12px; border-bottom: 1px solid var(--line-faint); }
+.plist table.bo-perso-mine td:first-child { font-weight: 600; }
+.plist table.bo-perso-mine td.bo-perso-mine-action { text-align: right; }
+.plist table.bo-perso-mine td.bo-perso-mine-action .ui-btn { height: 32px; min-height: 0; padding: 0 12px; border-radius: 9px; font-size: 13px; }
+.plist .card.bo-perso-dev .ui-btn { align-self: flex-start; width: auto; }
+.plist .bo-perso-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 520px; padding: 28px; border: 1px dashed var(--line-dashed); border-radius: 14px; }
+.plist .bo-perso-empty .empty-title { margin: 0; font-size: 16px; font-weight: 700; }
+.plist .bo-perso-empty .empty { margin: 0 0 6px; padding: 0; }
+
 
 /* Restyle 19/11 (7de82665ac2a): note and dictation on top of the cronologia. */
 .bo-scheda-note-top { display: flex; flex-direction: column; border-bottom: 1px solid var(--line-faint); }
@@ -3071,3 +3102,11 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 .bo-scheda-offer-history-title { margin: 6px 0 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 /* ece111d80305: «Link riunione» appears only for an Online place. */
 .cal-field[hidden] { display: none; }
+
+/* Verifica Mac 20/11: «Link riunione» nella finestra appuntamento solo con Luogo Online. */
+.bo-offer-field[hidden] { display: none; }
+/* Restyle e47da0d6655e: le offerte fuori da questa pipeline non sono più un link minuscolo — un richiamo con conteggio e valore aperto. */
+.pipeline-switch .pipeline-off-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; }
+.pipeline-switch .pipeline-off-toggle::after { content: "▾"; font-size: 10px; color: var(--dim); }
+.pipeline-switch .pipeline-off-toggle[aria-expanded="true"]::after { content: "▴"; }
+.pipeline-switch .pipeline-off-toggle:hover { border-color: var(--ink); }

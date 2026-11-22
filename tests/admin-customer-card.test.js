@@ -598,6 +598,38 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
 // backlog:0d68c387: a confirmed booking reads in the cronologia as its own
 // row («Appuntamento fissato · servizio · data»), with the listino name,
 // and the cancellation follows it.
+test('verifica Mac 20/11: la riga «Appuntamento fissato» dice anche il luogo (ece111d80305)', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            location: 'Online', locationUrl: 'https://meet.esempio.invalid/prova',
+          },
+          {
+            id: 'b1', status: 'booked', startsAt: '2099-11-13T10:00:00.000Z', endsAt: '2099-11-13T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.ok(booked.some((node) => node.textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov') && node.textContent.includes('· Online')),
+    'the row with a place names it');
+  assert.ok(booked.some((node) => node.textContent.includes('13 nov') && !node.textContent.includes('Online')),
+    'a row without a place adds nothing');
+});
+
 test('a confirmed booking reads in the cronologia as «Appuntamento fissato», before its cancellation', async () => {
   const mount = await renderCard(stubClient({
     services: [
@@ -3878,6 +3910,12 @@ test('434cc39a: an edit rewrites the single row and re-reads', async () => {
   save.dispatch('click');
   await flush();
   assert.deepEqual(saved, { resource: 'contact', id: 'c1', key: 'amico', value: 'sì' }, 'one governed value write');
+  // Verifica Mac 20/11 07:29Z: after Salva the editor closes — the repaint
+  // must not bring it back as a draft.
+  assert.equal(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-field-value'), undefined,
+    'the edit form is gone after Salva');
+  assert.ok(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico'),
+    'the field reads as a value again');
 });
 
 test('434cc39a: + Aggiungi campo defines a space field from the scheda', async () => {
