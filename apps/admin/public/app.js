@@ -162,12 +162,14 @@ function leaveForSpaceLogin(target) {
 
 // backlog:e1b3d56730fa: one queue for every read of the app — the page's
 // waves and the shell counters share it, so the in-flight peak stays within
-// SHELL_MAX_IN_FLIGHT (the same pilot bound Oggi already keeps). The schema
-// cache answers inside a held slot, so its inner fetch never adds past the
-// bound. schemaCachedRequest is only called at request time, once the module
-// below is fully evaluated.
+// SHELL_MAX_IN_FLIGHT (the same pilot bound Oggi already keeps). Codex P2
+// on #1062: the gate sits beneath the schema cache — every network fetch
+// behind the cache (first read and background renewal) takes a queue slot,
+// so an expired copy never adds a fetch past the bound. Cache hits answer
+// without holding a slot. schemaCachedRequest is only called at request
+// time, once the module below is fully evaluated.
 const sharedReads = createReadGate({
-  request: (path, options) => schemaCachedRequest(path, options),
+  request: (path, options) => moduleClient.rawRequest(path, options),
 });
 
 // Request client for generated-module views. A declared identity for audit —
@@ -178,7 +180,7 @@ const moduleClient = {
   // backlog:e7bdcbcc6864: every rejection names its request, so the log
   // helpers tell a failed POST from a failed read.
   request(path, options = {}) {
-    return sharedReads.request(path, options).catch((error) => {
+    return schemaCachedRequest(path, options).catch((error) => {
       throw tagRequestFailure(error, options.method ?? 'GET', path);
     });
   },
@@ -261,7 +263,7 @@ const moduleClient = {
 // renews behind it. Review Muse #898: a renewed copy that differs refreshes
 // the navigation only — the screen in use reads it at its next navigation.
 const schemaCachedRequest = createShellSchemaClient({
-  request: (path, options) => moduleClient.rawRequest(path, options),
+  request: (path, options) => sharedReads.request(path, options),
   adminBase: ADMIN_BASE,
   activeSpace: () => shellActiveSpace,
   storage: tabSessionStorage(),

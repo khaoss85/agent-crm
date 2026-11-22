@@ -175,17 +175,43 @@ export const CONNECTOR_CATALOG = Object.freeze([
 let connectorListSnapshot = null;
 
 /**
- * @param {{ spaceId: string, adapters: Array<any>, entries: Array<any>, channelsReady: boolean } | null} snap
+ * A warm snapshot lives only briefly (Codex P2 on #1062): a connection
+ * revoked or synced elsewhere must show fresh on the next detail open, not
+ * the rows the list read minutes ago. The list-to-detail walk takes
+ * seconds; anything older re-reads.
  */
-export function rememberConnectorListSnapshot(snap) {
+export const CONNECTOR_SNAPSHOT_TTL_MS = 60_000;
+
+/**
+ * @param {{ spaceId: string, adapters: Array<any>, entries: Array<any>, channelsReady: boolean } | null} snap
+ * @param {number} [now]
+ */
+export function rememberConnectorListSnapshot(snap, now = Date.now()) {
   connectorListSnapshot = snap !== null && typeof snap === 'object'
     ? Object.freeze({
       spaceId: typeof snap.spaceId === 'string' ? snap.spaceId : '',
       adapters: Array.isArray(snap.adapters) ? snap.adapters : [],
       entries: Array.isArray(snap.entries) ? snap.entries : [],
       channelsReady: snap.channelsReady === true,
+      at: typeof now === 'number' && Number.isFinite(now) ? now : Date.now(),
     })
     : null;
+}
+
+/**
+ * A snapshot warms a detail open only for its own space, with adapters and
+ * a fresh stamp — never an undated or expired one.
+ * @param {any} snap @param {string} spaceId @param {number} [now]
+ */
+export function snapshotCoversSpace(snap, spaceId, now = Date.now()) {
+  return snap !== null && typeof snap === 'object'
+    && typeof spaceId === 'string' && spaceId !== ''
+    && snap.spaceId === spaceId
+    && snap.channelsReady === true
+    && Array.isArray(snap.adapters)
+    && typeof snap.at === 'number' && Number.isFinite(snap.at)
+    && now - snap.at >= 0
+    && now - snap.at < CONNECTOR_SNAPSHOT_TTL_MS;
 }
 
 export function readConnectorListSnapshot() {

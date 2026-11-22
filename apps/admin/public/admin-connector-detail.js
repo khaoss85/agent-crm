@@ -35,7 +35,7 @@
 import { NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
-import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections, readConnectorListSnapshot } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections, readConnectorListSnapshot, snapshotCoversSpace } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -553,9 +553,10 @@ export function createConnectorDetailView(deps) {
     state.loadError = null;
     const spaceId = state.spaceId.trim();
     const snap = snapshotOf();
-    const warm = snap !== null && typeof snap === 'object'
-      && snap.spaceId === spaceId && spaceId !== ''
-      && snap.channelsReady === true && Array.isArray(snap.adapters);
+    // Codex P2 on #1062: a warm open reuses only a fresh snapshot for this
+    // space — an expired or undated one re-reads, so a connection revoked
+    // or synced elsewhere shows its current state.
+    const warm = snapshotCoversSpace(snap, spaceId);
     if (warm) {
       state.channelsReady = true;
       state.adapters = snap.adapters;

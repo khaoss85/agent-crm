@@ -4295,9 +4295,14 @@ export function createCalendarioView(deps) {
       // LLM_PROVIDER_FAILED and the card gave up): a provider error retries
       // the same POST once — the pilot's provider hiccups, the sentence is
       // still there, so the operator never retypes it.
+      // Codex P2 on #1062: the retry resends the phrase (and space) that
+      // asked — never a later edit of the still-enabled field — and never
+      // after a newer submission owned the card.
+      const sentPhrase = state.phrase;
+      const sentSpace = readSpace();
       const postPhrase = () => client.request('/api/appointments/phrase', {
         method: 'POST',
-        body: { spaceId: readSpace(), phrase: state.phrase },
+        body: { spaceId: sentSpace, phrase: sentPhrase },
       });
       let failed;
       try {
@@ -4306,6 +4311,7 @@ export function createCalendarioView(deps) {
         failed = error;
       }
       if (isProviderFailure(failed)) {
+        if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
         try {
           return await postPhrase();
         } catch (error) {

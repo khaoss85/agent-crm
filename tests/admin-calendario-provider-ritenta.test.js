@@ -111,6 +111,43 @@ test('afa97ffe5a4d: a non-provider error retries nothing and keeps the generic l
   assert.ok(mount.textContent.includes('Ricerca non riuscita. Riprova più tardi.'), mount.textContent);
 });
 
+test('afa97ffe5a4d Codex P2 #1062: the retry resends the asked phrase, never a mid-flight edit', async () => {
+  const bodies = [];
+  const doc = focusingDocument();
+  const mount = createMount();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path === '/api/profile') return { member: null, connections: { available: false, items: [] } };
+      if (path === '/api/appointments/phrase') {
+        if (bodies.length === 0) {
+          // The operator keeps typing while the first POST is still pending.
+          const box = mount.querySelector('textarea[name="phrase"]');
+          box.value = '30 minuti con marco rossi venerdì';
+          box.dispatch('input');
+        }
+        bodies.push(JSON.parse(String(options?.body ?? '{}'))?.phrase);
+        if (bodies.length === 1) throw Object.assign(new Error('provider failed'), { status: 502, code: 'LLM_PROVIDER_FAILED' });
+        return { draft: null };
+      }
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await settle();
+  const box = mount.querySelector('textarea[name="phrase"]');
+  box.value = PHRASE;
+  box.dispatch('input');
+  mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi').dispatch('click');
+  await settle();
+  assert.equal(bodies.length, 2, 'the provider error retries the same POST once');
+  assert.equal(bodies[0], PHRASE, 'the first POST asks the typed phrase');
+  assert.equal(bodies[1], PHRASE, 'the retry resends the asked phrase, not the mid-flight edit');
+});
+
 test('afa97ffe5a4d: the provider failure words and the block kind per code', () => {
   assert.equal(isProviderFailure({ code: 'LLM_PROVIDER_FAILED' }), true);
   assert.equal(isProviderFailure({ code: 'LLM_RATE_LIMITED' }), false, 'only the failed provider retries');
