@@ -68,6 +68,13 @@ function predicates(where = [], placeholder) {
       closed(entry, ['column', 'op'], 'null predicate', ['column', 'op']);
       return `${identifier(entry.column, 'predicate column')} IS NULL`;
     }
+    // Voce 91c92940274c (review P1 su #1077): la vista «Archiviati» filtra
+    // in SQL (archived_at IS NOT NULL), così il LIMIT si applica agli
+    // archiviati invece di tagliare gli attivi e filtrare dopo in memoria.
+    if (entry.op === 'is-not-null') {
+      closed(entry, ['column', 'op'], 'null predicate', ['column', 'op']);
+      return `${identifier(entry.column, 'predicate column')} IS NOT NULL`;
+    }
     if (entry.op === 'in' && Array.isArray(entry.values) && entry.values.length > 0) {
       closed(entry, ['column', 'op', 'values'], 'membership predicate', ['column', 'op', 'values']);
       const column = identifier(entry.column, 'predicate column');

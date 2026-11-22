@@ -18,6 +18,7 @@ import {
   postponeDueAt,
   postponeKey,
   recordActivity,
+  recordTimelineNote,
   requireCallerTransaction,
   requireHumanActor,
   resolveModule,
@@ -332,7 +333,8 @@ export function createFollowUpCapability(moduleNames) {
     name: FOLLOW_UP_CAPABILITY.capability,
     version: FOLLOW_UP_CAPABILITY.version,
     description:
-      'Create exactly one deterministic follow-up task and its creation activity inside the caller\'s transaction, keyed by a business identity the caller supplies.',
+      'Create exactly one deterministic follow-up task and its creation activity inside the caller\'s transaction, keyed by a business identity the caller supplies. '
+      + 'Also appends one operator note on a subject timeline, with work owning storage resolution and sequencing.',
     /**
      * @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context
      *   `consumer` is added by `PackageRegistry.capability()` from the identity
@@ -352,6 +354,13 @@ export function createFollowUpCapability(moduleNames) {
       return Object.freeze({
         /** @param {unknown} request */
         createFollowUp: (request) => createFollowUp(scoped, request),
+        /**
+         * Append one operator note on a subject timeline. Work resolves its
+         * own activity record (rename-safe) and allocates `seq`; the row
+         * joins the caller's transaction. See `recordTimelineNote`.
+         * @param {unknown} request
+         */
+        recordTimelineNote: (request) => recordTimelineNote(scoped, request),
         /**
          * Read the task a business identity already produced, exactly — never a
          * paged scan. A consumer that wants to know "did this already happen?"
@@ -655,7 +664,10 @@ export function createWorkPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: WORK_PACKAGE,
-    version: 2,
+    // Version 3 (backlog:d547f65e): the follow-up@1 edge also appends one
+    // operator note on a subject timeline (recordTimelineNote), so a domain
+    // action never reaches into this package's storage.
+    version: 3,
     label: 'Work items and activity evidence',
     description:
       'Owns follow-up tasks and an append-only user-facing activity timeline, and offers one capability so a domain action can create a deterministic follow-up inside its own transaction. It schedules nothing, reminds nobody and assigns to nobody.',

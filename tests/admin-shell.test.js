@@ -18,6 +18,7 @@ import {
   loadClientCount,
   loadFixCount,
   resolveBadgeSpaceId,
+  canonicalSpaceOrder,
   defaultSpaces,
   mergeSpaces,
   readSpaces,
@@ -173,6 +174,7 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
       enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
       if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) return { items: [] };
       throw new Error('sync giù');
     },
   };
@@ -189,6 +191,70 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
   assert.ok(warnings[0].includes('Error'));
   assert.ok(warnings[0].includes('spaceId=prova'));
   assert.ok(!warnings[0].includes('sync giù'));
+});
+
+/**
+ * backlog:6563edf41aab (ritorno verifica 19/11, ANSWER supervisore 19/11
+ * 03:0xZ, punto (d)): Impostazioni diceva «Niente da sistemare.» mentre il
+ * doppione del team era segnalato in Spazi e accessi — il riquadro conta
+ * anche l'avviso doppione, letto dallo stesso roster della vista.
+ */
+test('backlog:6563edf41aab: Impostazioni conta anche il doppione del team', async () => {
+  const teamClient = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spine/memberships')) {
+        return {
+          items: [
+            { subject: 'google|1049887766', displayName: 'Daniele Pelleri', role: 'owner', status: 'active' },
+            { subject: 'broker+adopted-7f3a', displayName: 'daniele pelleri', role: 'operator', status: 'active' },
+          ],
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  assert.equal(await loadFixCount(teamClient), 1);
+
+  // Una lettura membri fallita degrada alla base, come la metà sync: mai
+  // null quando la qualità si legge, mai un crash del badge.
+  const membersDown = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      throw new Error('membri giù');
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(membersDown), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('bo-shell team count unreadable'));
+  assert.ok(!warnings[0].includes('membri giù'));
+  // Review #1066 P2: the diagnostic names the workspace scope like the
+  // sync half — the selected space when known, the organization otherwise.
+  assert.ok(warnings[0].includes('spaceId=organizzazione'));
+
+  const scopedWarnings = [];
+  console.warn = (...args) => { scopedWarnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(membersDown, { spaceId: 'prova' }), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  // Due avvisi: team e sync, tutti e due con lo spazio selezionato.
+  const teamScoped = scopedWarnings.filter((line) => line.includes('bo-shell team count unreadable'));
+  assert.equal(teamScoped.length, 1);
+  assert.ok(teamScoped[0].includes('spaceId=prova'));
+  assert.ok(!teamScoped[0].includes('membri giù'));
 });
 
 test('the badge counts the session space first, the stored one only without a session', () => {
@@ -594,6 +660,32 @@ test('Clienti is available only when the customer-data package is composed', () 
   }
 });
 
+// backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): senza la
+// copia dello schema il menu mente — Clienti, Pipeline, Agenti e Squadre
+// «non composto» o «non attivi», Sequenze assente. Finché lo schema non è
+// letto davvero, le voci che dipendono da lui aspettano: mai un falso «non
+// composto». Red before the cure: no loading state exists.
+test('312dd81f83ba: before the schema arrives the menu waits instead of claiming «non composto»', () => {
+  const nav = buildShellNav({ schemaKnown: false });
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  for (const id of ['clienti', 'pipeline', 'agenti', 'squadre']) {
+    assert.equal(byId[id].available, false, `${id} still waits for the schema`);
+    assert.ok(!/non composto|non attiv/i.test(byId[id].disabledReason), `${id} never claims «non composto» before the schema`);
+    assert.match(byId[id].disabledReason, /caricamento/i, `${id} says it is loading`);
+  }
+  // Voices that need no schema keep their shape while the schema loads.
+  for (const [id, route] of [['oggi', '#/'], ['calendario', '#/calendario'], ['reporting', '#/reporting']]) {
+    assert.equal(byId[id].available, true, `${id} never waits for the schema`);
+    assert.equal(byId[id].route, route);
+  }
+  // Once the schema is known, the real composition paints as before: a
+  // space known to lack the package still says «non composto».
+  const known = buildShellNav({ customerDataAvailable: false, schemaKnown: true });
+  assert.match(known.find((item) => item.id === 'clienti').disabledReason, /non composto/);
+  const unknown = buildShellNav();
+  assert.match(unknown.find((item) => item.id === 'clienti').disabledReason, /non composto/, 'callers that never heard of the flag keep the old shape');
+});
+
 test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
   // The whole chain the shell runs after the schema arrives: envelope in,
   // sidebar voices out. Every link is a hash route, so it reaches the same
@@ -978,6 +1070,12 @@ test('settings panel lists the four areas with honest availability', () => {
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
   assert.ok(empty.textContent.includes('Niente da sistemare.'));
 
+  // backlog:6563edf41aab: the singular agrees — «1 cosa», never «1 cose».
+  const single = createMount();
+  renderSettingsPanel({ doc, mount: single, fixCount: 1, customerDataAvailable: true });
+  assert.ok(single.textContent.includes('1 cosa da sistemare (vedi Stato sync).'));
+  assert.ok(!single.textContent.includes('1 cose da sistemare'));
+
   const unknown = createMount();
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
@@ -1133,6 +1231,12 @@ test('Stato sync row carries the real fix-count badge, absent at zero', () => {
   assert.equal(inRow.length, 1);
   assert.equal(inRow[0].textContent, '2');
   assert.ok(inRow[0].parentNode.textContent.includes('Stato sync'));
+  // Restyle 454f1189ff97: «Apri» is the last thing on the row, after the
+  // badge, so it lines up at the right edge with every other row.
+  const rowKids = inRow[0].parentNode.children ?? inRow[0].parentNode.childNodes;
+  assert.equal(rowKids[rowKids.length - 1].textContent, 'Apri');
+  assert.ok(/\.bo-setting-label \{[^}]*flex: 1 1 auto/.test(readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8')),
+    'the label takes the free space, so «Apri» and the badge sit right');
 
   const zero = createMount();
   renderSettingsPanel({ doc, mount: zero, fixCount: 0, customerDataAvailable: true });
@@ -1373,4 +1477,45 @@ test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in
     assert.equal(screen.label, label);
   }
   assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
+});
+
+test('backlog:8e1092b95c8a: stesso spazio, stesso numero e stesse iniziali nel menu', () => {
+  const spaces = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'test-2f07', name: 'Prova verifica' },
+  ];
+  const flipped = [...spaces].reverse();
+  // L'ordine canonico è per id, da qualunque fonte arrivi l'elenco.
+  assert.deepEqual(canonicalSpaceOrder(flipped).map((space) => space.id), ['presti-group', 'test-2f07']);
+  assert.deepEqual(canonicalSpaceOrder(null), []);
+  const rows = spaceMenuItems(spaces, 'test-2f07');
+  const rowsFlipped = spaceMenuItems(flipped, 'test-2f07');
+  assert.deepEqual(
+    rowsFlipped.map((row) => [row.id, row.keyHint, row.initials]),
+    rows.map((row) => [row.id, row.keyHint, row.initials]),
+    'numbers and initials never depend on the listing order',
+  );
+  assert.equal(rows[0].id, 'presti-group');
+  assert.equal(rows[0].keyHint, '⌘1');
+  assert.equal(rows[1].keyHint, '⌘2');
+  assert.equal(resolveSpaceShortcut({ metaKey: true, key: '1' }, flipped), 'presti-group');
+  // Sigle in collisione: vince sempre lo stesso spazio, in qualunque ordine.
+  const clash = [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'prova', name: 'Prova' },
+  ];
+  const clashRows = spaceMenuItems(clash, 'prova');
+  const clashFlipped = spaceMenuItems([...clash].reverse(), 'prova');
+  assert.deepEqual(
+    clashFlipped.map((row) => [row.id, row.initials]),
+    clashRows.map((row) => [row.id, row.initials]),
+  );
+  assert.equal(clashRows.find((row) => row.id === 'presti-group').initials, 'PR');
+
+  // Il menu «+ Nuovo modulo» non mostra parole tecniche inglesi.
+  const { sidebar } = renderShell();
+  const addMenu = sidebar.findAll('div').find((node) => (node.className ?? '').split(/\s+/).includes('bo-add-menu'));
+  assert.ok(addMenu, 'the add menu renders');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('bundle'), 'no bundle in the add menu');
+  assert.ok(!addMenu.textContent.toLowerCase().includes('manifest'), 'no manifest in the add menu');
 });

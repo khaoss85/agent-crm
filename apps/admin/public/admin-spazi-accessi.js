@@ -48,7 +48,30 @@ import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { memberText, profileName, subjectText, teamPeople } from './admin-labels.js';
+import {
+  SPACE_ROLE_LABELS,
+  accessLabel,
+  buildTeamRows,
+  duplicateTeamHints,
+  memberInitials,
+  nameInitials,
+  profileMemberOf,
+  spaceRoleLabel,
+} from './admin-labels.js';
+// backlog:6563edf41aab (punto (d)): the painted team rows and the duplicate
+// hints live in admin-labels.js with teamPeople, so the Impostazioni fix
+// count reads the same rows — re-exported here for the existing importers
+// (admin-calendario.js, the team tests), never a second definition.
+export {
+  SPACE_ROLE_LABELS,
+  accessLabel,
+  buildTeamRows,
+  duplicateTeamHints,
+  memberInitials,
+  nameInitials,
+  profileMemberOf,
+  spaceRoleLabel,
+};
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -112,31 +135,6 @@ export const SPAZI_AI_MASTER = Object.freeze({
 
 /** Master default, mirrored from the package — a space with no master row runs with the AI on. */
 export const SPAZI_AI_MASTER_DEFAULT = true;
-
-/**
- * Italian names for the control-plane membership roles the spine mirrors —
- * the same words the shell prints under the space name and the user
- * (admin-session.js), so one screen never calls the same role «Titolare»
- * in the sidebar and something else in the card (prototype 08: «Tu:
- * Titolare»).
- */
-export const SPACE_ROLE_LABELS = Object.freeze({
-  owner: 'Titolare',
-  operator: 'Operatore',
-  observer: 'Osservatore',
-});
-
-/**
- * Italian label for a membership role. A role the framework does not know is
- * shown as-is, never blank and never mapped to a wrong one.
- * @param {unknown} role
- */
-export function spaceRoleLabel(role) {
-  if (typeof role === 'string' && role !== '' && Object.hasOwn(SPACE_ROLE_LABELS, role)) {
-    return SPACE_ROLE_LABELS[role];
-  }
-  return typeof role === 'string' && role !== '' ? role : 'non disponibile';
-}
 
 /**
  * The statistic of one space card, in the prototype's own pattern
@@ -290,26 +288,11 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
 }
 
 /**
- * Avatar initials for a team subject: the first two alphanumeric characters,
- * uppercased. The spine store itself carries no display name; when the
- * roster arrives without the enriched displayName/email, the subject is the
- * only honest source — never a prettier invention (buildTeamRows uses the
- * person name when the roster carries one).
- * @param {unknown} subject
+ * The team builders live in admin-labels.js (see the import above): this
+ * module re-exports them, never a second definition. The invite in-flight
+ * marker stays here: only this view paints «invio in corso» while the grant
+ * 200 is out, and only this view reads it back.
  */
-export function memberInitials(subject) {
-  if (typeof subject !== 'string') return '·';
-  const clean = subject.replace(/[^0-9a-zA-Z\u00c0-\u00de\u00e0-\u00ff]/g, '');
-  if (clean === '') return '·';
-  return clean.slice(0, 2).toUpperCase();
-}
-
-/**
- * One team row per membership: avatar initials, subject, Italian role pill,
- * status. Sorted by subject so the list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
- */
-const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa', sending: 'invio in corso' });
 
 /**
  * Client-only marker for a membership whose grant request is still out:
@@ -318,23 +301,6 @@ const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', in
  * server truth. Never sent to the server, never read from it.
  */
 const INVITE_SENDING_STATUS = 'sending';
-
-/** Strongest role first: a person holding two subjects shows the higher one. */
-const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
-
-/** Liveliest status first: a person reads «sospeso» only when no subject is live. */
-const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
-
-/**
- * Avatar initials for a person name: the first letter of the first two
- * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
- * @param {string} name
- */
-function nameInitials(name) {
-  const words = name.split(/\s+/).map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '')).filter(Boolean);
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
-  return memberInitials(name);
-}
 
 /**
  * The verified session subject from a settled `/api/spine/context` read
@@ -351,225 +317,9 @@ function selfSubjectOf(settled) {
   return null;
 }
 
-/**
- * The session profile's own member (name and mailbox) from a `/api/profile`
- * answer, or null. Both fields pass the same member-text filter the team
- * rows use, so a technical id never becomes a name. backlog:71a6574a: the
- * self row's fallback when the roster leaves it with a bare handle.
- * @param {unknown} answer
- */
-export function profileMemberOf(answer) {
-  const member = answer !== null && typeof answer === 'object'
-    ? /** @type {{member?: unknown}} */ (answer).member
-    : null;
-  if (member === null || typeof member !== 'object') return null;
-  const shaped = /** @type {{name?: unknown, email?: unknown}} */ (member);
-  const name = memberText(shaped.name);
-  const email = memberText(shaped.email);
-  if (name === null && email === null) return null;
-  return { name, email };
-}
-
-/** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
-const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
-/** @param {Array<string>} subjects */
-export function accessLabel(subjects) {
-  const kinds = [];
-  for (const subject of subjects) {
-    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
-    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
-  }
-  return kinds.length > 0 ? kinds.join(' · ') : null;
-}
-
-/**
- * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
- * carry, beside each opaque subject, the control-plane displayName, email
- * and `operatorAccountId` the pilot enriches it with — the same fields the
- * Calendario team reads. One human can hold several subjects (an adopted
- * broker member, the github one and the Google one: prod 07/11 listed
- * «Daniele Pelleri» twice with `broker+…@accordo.invalid` mailboxes).
- * Subjects merge into one row on the control-plane person key first
- * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
- * only without that key — when both the mailbox and the display name match
- * (trimmed, case-insensitive). Two explicit person keys never fold into one
- * row: the mailbox fallback joins only a group with no key of its own, or
- * the same key. A mailbox alone never merges: a shared mailbox (info@…)
- * or stale enrichment could fold a different human into the row, hide them
- * and let «Rimuovi» suspend them. A name alone never merges either: two
- * homonyms without email are two people. Nothing merges
- * in the backend: the row keeps every subject, and removal suspends each
- * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
- * the row shows the person's first real mailbox, or no email line when
- * the roster carries none — the name is then the profile displayName.
- *
- * Without enrichment the subject is the name when it reads as one, else
- * «Membro del team» — never a technical subject (production 10/11) — and
- * the status sits in its own column beside the role. Sorted by name, then
- * subject, so the list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
- * @param {{selfSubject?: unknown, selfName?: unknown, selfEmail?: unknown}} [options]
- *   the session profile's own name and mailbox: only the session's own
- *   person may borrow them, when the roster leaves it with a bare handle
- */
-export function buildTeamRows(members = [], { selfSubject = null, selfName = null, selfEmail = null } = {}) {
-  // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
-  // teamPeople (admin-labels.js), the same rows the Calendario team reads.
-  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
-    subjects: row.subjects,
-    keys: row.keys,
-    live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
-    displayName: row.name,
-    email: row.email,
-    roles: row.members.map((member) => member.role),
-    statuses: row.members.map((member) => member.status),
-    self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
-  }));
-  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
-  // identity — not even the session's own name. Without a person key or a
-  // server link a same-named subject stays a row of its own, with its own
-  // «Rimuovi», told apart by its access kind (accessLabel below): one row
-  // too many beats a person hidden.
-  // backlog:71a6574a (verifica Mac 11/11, punto 5): the session profile
-  // names the operator's own person when the roster does not — a bare
-  // profile handle («khaoss85») never stands alone. The profile name joins
-  // the same candidates `profileName` scores in admin-labels, so a full
-  // name wins over the handle and nothing else changes; the profile mailbox
-  // fills a missing row email. Only the session's own person is enriched —
-  // another row never borrows the operator's name or mailbox.
-  if (typeof selfSubject === 'string' && selfSubject !== '') {
-    const self = people.find((person) => person.subjects.includes(selfSubject));
-    if (self !== undefined) {
-      // The same pick admin-labels makes among roster names, with the
-      // profile name added: a full name wins over the handle, ties and
-      // better roster names keep what the team already showed.
-      const candidates = [self.displayName, memberText(selfName)]
-        .filter((name) => typeof name === 'string');
-      const best = profileName(candidates);
-      if (best !== null) self.displayName = best;
-      const profileMailbox = memberText(selfEmail);
-      if (self.email === null && profileMailbox !== null) self.email = profileMailbox;
-    }
-  }
-  return people
-    .map((person) => {
-      const subject = [...person.subjects].sort()[0];
-      // No readable name or mailbox: the subject when it reads as a word,
-      // else a generic label — never a technical subject (`google|…`,
-      // `broker+…`), the same fallback the Calendario team uses.
-      const readable = person.displayName ?? person.email ?? subjectText(subject);
-      const name = readable ?? 'Membro del team';
-      const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
-      const role = known.length > 0
-        ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
-        : person.roles[0];
-      // Deterministic, whatever the store order: the liveliest status wins,
-      // and «sospeso» only when every subject of the person is suspended.
-      const other = person.statuses.findIndex((status) => status !== 'suspended');
-      const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
-        ?? (other >= 0 ? person.statuses[other] : 'suspended');
-      return {
-        subject,
-        subjects: [...person.subjects].sort(),
-        // What «Rimuovi» suspends: every subject of the person not already
-        // suspended (all of them when none is live, so a retry still asks).
-        removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
-        name,
-        email: person.email,
-        initials: person.displayName !== null
-          ? nameInitials(person.displayName)
-          : (readable !== null ? memberInitials(readable) : '·'),
-        role: spaceRoleLabel(role),
-        // The session's own person: never offered «Rimuovi» on themself.
-        self: person.self,
-        // How this person signs in, when no real mailbox names them: two
-        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
-        access: accessLabel(person.subjects),
-        status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
-      };
-    })
-    .sort((left, right) => {
-      const a = left.name.toLowerCase();
-      const b = right.name.toLowerCase();
-      if (a !== b) return a < b ? -1 : 1;
-      return left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0;
-    });
-}
-
-/**
- * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
- * rows that paint the same REAL name are indistinguishable on screen
- * («Daniele Pelleri» vs «daniele pelleri», both with the same avatar),
- * even when the mailbox or the access line tells them apart («Accesso
- * Google» vs «Accesso di servizio»). One entry per colliding painted name,
- * in team order; mailbox and access kind never silence the hint — the same
- * person resolution covers different accesses, and two homonyms stay
- * candidates the operator keeps. The generic placeholder («Membro del
- * team», review #1043 P2) is not a name: rows without a real name fall back
- * to the mailbox, then to their subjects, so two unenriched rows never
- * collide. A name alone never proves one person (backlog:9d06eb1e174b), so
- * the hint explains the two access lines and warns that removing suspends
- * the person in the whole organisation — it never merges or removes
- * anything itself.
- * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
- */
-const PLACEHOLDER_TEAM_NAME = 'membro del team';
-
-/** A painted name the hint may key on: never empty, never the generic placeholder. @param {string} name */
-function teamHintHasName(name) {
-  return name !== '' && name.toLowerCase() !== PLACEHOLDER_TEAM_NAME;
-}
-
-/** @param {unknown} row */
-function teamHintSubjects(row) {
-  if (!row || typeof row !== 'object') return [];
-  const fromList = Array.isArray(row.subjects) ? row.subjects : [];
-  const single = typeof row.subject === 'string' ? [row.subject] : [];
-  return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
-}
-
-export function duplicateTeamHints(rows = []) {
-  const list = Array.isArray(rows) ? rows : [];
-  const byPaint = new Map();
-  list.forEach((row, index) => {
-    if (!row || typeof row !== 'object') return;
-    const name = typeof row.name === 'string' ? row.name.trim().replace(/\s+/g, ' ') : '';
-    const email = typeof row.email === 'string' ? row.email.trim() : '';
-    const subjects = [...new Set(teamHintSubjects(row))].sort();
-    // Same person resolution, access included: a real painted name alone
-    // keys the hint (case-insensitive), so a Google row and a servizio row
-    // with the same name collide; the placeholder never keys it (review
-    // #1043 P2: it would invite removing a live member), falling back to
-    // the mailbox and then to the subjects.
-    const key = teamHintHasName(name)
-      ? `name:${name.toLowerCase()}`
-      : email !== ''
-        ? `mail:${email.toLowerCase()}`
-        : subjects.length > 0 ? `subject:${subjects.join('+')}` : `row:${index}`;
-    byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
-  });
-  const hints = [];
-  for (const group of byPaint.values()) {
-    if (group.length < 2) continue;
-    const variants = [...new Set(group.flatMap((row) => teamHintSubjects(row)))];
-    if (variants.length < 2) continue;
-    const first = group[0];
-    const firstName = typeof first.name === 'string' ? first.name.trim().replace(/\s+/g, ' ') : '';
-    const firstEmail = typeof first.email === 'string' ? first.email.trim() : '';
-    const painted = teamHintHasName(firstName) ? firstName : firstEmail;
-    const accesses = [...new Set(group.map((row) => (
-      typeof row.access === 'string' && row.access.trim() !== '' ? row.access.trim() : null
-    )).filter((access) => access !== null))];
-    const cause = accesses.length > 0 ? ` ma con accessi diversi (${accesses.join(', ')})` : '';
-    hints.push({
-      name: painted,
-      count: group.length,
-      accesses,
-      text: `«${painted}» compare ${group.length} volte con lo stesso nome${cause}: è quasi sempre la stessa persona che entra in due modi. Non rimuovere nessuna delle due righe per sistemare: la rimozione sospende la persona in tutta l'organizzazione.`,
-    });
-  }
-  return hints;
-}
+/** The team rows and duplicate hints moved to admin-labels.js (see above): this
+ * module imports and re-exports them, so the view paints the same rows the
+ * Impostazioni count reads. */
 
 /**
  * The five switches with their effective value: the flipped row wins, the
@@ -885,9 +635,10 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
   async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
-    // backlog:1a96094db71d: the two reads start at once, beside the team
-    // and permission reads; only the statistic waits for the member count
-    // and the profile it formats with.
+    // Voce 785aeb28bd18: this runs in the second wave only (beginStatReads
+    // starts it after the team data lands), so the two reads below never
+    // start beside the roster. Only the statistic waits for the member
+    // count and the profile it formats with.
     const reads = Promise.allSettled([
       readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
       readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
@@ -987,11 +738,14 @@ export function createSpaziAccessiView(deps) {
   }
 
   /**
-   * Every read the page needs, started at once (backlog:1a96094db71d: they
-   * used to run one after the other — context, team, agents, permissions,
-   * profile, then the space cards — eight round trips of 2,5–4 s each in
-   * production). The data reads paint first; the statistic reads resolve in
-   * the second phase.
+   * The data the page paints — role, team, agents and permissions — started
+   * at once (backlog:1a96094db71d: they used to run one after the other —
+   * context, team, agents, permissions, profile, then the space cards —
+   * eight round trips of 2,5–4 s each in production). Voce 785aeb28bd18:
+   * the card statistic (profile, connectors, customers) no longer starts
+   * here — {@link beginStatReads} starts it only after this data lands, so
+   * the member step never queues behind the slow card reads (verifica Mac
+   * 19/11: 1,1–2,8 s su questa schermata, sotto 1 s sulle altre).
    * @param {string} space
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
@@ -1007,6 +761,21 @@ export function createSpaziAccessiView(deps) {
     const switchesRead = settle(Promise.resolve().then(() => readsClient.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
     )));
+    return { contextRead, membersRead, agentsRead, switchesRead };
+  }
+
+  /**
+   * Voce 785aeb28bd18: the card statistic starts only after the data above
+   * landed and painted — profile, connectors and customers of the open
+   * space, never beside the roster. The statistic counts what the team list
+   * shows: rendered rows only, so a malformed membership never leaks into
+   * the card number.
+   * @param {string} space
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any> }} data the landed team reads
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   * (backlog:2de01913d276): concurrent identical GETs share one request.
+   */
+  function beginStatReads(space, { membersRead, contextRead }, readsClient = client) {
     const ids = readSpaces()
       .filter((entry) => entry !== null && typeof entry === 'object'
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
@@ -1015,8 +784,6 @@ export function createSpaziAccessiView(deps) {
     // The profile describes the session's own space: its links count on
     // that card only, never on another space's (review #782 P1).
     const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
-    // The statistic counts what the team list shows: rendered rows only, so a
-    // malformed membership never leaks into the card number.
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
       ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));
@@ -1029,7 +796,10 @@ export function createSpaziAccessiView(deps) {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
       if (stat !== null) state.stats.set(id, stat);
     }));
-    return { contextRead, membersRead, agentsRead, profileRead, switchesRead, statsRead };
+    // backlog:71a6574a (punto 5): the profile read resolves with the stats —
+    // refresh() and reload() enrich the self row from it when the roster
+    // leaves a bare handle. The card statistic keeps reading it too.
+    return { statsRead, profileRead };
   }
 
   /**
@@ -1120,13 +890,17 @@ export function createSpaziAccessiView(deps) {
     }
     // backlog:2de01913d276: one load reads once — the post-write reread
     // shares one coalescing wrapper like the entry load above.
-    const reads = beginReads(space, coalesceSpaceReads(client));
+    const readsClient = coalesceSpaceReads(client);
+    const reads = beginReads(space, readsClient);
     await loadCore(reads);
-    await loadStats(reads);
+    // Voce 785aeb28bd18: the card statistic follows the data here too —
+    // never beside the roster.
+    const stats = beginStatReads(space, reads, readsClient);
+    await loadStats(stats);
     state.statsPending = false;
     // backlog:71a6574a: the profile resolved with the stats above — the
     // self row reads it when the roster leaves it bare. The caller paints.
-    state.profileMember = profileMemberOf(await reads.profileRead);
+    state.profileMember = profileMemberOf(await stats.profileRead);
   }
 
   async function mutate(path, body) {
@@ -2050,15 +1824,21 @@ export function createSpaziAccessiView(deps) {
       state.members = keepMembers.map((row) => ({ ...row }));
     }
     const reads = hasSpace ? beginReads(space, readsClient) : null;
-    // A statistic that already landed paints as data, never as pending:
-    // the flag flips in the settlement turn, before the data paint below.
+    // Voce 785aeb28bd18: the card statistic starts only after the data below
+    // landed and painted — never beside the roster. The flag flips in the
+    // settlement turn, before the data paint below, so a statistic that
+    // already landed paints as data, never as pending.
     let statsDone = false;
-    if (reads !== null) {
-      reads.statsRead.then(
+    let stats = null;
+    const startStats = () => {
+      if (stats !== null || reads === null) return stats;
+      stats = beginStatReads(space, reads, readsClient);
+      stats.statsRead.then(
         () => { statsDone = true; },
         () => { statsDone = true; },
       );
-    }
+      return stats;
+    };
     // backlog:1a96094db71d: on entry the page paints at once — tabs,
     // header, space cards and a skeleton where team and AI switches will
     // be — instead of «Carico…» for the whole of the reads. A refresh after
@@ -2086,6 +1866,9 @@ export function createSpaziAccessiView(deps) {
     if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
     if (reads === null) return;
+    // Voce 785aeb28bd18: the second wave starts only now that the data is
+    // on screen — the roster never queued behind the card reads.
+    const statsNow = startStats();
     // The statistic fills its tiles and the card line late. A space move
     // meanwhile belongs to the newer refresh; a repaint with nothing new
     // to show would only steal focus.
@@ -2098,11 +1881,11 @@ export function createSpaziAccessiView(deps) {
     const paintedPending = state.statsPending;
     const statBefore = state.stats.get(space);
     const connsBefore = state.spaceConns.get(space);
-    await loadStats(reads);
+    if (statsNow !== null) await loadStats(statsNow);
     state.statsPending = false;
     // backlog:71a6574a: the profile resolved with the stats above — the
     // self row reads its name or mailbox when the roster leaves it bare.
-    const profileMember = profileMemberOf(await reads.profileRead);
+    const profileMember = profileMemberOf(statsNow !== null ? await statsNow.profileRead : null);
     const profileChanged = (profileMember?.name ?? null) !== (state.profileMember?.name ?? null)
       || (profileMember?.email ?? null) !== (state.profileMember?.email ?? null);
     state.profileMember = profileMember;

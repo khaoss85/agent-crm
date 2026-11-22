@@ -143,8 +143,8 @@
       },
       {
         "id": "fact.matching-is-a-fingerprinted-policy",
-        "statement": "Matching runs under deterministic-customer-match@1, a versioned policy with a content-addressed fingerprint stamped onto every receipt and candidate it produced.",
-        "source": "app inspect: policies[] customer-match-policy deterministic-customer-match@1",
+        "statement": "Matching runs under deterministic-customer-match@2, a versioned policy with a content-addressed fingerprint stamped onto every receipt and candidate it produced.",
+        "source": "app inspect: policies[] customer-match-policy deterministic-customer-match@2",
         "citations": []
       },
       {

@@ -8,6 +8,7 @@ import {
   mergeLinkedIdentities,
   observedDirections,
   offerStageTargets,
+  passageExpandedText,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   NO_COMPANY_NAME,
   shownCompanyName,
@@ -187,7 +188,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null, companyProfile = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -213,6 +214,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         }
         if (timelineError) throw timelineError;
         return timeline;
+      }
+      if (path.startsWith('/api/customer-data/profile/company/')) {
+        if (!companyProfile) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return companyProfile;
       }
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profileError) throw profileError;
@@ -593,6 +598,38 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
 // backlog:0d68c387: a confirmed booking reads in the cronologia as its own
 // row («Appuntamento fissato · servizio · data»), with the listino name,
 // and the cancellation follows it.
+test('verifica Mac 20/11: la riga «Appuntamento fissato» dice anche il luogo (ece111d80305)', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            location: 'Online', locationUrl: 'https://meet.esempio.invalid/prova',
+          },
+          {
+            id: 'b1', status: 'booked', startsAt: '2099-11-13T10:00:00.000Z', endsAt: '2099-11-13T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.ok(booked.some((node) => node.textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov') && node.textContent.includes('· Online')),
+    'the row with a place names it');
+  assert.ok(booked.some((node) => node.textContent.includes('13 nov') && !node.textContent.includes('Online')),
+    'a row without a place adds nothing');
+});
+
 test('a confirmed booking reads in the cronologia as «Appuntamento fissato», before its cancellation', async () => {
   const mount = await renderCard(stubClient({
     services: [
@@ -876,6 +913,154 @@ test('26afd13657c5: the appointment row waits for the listino, never slug words 
   assert.ok(!mount.textContent.includes('Lezione prova'), 'no slug words once the listino has landed');
   const titles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title'));
   assert.ok(titles.some((node) => node.textContent.includes('Lezione di prova')), 'the next appointment names the listino too');
+});
+
+// backlog:d77f434ba40c: with past bookings only the Appuntamenti vista must
+// not claim «Nessun appuntamento prenotato» — the section shows the upcoming
+// ones only, so it says «Nessun appuntamento in programma» and the past stays
+// one link away, in the cronologia.
+test('d77f434ba40c: with past bookings only the vista names the program, with a link down', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 3,
+      truncated: false,
+      items: [10, 11, 12].map((day) => ({
+        id: `past-${day}`, status: 'booked',
+        startsAt: `2020-11-${day}T10:00:00.000Z`, endsAt: `2020-11-${day}T10:45:00.000Z`,
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      })),
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('Nessun appuntamento prenotato'),
+    `never the false empty state with past bookings: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('Nessun appuntamento in programma'),
+    `the vista says it shows upcoming ones only: ${recap.textContent}`);
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  await Promise.resolve();
+});
+
+// backlog:d77f434ba40c, review Codex #1057 (P2): with a channel filter
+// active the «Vedi in cronologia» link resets to Tutti first — otherwise
+// the destination still hides the past bookings the vista advertises.
+test('d77f434ba40c: the past link resets an active channel filter', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'confirmed',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: pastOnly }));
+  const whatsapp = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp');
+  assert.ok(whatsapp, 'a WhatsApp chip filters the cronologia');
+  whatsapp.dispatch('click');
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'),
+    'the active filter hides the past booking rows');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  const more = recap.findAll('button').find((node) => node.getAttribute('data-action') === 'vista-past-appointments');
+  assert.ok(more, 'the past stays one link away');
+  more.dispatch('click');
+  assert.ok(mount.textContent.includes('Appuntamento fissato'),
+    'back to Tutti the past booking rows read again');
+});
+
+// backlog:d77f434ba40c, review #1057 (P2): with past bookings only but the
+// listino still in flight the vista holds grey bars — the timeline hides
+// booked rows until the listino lands, so the vista must not advertise
+// cronologia rows that are not on screen yet.
+test('d77f434ba40c: the past-only vista waits for the listino, never a bare link', async () => {
+  const pastOnly = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'past-1', status: 'booked',
+        startsAt: '2020-11-11T10:00:00.000Z', endsAt: '2020-11-11T10:45:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const gates = new Map();
+  const hold = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const client = stubClient({ timeline: pastOnly });
+  const waiting = { ...client };
+  waiting.request = async (path, options = {}) => {
+    if (path === '/api/appointments/services') return hold('services').promise;
+    return client.request(path, options);
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const shown = createCustomerCardView({ doc, mount, client: waiting }).renderCard('contact', 'c1');
+  await flush();
+  await flush();
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  await flush();
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('in cronologia'),
+    `no advertised past rows before the listino lands: ${recap.textContent}`);
+  assert.ok(!recap.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'no past link before the listino lands');
+  assert.ok(recap.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'),
+    'grey bars while the listino loads');
+  gates.get('services').release.resolve({ services: [{ serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' }] });
+  await shown;
+  await flush();
+  const vistaAfter = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vistaAfter, 'the recap keeps its Appuntamenti vista after the listino');
+  vistaAfter.dispatch('click');
+  await flush();
+  const recapAfter = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recapAfter.textContent.includes('Nessun appuntamento in programma'),
+    `the honest past-only state once the listino lands: ${recapAfter.textContent}`);
+  assert.ok(recapAfter.findAll('button').some((node) => node.getAttribute('data-action') === 'vista-past-appointments'),
+    'the past link returns with the listino');
+});
+
+// backlog:d77f434ba40c: with no booking at all the honest empty state stays.
+test('d77f434ba40c: with no booking the vista still reads «Nessun appuntamento prenotato»', async () => {
+  const empty = {
+    ...TIMELINE,
+    appointments: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ timeline: empty }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(recap.textContent.includes('Nessun appuntamento prenotato'),
+    `the empty state stays without bookings: ${recap.textContent}`);
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {
@@ -2067,17 +2252,36 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer links the company card, never another customer offer', async () => {
+  // Voce 4ec1fe6d (supervisore 17/11, supersedes the hidden card): c1 has no
+  // own offer but is linked to co1, so the offer card links the company card
+  // instead of hiding. The anti-leak half of this test stays: no offer row
+  // from anywhere is ever shown here.
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
       opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
     },
+    companyProfile: {
+      customerProfileContract: 1,
+      subject: { resource: 'company', id: 'co1' },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
   }));
   const text = mount.textContent;
   const titles = mount.findAll('h4').map((node) => node.textContent);
-  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(titles.includes('Offerta'), 'the offer card links the company offers');
+  assert.ok(text.includes('Palestra Esempio'), 'the card names the linked company');
+  const offerSection = mount.findAll('section').find((node) => (
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-card-offer')
+  ));
+  const link = offerSection?.findAll('a')[0] ?? null;
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1', 'the link opens the company card');
   assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
 });
@@ -3706,6 +3910,12 @@ test('434cc39a: an edit rewrites the single row and re-reads', async () => {
   save.dispatch('click');
   await flush();
   assert.deepEqual(saved, { resource: 'contact', id: 'c1', key: 'amico', value: 'sì' }, 'one governed value write');
+  // Verifica Mac 20/11 07:29Z: after Salva the editor closes — the repaint
+  // must not bring it back as a draft.
+  assert.equal(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-field-value'), undefined,
+    'the edit form is gone after Salva');
+  assert.ok(mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico'),
+    'the field reads as a value again');
 });
 
 test('434cc39a: + Aggiungi campo defines a space field from the scheda', async () => {
@@ -3871,6 +4081,30 @@ test('message text reads cleanly and a long one folds behind «Mostra tutto»', 
   more.dispatch('click');
   assert.equal(body.getAttribute('data-folded'), 'false');
   assert.equal(more.textContent, 'Mostra meno');
+});
+
+// Voce 0c24dc5b88b2: an expanded mail kept only the body and lost its
+// subject (live 18/11, Lia Marroni, mail del 14/11 «Certificato medico per
+// la prova (Prova E2E)»). The open mail reads subject and body.
+test('an expanded mail keeps its subject above the full body', async () => {
+  const subject = 'Certificato medico per la prova (Prova E2E)';
+  const bodyText = `Buongiorno, in allegato il certificato medico per la prova. ${'Resto del referto. '.repeat(20)}`;
+  const items = [{ entry: 'message', id: 'mail1', channel: 'email', direction: 'inbound', sync: 'received', subject, body: bodyText, remoteHandle: 'lia.marroni@esempio.it', occurredAt: '2026-11-14T10:00:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const body = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-entry-body');
+  assert.ok(body.textContent.includes(subject), 'the closed line names the subject');
+  const more = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'entry-expand');
+  assert.ok(more, 'a long mail folds behind «Mostra tutto»');
+  assert.equal(more.textContent, 'Mostra tutto');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'false');
+  assert.ok(body.textContent.includes(subject), 'the open mail keeps the subject');
+  assert.ok(body.textContent.includes('Resto del referto.'), 'the open mail reads the full body');
+  assert.equal(body.textContent, passageExpandedText(items[0]), 'the open mail reads the expanded passage');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'true');
+  assert.equal(more.textContent, 'Mostra tutto');
+  assert.ok(body.textContent.includes(subject), 'folding back keeps the subject line');
 });
 
 test('Annulla on Dettagli restores the card in place, without re-reading the scheda', async () => {
@@ -6226,14 +6460,20 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
+  // Backlog 4cfa30c164ca (supervisore 18/11, NON PASSA con #1014 su Ada
+  // Rossi): a prima visita «Offerta» e «Prossimo appuntamento» non si
+  // disegnano finché le letture non dicono se esistono — niente scheletri
+  // fantasma che poi spariscono.
+  assert.equal(sectionTitled(mount, 'Offerta') ?? null, null, 'nessun fantasma Offerta a letture ignote');
+  assert.equal(sectionTitled(mount, 'Prossimo appuntamento') ?? null, null, 'nessun fantasma Appuntamento a letture ignote');
   // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
-  // skeleton covers only the unknown — while the profile is still in
-  // flight. The phantom was a skeleton held by the slow schema read after
-  // the profile was already known empty; that case paints nothing (see
-  // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js).
+  // skeleton paints only when the previous read of this customer had one —
+  // never on a first visit, and never held by the slow schema read after
+  // the profile was already known empty (see
+  // tests/admin-customer-card-scheletro-fantasma-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));

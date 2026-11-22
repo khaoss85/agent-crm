@@ -310,7 +310,7 @@ function memberBornAt(member) {
  * beats a lower-case copy («daniele pelleri»); ties keep roster order.
  * @param {Array<string>} names
  */
-export function profileName(names) {
+function profileName(names) {
   let best = null;
   let bestScore = -1;
   for (const name of names) {
@@ -321,6 +321,25 @@ export function profileName(names) {
     }
   }
   return best;
+}
+
+/**
+ * The session profile's own member (name and mailbox) from a `/api/profile`
+ * answer, or null. Both fields pass the same member-text filter the team
+ * rows use, so a technical id never becomes a name. backlog:71a6574a: the
+ * self row's fallback when the roster leaves it with a bare handle.
+ * @param {unknown} answer
+ */
+export function profileMemberOf(answer) {
+  const member = answer !== null && typeof answer === 'object'
+    ? /** @type {{member?: unknown}} */ (answer).member
+    : null;
+  if (member === null || typeof member !== 'object') return null;
+  const shaped = /** @type {{name?: unknown, email?: unknown}} */ (member);
+  const name = memberText(shaped.name);
+  const email = memberText(shaped.email);
+  if (name === null && email === null) return null;
+  return { name, email };
 }
 
 /**
@@ -932,4 +951,280 @@ export function discountRuleLabel(name, version) {
   const words = String(name ?? '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   const head = words === '' ? 'Regola di sconto' : words.charAt(0).toUpperCase() + words.slice(1);
   return Number.isSafeInteger(version) ? `${head} (v${version})` : head;
+}
+
+/**
+ * backlog:6563edf41aab (punto (d)): the painted team rows and the possible
+ * duplicate hints live here, with `teamPeople` above, so both the Spazi e
+ * accessi view and the Impostazioni fix count read the same rows from the
+ * same roster — one resolution, never a second one. Moved verbatim from
+ * admin-spazi-accessi.js; that module re-exports them.
+ */
+
+/**
+ * Italian names for the control-plane membership roles the spine mirrors —
+ * the same words the shell prints under the space name and the user
+ * (admin-session.js), so one screen never calls the same role «Titolare»
+ * in the sidebar and something else in the card (prototype 08: «Tu:
+ * Titolare»).
+ */
+export const SPACE_ROLE_LABELS = Object.freeze({
+  owner: 'Titolare',
+  operator: 'Operatore',
+  observer: 'Osservatore',
+});
+
+/**
+ * Italian label for a membership role. A role the framework does not know is
+ * shown as-is, never blank and never mapped to a wrong one.
+ * @param {unknown} role
+ */
+export function spaceRoleLabel(role) {
+  if (typeof role === 'string' && role !== '' && Object.hasOwn(SPACE_ROLE_LABELS, role)) {
+    return SPACE_ROLE_LABELS[role];
+  }
+  return typeof role === 'string' && role !== '' ? role : 'non disponibile';
+}
+
+/**
+ * Avatar initials for a team subject: the first two alphanumeric characters,
+ * uppercased. The spine store itself carries no display name; when the
+ * roster arrives without the enriched displayName/email, the subject is the
+ * only honest source — never a prettier invention (buildTeamRows uses the
+ * person name when the roster carries one).
+ * @param {unknown} subject
+ */
+export function memberInitials(subject) {
+  if (typeof subject !== 'string') return '·';
+  const clean = subject.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
+ * One team row per membership: avatar initials, subject, Italian role pill,
+ * status. Sorted by subject so the list is stable regardless of store order.
+ * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
+ */
+const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa', sending: 'invio in corso' });
+// The `sending` key is the Spazi e accessi in-flight marker (backlog:71a6574a
+// giro 4): a client-only status the grant 200 has not confirmed yet. Only
+// that view writes it; the mapping here only paints it honestly.
+
+/** Strongest role first: a person holding two subjects shows the higher one. */
+const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
+
+/** Liveliest status first: a person reads «sospeso» only when no subject is live. */
+const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
+
+/**
+ * Avatar initials for a person name: the first letter of the first two
+ * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
+ * @param {string} name
+ */
+export function nameInitials(name) {
+  const words = name.split(/\s+/).map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '')).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  return memberInitials(name);
+}
+
+/** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
+const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
+/** @param {Array<string>} subjects */
+export function accessLabel(subjects) {
+  const kinds = [];
+  for (const subject of subjects) {
+    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
+    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
+  }
+  return kinds.length > 0 ? kinds.join(' · ') : null;
+}
+
+/**
+ * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
+ * carry, beside each opaque subject, the control-plane displayName, email
+ * and `operatorAccountId` the pilot enriches it with — the same fields the
+ * Calendario team reads. One human can hold several subjects (an adopted
+ * broker member, the github one and the Google one: prod 07/11 listed
+ * «Daniele Pelleri» twice with `broker+…@accordo.invalid` mailboxes).
+ * Subjects merge into one row on the control-plane person key first
+ * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
+ * only without that key — when both the mailbox and the display name match
+ * (trimmed, case-insensitive). Two explicit person keys never fold into one
+ * row: the mailbox fallback joins only a group with no key of its own, or
+ * the same key. A mailbox alone never merges: a shared mailbox (info@…)
+ * or stale enrichment could fold a different human into the row, hide them
+ * and let «Rimuovi» suspend them. A name alone never merges either: two
+ * homonyms without email are two people. Nothing merges
+ * in the backend: the row keeps every subject, and removal suspends each
+ * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
+ * the row shows the person's first real mailbox, or no email line when
+ * the roster carries none — the name is then the profile displayName.
+ *
+ * Without enrichment the subject is the name when it reads as one, else
+ * «Membro del team» — never a technical subject (production 10/11) — and
+ * the status sits under it. Sorted by name, then subject, so the
+ * list is stable regardless of store order.
+ * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
+ * @param {{selfSubject?: unknown, selfName?: unknown, selfEmail?: unknown}} [options]
+ *   the session profile's own name and mailbox: only the session's own
+ *   person may borrow them, when the roster leaves it with a bare handle
+ */
+export function buildTeamRows(members = [], { selfSubject = null, selfName = null, selfEmail = null } = {}) {
+  // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
+  // teamPeople, the same rows the Calendario team reads.
+  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
+    subjects: row.subjects,
+    keys: row.keys,
+    live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
+    displayName: row.name,
+    email: row.email,
+    roles: row.members.map((member) => member.role),
+    statuses: row.members.map((member) => member.status),
+    self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
+  }));
+  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
+  // identity — not even the session's own name. Without a person key or a
+  // server link a same-named subject stays a row of its own, with its own
+  // «Rimuovi», told apart by its access kind (accessLabel below): one row
+  // too many beats a person hidden.
+  // backlog:71a6574a (verifica Mac 11/11, punto 5): the session profile
+  // names the operator's own person when the roster does not — a bare
+  // profile handle («khaoss85») never stands alone. The profile name joins
+  // the same candidates `profileName` scores below, so a full name wins
+  // over the handle and nothing else changes; the profile mailbox fills a
+  // missing row email. Only the session's own person is enriched — another
+  // row never borrows the operator's name or mailbox.
+  if (typeof selfSubject === 'string' && selfSubject !== '') {
+    const self = people.find((person) => person.subjects.includes(selfSubject));
+    if (self !== undefined) {
+      // The same pick made among roster names, with the profile name added:
+      // a full name wins over the handle, ties and better roster names keep
+      // what the team already showed.
+      const candidates = [self.displayName, memberText(selfName)]
+        .filter((name) => typeof name === 'string');
+      const best = profileName(candidates);
+      if (best !== null) self.displayName = best;
+      const profileMailbox = memberText(selfEmail);
+      if (self.email === null && profileMailbox !== null) self.email = profileMailbox;
+    }
+  }
+  return people
+    .map((person) => {
+      const subject = [...person.subjects].sort()[0];
+      // No readable name or mailbox: the subject when it reads as a word,
+      // else a generic label — never a technical subject (`google|…`,
+      // `broker+…`), the same fallback the Calendario team uses.
+      const readable = person.displayName ?? person.email ?? subjectText(subject);
+      const name = readable ?? 'Membro del team';
+      const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
+      const role = known.length > 0
+        ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
+        : person.roles[0];
+      // Deterministic, whatever the store order: the liveliest status wins,
+      // and «sospeso» only when every subject of the person is suspended.
+      const other = person.statuses.findIndex((status) => status !== 'suspended');
+      const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
+        ?? (other >= 0 ? person.statuses[other] : 'suspended');
+      return {
+        subject,
+        subjects: [...person.subjects].sort(),
+        // What «Rimuovi» suspends: every subject of the person not already
+        // suspended (all of them when none is live, so a retry still asks).
+        removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
+        name,
+        email: person.email,
+        initials: person.displayName !== null
+          ? nameInitials(person.displayName)
+          : (readable !== null ? memberInitials(readable) : '·'),
+        role: spaceRoleLabel(role),
+        // The session's own person: never offered «Rimuovi» on themself.
+        self: person.self,
+        // How this person signs in, when no real mailbox names them: two
+        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
+        access: accessLabel(person.subjects),
+        status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
+      };
+    })
+    .sort((left, right) => {
+      const a = left.name.toLowerCase();
+      const b = right.name.toLowerCase();
+      if (a !== b) return a < b ? -1 : 1;
+      return left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0;
+    });
+}
+
+/**
+ * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
+ * rows that paint the same REAL name are indistinguishable on screen
+ * («Daniele Pelleri» vs «daniele pelleri», both with the same avatar),
+ * even when the mailbox or the access line tells them apart («Accesso
+ * Google» vs «Accesso di servizio»). One entry per colliding painted name,
+ * in team order; mailbox and access kind never silence the hint — the same
+ * person resolution covers different accesses, and two homonyms stay
+ * candidates the operator keeps. The generic placeholder («Membro del
+ * team», review #1043 P2) is not a name: rows without a real name fall back
+ * to the mailbox, then to their subjects, so two unenriched rows never
+ * collide. A name alone never proves one person (backlog:9d06eb1e174b), so
+ * the hint explains the two access lines and warns that removing suspends
+ * the person in the whole organisation — it never merges or removes
+ * anything itself.
+ * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
+ */
+const PLACEHOLDER_TEAM_NAME = 'membro del team';
+
+/** A painted name the hint may key on: never empty, never the generic placeholder. @param {string} name */
+function teamHintHasName(name) {
+  return name !== '' && name.toLowerCase() !== PLACEHOLDER_TEAM_NAME;
+}
+
+/** @param {unknown} row */
+function teamHintSubjects(row) {
+  if (!row || typeof row !== 'object') return [];
+  const fromList = Array.isArray(row.subjects) ? row.subjects : [];
+  const single = typeof row.subject === 'string' ? [row.subject] : [];
+  return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
+}
+
+export function duplicateTeamHints(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const byPaint = new Map();
+  list.forEach((row, index) => {
+    if (!row || typeof row !== 'object') return;
+    const name = typeof row.name === 'string' ? row.name.trim().replace(/\s+/g, ' ') : '';
+    const email = typeof row.email === 'string' ? row.email.trim() : '';
+    const subjects = [...new Set(teamHintSubjects(row))].sort();
+    // Same person resolution, access included: a real painted name alone
+    // keys the hint (case-insensitive), so a Google row and a servizio row
+    // with the same name collide; the placeholder never keys it (review
+    // #1043 P2: it would invite removing a live member), falling back to
+    // the mailbox and then to the subjects.
+    const key = teamHintHasName(name)
+      ? `name:${name.toLowerCase()}`
+      : email !== ''
+        ? `mail:${email.toLowerCase()}`
+        : subjects.length > 0 ? `subject:${subjects.join('+')}` : `row:${index}`;
+    byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
+  });
+  const hints = [];
+  for (const group of byPaint.values()) {
+    if (group.length < 2) continue;
+    const variants = [...new Set(group.flatMap((row) => teamHintSubjects(row)))];
+    if (variants.length < 2) continue;
+    const first = group[0];
+    const firstName = typeof first.name === 'string' ? first.name.trim().replace(/\s+/g, ' ') : '';
+    const firstEmail = typeof first.email === 'string' ? first.email.trim() : '';
+    const painted = teamHintHasName(firstName) ? firstName : firstEmail;
+    const accesses = [...new Set(group.map((row) => (
+      typeof row.access === 'string' && row.access.trim() !== '' ? row.access.trim() : null
+    )).filter((access) => access !== null))];
+    const cause = accesses.length > 0 ? ` ma con accessi diversi (${accesses.join(', ')})` : '';
+    hints.push({
+      name: painted,
+      count: group.length,
+      accesses,
+      text: `«${painted}» compare ${group.length} volte con lo stesso nome${cause}: è quasi sempre la stessa persona che entra in due modi. Non rimuovere nessuna delle due righe per sistemare: la rimozione sospende la persona in tutta l'organizzazione.`,
+    });
+  }
+  return hints;
 }
