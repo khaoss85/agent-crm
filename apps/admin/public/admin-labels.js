@@ -324,6 +324,25 @@ function profileName(names) {
 }
 
 /**
+ * The session profile's own member (name and mailbox) from a `/api/profile`
+ * answer, or null. Both fields pass the same member-text filter the team
+ * rows use, so a technical id never becomes a name. backlog:71a6574a: the
+ * self row's fallback when the roster leaves it with a bare handle.
+ * @param {unknown} answer
+ */
+export function profileMemberOf(answer) {
+  const member = answer !== null && typeof answer === 'object'
+    ? /** @type {{member?: unknown}} */ (answer).member
+    : null;
+  if (member === null || typeof member !== 'object') return null;
+  const shaped = /** @type {{name?: unknown, email?: unknown}} */ (member);
+  const name = memberText(shaped.name);
+  const email = memberText(shaped.email);
+  if (name === null && email === null) return null;
+  return { name, email };
+}
+
+/**
  * backlog:3ce220e60c33 (famiglia F5) — the team as PEOPLE, one row each.
  * The roster (`GET /api/spine/memberships`) lists one row per identity
  * (broker+adopted, github, google): rows join on the control-plane person
@@ -987,7 +1006,10 @@ export function memberInitials(subject) {
  * status. Sorted by subject so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
  */
-const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
+const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa', sending: 'invio in corso' });
+// The `sending` key is the Spazi e accessi in-flight marker (backlog:71a6574a
+// giro 4): a client-only status the grant 200 has not confirmed yet. Only
+// that view writes it; the mapping here only paints it honestly.
 
 /** Strongest role first: a person holding two subjects shows the higher one. */
 const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
@@ -1044,8 +1066,11 @@ export function accessLabel(subjects) {
  * the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
+ * @param {{selfSubject?: unknown, selfName?: unknown, selfEmail?: unknown}} [options]
+ *   the session profile's own name and mailbox: only the session's own
+ *   person may borrow them, when the roster leaves it with a bare handle
  */
-export function buildTeamRows(members = [], { selfSubject = null } = {}) {
+export function buildTeamRows(members = [], { selfSubject = null, selfName = null, selfEmail = null } = {}) {
   // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
   // teamPeople, the same rows the Calendario team reads.
   const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
@@ -1063,6 +1088,27 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
   // server link a same-named subject stays a row of its own, with its own
   // «Rimuovi», told apart by its access kind (accessLabel below): one row
   // too many beats a person hidden.
+  // backlog:71a6574a (verifica Mac 11/11, punto 5): the session profile
+  // names the operator's own person when the roster does not — a bare
+  // profile handle («khaoss85») never stands alone. The profile name joins
+  // the same candidates `profileName` scores below, so a full name wins
+  // over the handle and nothing else changes; the profile mailbox fills a
+  // missing row email. Only the session's own person is enriched — another
+  // row never borrows the operator's name or mailbox.
+  if (typeof selfSubject === 'string' && selfSubject !== '') {
+    const self = people.find((person) => person.subjects.includes(selfSubject));
+    if (self !== undefined) {
+      // The same pick made among roster names, with the profile name added:
+      // a full name wins over the handle, ties and better roster names keep
+      // what the team already showed.
+      const candidates = [self.displayName, memberText(selfName)]
+        .filter((name) => typeof name === 'string');
+      const best = profileName(candidates);
+      if (best !== null) self.displayName = best;
+      const profileMailbox = memberText(selfEmail);
+      if (self.email === null && profileMailbox !== null) self.email = profileMailbox;
+    }
+  }
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];

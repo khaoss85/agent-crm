@@ -171,10 +171,17 @@ export function createCustomerDataPackage(options = {}) {
     // declared surface (propose-field-from-question, fill-ai-field-values).
     // Version 7 (backlog:1adf95307b31): listCustomerRecords reads the
     // composed opportunity pipeline (pipelines option) so Pagato is won.
+    // Version 8 (backlog:91c92940274c): archive/restore/remove joins the
+    // surface (archivedAt/deletedAt in the row shape and every view filter,
+    // tombstone-safe sync match, no recreate of archived rows).
     // Version 8 (backlog:d547f65e): unlinking a wrong merge writes one
     // cronologia note per separated member through the declared work
     // follow-up@1 edge, never into work's storage directly.
-    version: 8,
+    // Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove
+    // to the surface under the old version 8, so the package moves to 9
+    // with that surface; the match policy moves to version 2 with its
+    // archived/removed `unresolved` rule in the same commit.
+    version: 9,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '

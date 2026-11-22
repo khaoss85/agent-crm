@@ -89,15 +89,15 @@
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract1",
-      "version": 8,
-      "fingerprint": "d49aa6af25a8c7424f9ae8a7d008398e6c33a11fbf0d0704841ed11ca3141adf"
+      "version": 9,
+      "fingerprint": "1e0b6ac2cb926ed4966033927b0f44bf74b8e6524424392050b86248f42c9f4d"
     },
     {
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract2",
-      "version": 8,
-      "fingerprint": "276e8a6bb04d10d2570f19b61d2318955021ef336d8321ca0d10d063821503a2"
+      "version": 9,
+      "fingerprint": "893ce2678a18246363af4306203b21d7a180cb878309c190cf59e1b695cfef34"
     },
     {
       "name": "customer-hub",

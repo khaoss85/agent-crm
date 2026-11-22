@@ -94,8 +94,12 @@ const SPACES = [
   { id: 'spazio-2', name: 'Palestra centro', initials: 'PA' },
 ];
 const MEMBERS = [
-  { subject: 'owner-1', role: 'owner', status: 'active' },
-  { subject: 'marco', role: 'operator', status: 'active' },
+  { subject: 'owner-1', name: 'Elena Rinaldi', email: 'elena@studioaurora.example', role: 'owner', status: 'active' },
+  { subject: 'marco', name: 'Marco Ferri', email: 'marco@studioaurora.example', role: 'operator', status: 'active' },
+];
+const AGENTS = [
+  { id: 1, sourceKey: 'agent:spazio-1:riaggancio', spaceId: 'spazio-1', name: 'Riaggancio', role: 'Ricontatta i clienti rimasti senza risposta', status: 'active' },
+  { id: 2, sourceKey: 'agent:spazio-1:report-vendite', spaceId: 'spazio-1', name: 'Report vendite', role: 'Prepara il riepilogo delle vendite', status: 'active' },
 ];
 const client = {
   async request(path, options) {
@@ -122,6 +126,7 @@ const client = {
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
     }
+    if (path.indexOf('/api/modules/teammate-agent/records') === 0) return { items: AGENTS };
     throw new Error('unexpected ' + path);
   },
 };
@@ -168,6 +173,20 @@ const probe = {
   aiTop: aiRect ? Math.round(aiRect.top) : null,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
+  agentDescriptions: Array.from(document.querySelectorAll('.bo-agent-member .bo-spazi-status'), (node) => ({
+    text: node.textContent,
+    scrollWidth: node.scrollWidth,
+    clientWidth: node.clientWidth,
+    whiteSpace: getComputedStyle(node).whiteSpace,
+  })),
+  agentColumns: getComputedStyle(document.querySelector('.bo-agent-member')).gridTemplateColumns.split(' ').length,
+  peopleColumns: getComputedStyle(document.querySelector('.bo-spazi-member')).gridTemplateColumns.split(' ').length,
+  emails: Array.from(document.querySelectorAll('.bo-spazi-team .bo-spazi-email'), (node) => ({
+    text: node.textContent,
+    scrollWidth: node.scrollWidth,
+    clientWidth: node.clientWidth,
+    whiteSpace: getComputedStyle(node).whiteSpace,
+  })),
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'spazi-ready';
@@ -299,6 +318,11 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti'], 'the open space paints the real C7 statistic; another space is never read (9d06eb1e174b)');
   assert.equal(probe.apri, 1, 'the non-active card paints Apri, the active one marks Stai lavorando qui');
   assert.equal(probe.panelsDirection, 'row', 'team and AI panels share one row on desktop');
+  assert.deepEqual(probe.agentDescriptions.map((row) => row.text), [
+    'Ricontatta i clienti rimasti senza risposta', 'Prepara il riepilogo delle vendite',
+  ], 'the roster retains each complete agent description');
+  assert.equal(probe.agentColumns, 3, 'agent rows own their three-column grid');
+  assert.equal(probe.peopleColumns, 4, 'people rows keep their distinct status/role/action columns');
   assert.equal(probe.teamTop, probe.aiTop, 'team and AI panels start on the same row');
   const shot = pngSize(out);
   assert.equal(shot.width, 1280, 'the PNG is the desktop viewport');
@@ -318,6 +342,15 @@ test('the spazi screen renders in a real browser: phone PNG without sideways scr
   assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti'], 'the phone render holds the open space statistic');
   assert.equal(probe.apri, 1, 'the phone render holds Apri on the non-active card');
   assert.equal(probe.panelsDirection, 'column', 'the panels stack in one column on the phone');
+  assert.deepEqual(probe.agentDescriptions.map((row) => row.text), [
+    'Ricontatta i clienti rimasti senza risposta', 'Prepara il riepilogo delle vendite',
+  ], 'the phone render keeps complete agent descriptions');
+  assert.ok(probe.agentDescriptions.every((row) => row.whiteSpace !== 'nowrap' && row.scrollWidth <= row.clientWidth),
+    'agent descriptions wrap instead of clipping at 390px');
+  assert.equal(probe.agentColumns, 2, 'the agent row uses its own phone grid');
+  assert.equal(probe.peopleColumns, 4, 'the people status/role/action grid stays isolated on the phone');
+  assert.ok(probe.emails.every((row) => row.text && row.whiteSpace !== 'nowrap' && row.scrollWidth <= row.clientWidth),
+    'person email identities wrap in full at 390px');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
   const shot = pngSize(out);
   assert.equal(shot.width, 390, 'the PNG is the phone viewport');

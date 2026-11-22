@@ -147,6 +147,8 @@ test('Team rows: nothing when there are no agents, an «Agente» badge beside ea
   assert.equal(members.length, 2);
   assert.ok(textOf(members[0]).includes('Riaggancio'));
   assert.ok(textOf(members[0]).includes('Agente'));
+  const statusLink = members[0].findAll('a')[0];
+  assert.equal(statusLink.getAttribute('aria-label'), 'Stato di Riaggancio: Attivo', 'the status link identifies its agent to assistive technology');
   assert.equal(rows.findAll('img').length, 0, 'a hostile name stays text');
   assert.equal(members.some((node) => node.classList.contains('bo-spazi-member')), false, 'agents never count as people');
 });
