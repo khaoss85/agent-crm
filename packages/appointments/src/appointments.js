@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import {
-  ANONYMOUS_ACTOR, AppError, ConflictError, ForbiddenError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
 } from '../../core/index.js';
 
@@ -1412,14 +1412,14 @@ export async function rescheduleAppointment(context, request) {
         return await appointments.get(rowId);
       } catch (error) {
         if (error instanceof NotFoundError) {
-          throw new NotFoundError(`no appointment with id "${rowId}"`);
+          throw appointmentNotFoundError(record);
         }
         throw error;
       }
     }
     const key = validateSourceKey(record.sourceKey, 'sourceKey');
     const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
-    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    if (!row) throw appointmentNotFoundError(record);
     return row;
   };
   // The member is known only after the first read; the critical section
@@ -1428,9 +1428,9 @@ export async function rescheduleAppointment(context, request) {
   const first = await lookup();
   // A private booking moves only for its creator and the administrators
   // (backlog:9aa5c073): visibility never changes after booking, so the
-  // first read already settles it — anyone else is refused 403 before any
-  // write, on a same-slot reschedule too, so a stranger never reads it.
-  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first);
+  // first read already settles it — anyone else gets the same 404 as a
+  // missing row before any write, including a same-slot reschedule.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
@@ -1604,21 +1604,21 @@ export async function cancelAppointment(context, request) {
         return await appointments.get(rowId);
       } catch (error) {
         if (error instanceof NotFoundError) {
-          throw new NotFoundError(`no appointment with id "${rowId}"`);
+          throw appointmentNotFoundError(record);
         }
         throw error;
       }
     }
     const key = validateSourceKey(record.sourceKey, 'sourceKey');
     const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
-    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    if (!row) throw appointmentNotFoundError(record);
     return row;
   };
   const first = await lookup();
   // A private booking cancels only for its creator and the administrators
-  // (backlog:9aa5c073): anyone else is refused 403 before any write — on
-  // an already-cancelled row too, so a stranger never reads its fate.
-  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first);
+  // (backlog:9aa5c073): anyone else gets the same 404 as a missing row
+  // before any write, including an already-cancelled row.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
   let appointment = first;
   let cancelled = false;
   if (first.status !== CANCELLED_STATE) {
@@ -1732,12 +1732,11 @@ export async function readSchedule({ appointments }, subject, viewer = null) {
     || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
     || String(a.id ?? '').localeCompare(String(b.id ?? ''))
   ));
-  // A private booking (backlog:9aa5c073) reads full only for its creator
-  // and the administrators (`viewer = { actorId, isAdmin }`, server-side
-  // only): anyone else reads the masked slot-and-hold, never the service,
-  // the price or the notes. Without a viewer the read is unprivileged.
-  const visible = bySlot.map((row) => (viewerSeesFull(viewer, row) ? row : projectMaskedWeekRow(row)));
-  return Object.freeze(visible.map((row) => (row?.masked === true ? row : Object.freeze({
+  // Unlike the team-week grid, the per-customer schedule must not preserve a
+  // masked slot: joining it with team-week by member/time would identify the
+  // customer. Keep private rows only for their creator or an administrator.
+  const visible = bySlot.filter((row) => viewerSeesFull(viewer, row));
+  return Object.freeze(visible.map((row) => Object.freeze({
     id: row.id,
     status: row.status,
     startsAt: row.startsAt,
@@ -1758,7 +1757,7 @@ export async function readSchedule({ appointments }, subject, viewer = null) {
     // backlog:0d68c387: the instant the booking was fixed, so the cronologia
     // orders the fissato row by event date, not by slot date.
     bookedAt: row.bookedAt ?? null,
-  }))));
+  })));
 }
 
 const MAX_TEAM_WEEK_MEMBERS = 32;
@@ -1866,8 +1865,8 @@ export function viewerSeesFull(viewer, row) {
  * keep refusing over it: a masked row that left the list would free its
  * slot for a double booking. No customer, no service, no notes, no price,
  * no source key — the opaque id stays so the grid keys its block. Exported
- * for the generic module and customer-hub reads, which project the same
- * shape outside the team week.
+ * for the generic module's masked reads; customer-hub schedules omit private
+ * rows for viewers who may not see them.
  *
  * @param {any} row
  */
@@ -1886,27 +1885,31 @@ export function projectMaskedWeekRow(row) {
 /**
  * Refuse a mutation of someone else's private booking (backlog:9aa5c073):
  * only its creator (the booking actor) and the administrators may move or
- * cancel it. Everyone else is refused 403 before any write — the masked
- * grid row never moves, never opens an edit form and never offers
- * cancellation. The admin flag arrives server-side with the operation
+ * cancel it. Everyone else gets the same not-found answer as a missing row,
+ * so the mutation cannot reveal that a private booking exists. The admin flag arrives server-side with the operation
  * input, like the team-week viewer; the actor id is the authenticated
  * caller, never a request field.
  *
  * @param {{actorId: string, isAdmin: boolean}} viewer
  * @param {any} row
  */
-export function refuseUnlessSeesFull(viewer, row) {
+export function refuseUnlessSeesFull(viewer, row, notFound = () => new NotFoundError('appointment not found')) {
   if (viewerSeesFull(viewer, row)) return;
-  throw new ForbiddenError('only its creator and the administrators may change a private booking', {
-    field: 'visibility',
-  });
+  throw notFound();
+}
+
+function appointmentNotFoundError(record) {
+  if (record.id !== undefined && record.id !== null) {
+    return new NotFoundError(`no appointment with id "${safeText(record.id, 'id', MAX_ID)}"`);
+  }
+  return new NotFoundError(`no appointment with sourceKey "${validateSourceKey(record.sourceKey, 'sourceKey')}"`);
 }
 
 /**
  * Normalize the server-side viewer for a mutation (backlog:9aa5c073): the
  * actor id is the authenticated caller; the admin flag arrives with the
  * operation input from the server (never from the caller). Absent, the
- * call is unprivileged — a private row then refuses, a public one passes.
+ * call is unprivileged — a private row then appears not found, a public one passes.
  *
  * @param {unknown} actorId
  * @param {unknown} viewer
