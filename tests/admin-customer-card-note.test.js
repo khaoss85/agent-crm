@@ -213,7 +213,7 @@ test('82235e46e3e9: «Tutti i contatti» shows the offer created and its stage m
   assert.ok(filtered.includes('Ciao'), 'and keeps the channel passages');
 });
 
-test('3f3c143b: «Storia stati» with an unnameable actor reads «da —», never «da utente»', async () => {
+test('3f3c143b/acd136b3cd5d: «Storia stati» with an unnameable actor names no author, never «da utente»', async () => {
   const profile = {
     ...PROFILE,
     opportunities: {
@@ -231,7 +231,11 @@ test('3f3c143b: «Storia stati» with an unnameable actor reads «da —», neve
   assert.ok(!text.includes('da utente'), 'never «da utente»');
   assert.ok(!text.includes('dal team'), 'never «dal team»');
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID on screen');
-  assert.ok(/Cambio di stato · da —/.test(text), 'the move reads «da —» for an actor nobody names');
+  // backlog:acd136b3cd5d supersedes the 3f3c143b «da —» fallback: an actor
+  // the reads cannot name paints no author tail — the move stays, the
+  // empty author does not (same rule as the offer page, bfc070243427).
+  assert.ok(!text.includes('da —'), 'no «da —» tail for an actor nobody names');
+  assert.ok(/Cambio di stato/.test(text), 'the move stays in the row');
 });
 
 test('82235e46e3e9: in Dettagli Invio saves and Esc cancels', async () => {
