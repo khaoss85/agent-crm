@@ -2,6 +2,8 @@
 
 import { ContactService } from './contact-service.js';
 
+export { assertContactLinkable } from './contact-service.js';
+
 export const contactModuleDefinition = Object.freeze({
   name: 'contact',
   version: '0.1.0',

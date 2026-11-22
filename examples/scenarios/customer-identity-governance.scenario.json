@@ -24,7 +24,7 @@
         { "kind": "resource.present", "resource": "duplicate-candidate" },
         { "kind": "resource.present", "resource": "canonical-link" },
         { "kind": "resource.present", "resource": "data-quality-issue" },
-        { "kind": "policy.present", "policy": "deterministic-customer-match", "version": 1 }
+        { "kind": "policy.present", "policy": "deterministic-customer-match", "version": 2 }
       ]
     },
     {

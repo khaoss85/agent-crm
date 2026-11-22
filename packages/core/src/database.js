@@ -277,6 +277,19 @@ const DATA_PLANE_MIGRATIONS = [
     `,
   },
   {
+    version: 13,
+    name: 'contact_archive_delete',
+    // Voce 91c92940274c: un contatto che il titolare non vuole (per
+    // esempio un mittente automatico dalla sync posta) si archivia o si
+    // elimina. Due marche temporali nullable, mai un hard delete: le
+    // conversazioni degli altri contatti restano intatte e la sync
+    // ritrova la riga dall'email invece di ricrearla.
+    sql: `
+      ALTER TABLE contacts ADD COLUMN archived_at TEXT;
+      ALTER TABLE contacts ADD COLUMN deleted_at TEXT;
+    `,
+  },
+  {
     version: 12,
     name: 'company_placeholder_flag',
     // Byte-identical to the V12 intent render (checked by

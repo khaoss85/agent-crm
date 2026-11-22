@@ -1833,6 +1833,30 @@ export function buildRouter(app) {
     }
     return await app.services.contacts.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
   });
+  // Voce 91c92940274c: archivia / ripristina / elimina un contatto.
+  // Solo servizio (regola UI di Dan): niente menu nella shell, quelli li
+  // scrive il Mac quando il servizio è online. L'eliminazione lascia la
+  // traccia di audit e non tocca le conversazioni degli altri contatti.
+  router.add('POST', '/api/contacts/:id/archive', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    return await app.services.contacts.archive(params.id, {
+      ...writeContext(app, { actor, identity, organizationId, headers }),
+      reason: input.reason,
+    });
+  });
+  router.add('POST', '/api/contacts/:id/restore', async ({ params, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    return await app.services.contacts.restore(params.id, writeContext(app, { actor, identity, organizationId, headers }));
+  });
+  router.add('DELETE', '/api/contacts/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    return await app.services.contacts.remove(params.id, {
+      ...writeContext(app, { actor, identity, organizationId, headers }),
+      reason: input.reason,
+    });
+  });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
