@@ -1013,6 +1013,13 @@ export function calendarRefusalText(error) {
   if (code === 'APPOINTMENTS_OVERLAP') {
     return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
   }
+  // backlog:5ddc73c3ba6e (live 18/11: una Conferma su uno slot davvero
+  // occupato rispose 409 con «Riprova più tardi») — un conflitto vero dice
+  // in italiano cosa occupa lo slot: la stessa frase del server pilota
+  // (accordo-arvo-pilot src/shared/bo-appointments.js), mai il generico.
+  if (code === 'APPOINTMENTS_LOG_CONFLICT') {
+    return 'Esiste già una prenotazione con questi riferimenti ma con dati diversi: ricarica il calendario e controlla i dati.';
+  }
   if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
     return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
   }
@@ -6212,7 +6219,10 @@ export function createCalendarioView(deps) {
         state.serviceError = calendarRefusalText(error) ?? '';
         state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
       } else {
-        state.bookingNote = humanWriteError(error, {
+        // backlog:5ddc73c3ba6e — un rifiuto nominato (slot occupato,
+        // conflitto di riferimenti) parla italiano come negli spostamenti;
+        // solo l'ignoto resta sul generico.
+        state.bookingNote = calendarRefusalText(error) ?? humanWriteError(error, {
           failed: 'Prenotazione non riuscita. Riprova più tardi.',
           notComposed: 'Il calendario non è composto in questo spazio.',
         });

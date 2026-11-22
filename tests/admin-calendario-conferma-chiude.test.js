@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
+import { calendarRefusalText, createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -44,7 +44,7 @@ function customersOf(items) {
   };
 }
 
-function stubClient({ customers = [], phrase = null, slots = [] } = {}) {
+function stubClient({ customers = [], phrase = null, slots = [], failConfirmWith = null } = {}) {
   const calls = [];
   let extra = [];
   return {
@@ -78,6 +78,7 @@ function stubClient({ customers = [], phrase = null, slots = [] } = {}) {
         return { decision: 'confirm-required', draft: body, spaceId: 'locale', permission: 'book-appointments' };
       }
       if (path === '/api/appointments/confirm') {
+        if (failConfirmWith) throw failConfirmWith;
         const body = payload({ body: options.body });
         const appointment = { ...body, id: 'b1', status: 'booked' };
         extra = [appointment];
@@ -220,4 +221,42 @@ test('il messaggio di dato mancante sparisce appena il dato c’è', async () =>
   form.teamMemberId.value = 'marco';
   form.teamMemberId.dispatch('change');
   assert.ok(!texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'the note stays gone while filling the form');
+});
+
+test('Conferma rifiutata 409: il pannello dice in italiano cosa occupa lo slot (backlog:5ddc73c3ba6e)', async () => {
+  // Live 18/11: una Conferma su uno slot davvero occupato rispose 409 con
+  // «Riprova più tardi». Ora il conflitto vero nomina il blocco in italiano
+  // (stessa frase del server pilota), solo l'ignoto resta sul generico.
+  assert.match(calendarRefusalText({ code: 'APPOINTMENTS_LOG_CONFLICT', status: 409 }) ?? '', /prenotazione con questi riferimenti/);
+  assert.equal(calendarRefusalText({ code: 'APPOINTMENTS_SOMETHING_ELSE', status: 409 }), null);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const conflict = Object.assign(new Error('log conflict'), { code: 'APPOINTMENTS_LOG_CONFLICT', status: 409 });
+  const client = stubClient({ customers: [{ resource: 'contact', id: 'c1', name: 'Ada' }], failConfirmWith: conflict });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await settle(14);
+  await openWeek(mount);
+  openManual(mount);
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName(mount);
+  form.teamMemberId.value = 'marco';
+  form.teamMemberId.dispatch('change');
+  form.serviceKey.value = 'taglio';
+  form.serviceKey.dispatch('change');
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  mount.querySelector('.cal-manual').findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await settle(12);
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1);
+  assert.ok(
+    texts(mount, 'p').some((text) => text.includes('prenotazione con questi riferimenti')),
+    'the 409 names the block in Italian beside the form',
+  );
+  assert.ok(
+    !mount.textContent.includes('Riprova più tardi'),
+    'no generic retry-later anywhere on the refused booking',
+  );
 });
