@@ -1082,7 +1082,7 @@ export function createShellView({
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
     const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
-      line: 'Descrivi il modulo, il tuo agente di coding lo prepara separato dal resto' });
+      line: 'Descrivi il modulo con parole tue: ti faccio io le domande giuste' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {
