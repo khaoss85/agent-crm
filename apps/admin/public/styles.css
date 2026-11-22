@@ -1308,6 +1308,8 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-team { display: grid; }
 .bo-agent-team-title { margin: 0; padding: 14px 20px 6px; border-top: 1px solid var(--line-faint); font-size: 13px; color: var(--muted); }
 .bo-agent-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line-faint); }
+.bo-agent-member .bo-spazi-names { overflow: visible; }
+.bo-agent-member .bo-spazi-status { white-space: normal; overflow-wrap: anywhere; }
 .bo-agent-team-link { font-size: 12px; color: var(--muted); }
 @media (max-width: 420px) {
   .bo-agent-talk .ui-btn { flex: 1 1 100%; }
@@ -1488,6 +1490,15 @@ select.bo-spazi-input { flex: none; }
   .bo-spazi-panels { flex-direction: column; align-items: stretch; }
   .bo-spazi-team-panel, .bo-spazi-ai-panel { flex: 1 1 auto; width: 100%; }
   .bo-spazi-member { grid-template-columns: minmax(0, 1fr); }
+  /* Keep the people's status/role/action columns separate from agent rows,
+     while giving the identity its own full-width line on a phone. */
+  .bo-spazi-team .bo-spazi-member { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .bo-spazi-team .bo-spazi-member > .bo-spazi-identity { grid-column: 1 / -1; }
+  .bo-spazi-team .bo-spazi-names { overflow: visible; }
+  .bo-spazi-team .bo-spazi-email { white-space: normal; overflow-wrap: anywhere; }
+  .bo-agent-team .bo-agent-member { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .bo-agent-team .bo-agent-member > .bo-spazi-identity { grid-column: 1 / -1; }
+  .bo-agent-team .bo-agent-member > .ui-badge { justify-self: start; }
   .bo-spazi-switch { align-items: start; }
   .bo-spazi-invite .bo-spazi-input { flex-basis: 100%; }
 }
