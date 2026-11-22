@@ -33,15 +33,15 @@
       "name": "calendar-sync",
       "dir": "calendar-sync",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "a1038338cb2602d9c0a6442022d0bed61579d32a9623a634be8af098a7ac92e5"
+      "version": 2,
+      "fingerprint": "dd0e57da162c11cc643c6627d7889d722471f2c7cc057ab35e8c1f36fcb2a126"
     },
     {
       "name": "calendar-sync",
       "dir": "calendar-sync",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "a1038338cb2602d9c0a6442022d0bed61579d32a9623a634be8af098a7ac92e5"
+      "version": 2,
+      "fingerprint": "dd0e57da162c11cc643c6627d7889d722471f2c7cc057ab35e8c1f36fcb2a126"
     },
     {
       "name": "channels",

@@ -19,9 +19,11 @@ import { createCalendarSyncOperations } from './sync.js';
  * opaque envelope appointments store); a roster, catalog or pricing
  * authority (member, service and price are deployment mappings); a
  * notification system (Google keeps notifying on its side); a series
- * engine (recurrence is not expanded — each synced event is one timed
- * occurrence); the HTTP route (the pilot owns it and passes the verified
- * push delivery in).
+ * expansion engine on the read direction (imported recurrence is not
+ * expanded — each synced event is one timed occurrence; the write
+ * direction exports a confirmed series whole through push-series); the
+ * HTTP route (the pilot owns it and passes the verified push delivery
+ * in).
  */
 
 export const CALENDAR_SYNC_PACKAGE = 'calendar-sync';
@@ -121,7 +123,7 @@ export function createCalendarSyncPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: CALENDAR_SYNC_PACKAGE,
-    version: 1,
+    version: 2,
     label: 'Calendar sync',
     description: 'Two-way Accordo / Google Calendar sync: future-event import, incremental pull on sync tokens with push-notification triggers, and push of local bookings and cancellations. Accordo owns lifecycle, Google owns schedule — the conflict rule both sides converge on.',
     resources: [...CALENDAR_SYNC_RESOURCES],
@@ -136,6 +138,11 @@ export function createCalendarSyncPackage(options = {}) {
     capabilities: [],
     actions: [],
     policies: [],
+    // Series export (backlog:bb13ef1823ad): `push-series` lands one
+    // confirmed series whole on Google as a single recurring event. The
+    // confirm-series caller (recurrence UI + series booking) is follow-up
+    // work; this operation is the Google half it will call, proven now
+    // against the fake provider.
     operations: [
       {
         operationContract: 1,
@@ -201,6 +208,33 @@ export function createCalendarSyncPackage(options = {}) {
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.pushAppointment(params.calendarId, params.sourceKey, params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'push-series',
+        label: 'Push series',
+        appMethod: 'pushSeriesToCalendar',
+        description: 'Export one local series head to Google as a single recurring event carrying its RRULE (human decision). The whole series lands at once; a retry reconciles instead of inserting twice. A repeated push with nothing changed is a no-op.',
+        input: [
+          { ...SPACE_INPUT },
+          { ...CALENDAR_INPUT },
+          {
+            name: 'sourceKey',
+            type: 'string',
+            required: true,
+            hint: 'The series head appointment source key to export (the booking key of its first occurrence).',
+          },
+          {
+            name: 'recurrence',
+            type: 'json',
+            required: true,
+            hint: 'The series RRULE lines, 1-8 strings starting with RRULE: and up to 256 chars each (for example ["RRULE:FREQ=WEEKLY;COUNT=4"]).',
+          },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.pushSeries(params.calendarId, params.sourceKey, params);
         },
       },
       {
@@ -312,7 +346,7 @@ export function createCalendarSyncPackage(options = {}) {
         humanApproval: 'import, export and push-channel registration are human decisions (actor required on every booking); provider-driven pulls run under a system actor',
         notModeled: [
           'push-channel watch/stop against Google — the deployment opens the channel (the provider watch call) and owns the webhook route; the sync verifies deliveries and pulls',
-          'recurrence or series expansion — each synced event is one timed occurrence; all-day events are refused by slot validation',
+          'import-side recurrence expansion — each imported event is one timed occurrence; all-day events are refused by slot validation (a confirmed local series exports whole through push-series, one recurring Google event carrying its RRULE)',
           'reminders for imported bookings (remindAt stays null — Google keeps notifying on its side)',
           'confirmed/done/no-show propagation to Google — lifecycle stays Accordo-side',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',

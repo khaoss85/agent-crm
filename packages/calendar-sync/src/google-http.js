@@ -346,7 +346,7 @@ export function createHttpGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, visibility } = {}) {
+    async insertEvent({ calendarId, summary, description = '', start, end, recurrence, extendedProperties = {}, id, secret, visibility } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
       // Team visibility (backlog:9aa5c073): a private booking exports with
@@ -356,12 +356,22 @@ export function createHttpGoogleCalendar(options = {}) {
       if (visibility !== undefined && visibility !== null && !visibilities.includes(visibility)) {
         throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent visibility must be one of default, public, private, confidential');
       }
+      // Series export (backlog:bb13ef1823ad): one recurring event carrying
+      // the series RRULE — the same bounds the fake enforces, so a call
+      // the fake accepts is one production accepts, and a malformed one
+      // refuses before any network write.
+      if (recurrence !== undefined && recurrence !== null
+        && (!Array.isArray(recurrence) || recurrence.length === 0 || recurrence.length > 8
+          || !recurrence.every((line) => typeof line === 'string' && line.startsWith('RRULE:') && line.length <= 256))) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent recurrence must be 1-8 RRULE strings up to 256 chars');
+      }
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
         ...(typeof description === 'string' && description !== '' ? { description } : {}),
         ...(start === undefined || start === null ? {} : { start }),
         ...(end === undefined || end === null ? {} : { end }),
         ...(visibility === undefined || visibility === null ? {} : { visibility }),
+        ...(recurrence === undefined || recurrence === null ? {} : { recurrence: [...recurrence] }),
         extendedProperties: { private: { ...extendedProperties } },
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
       });

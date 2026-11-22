@@ -197,6 +197,27 @@ export function appointmentFingerprint(row) {
   return JSON.stringify([row?.startsAt ?? null, row?.endsAt ?? null, row?.notes ?? null, row?.status ?? null]);
 }
 
+// A confirmed series rides one Google event carrying its RRULE lines
+// (backlog:bb13ef1823ad). Bounded like the read path (each line an RRULE
+// string up to 256 chars), at most 8 lines: a refused value never reaches
+// the provider, so a malformed series is a 422/ValidationError, never a
+// half-written event or a silent single occurrence.
+const SERIES_RECURRENCE_MAX_LINES = 8;
+const SERIES_RECURRENCE_MAX_LINE = 256;
+export function assertSeriesRecurrence(recurrence) {
+  if (!Array.isArray(recurrence) || recurrence.length === 0 || recurrence.length > SERIES_RECURRENCE_MAX_LINES) {
+    throw new ValidationError('pushSeries needs recurrence as 1-8 RRULE lines', { field: 'recurrence' });
+  }
+  for (const line of recurrence) {
+    if (typeof line !== 'string' || !line.startsWith('RRULE:') || line.length > SERIES_RECURRENCE_MAX_LINE) {
+      throw new ValidationError('pushSeries recurrence lines must each be an RRULE string up to 256 chars', {
+        field: 'recurrence',
+      });
+    }
+  }
+  return Object.freeze([...recurrence]);
+}
+
 // Google event ids are calendar-scoped, but the appointment source key is
 // global: the calendar joins the key, so the same event id on two synced
 // calendars books two rows instead of colliding on the unique guard.
@@ -1520,6 +1541,109 @@ export function createCalendarSyncOperations(options = {}) {
     },
 
     /**
+     * Push one local series head to Google as a single recurring event
+     * (backlog:bb13ef1823ad): a confirmed series in a connected space
+     * arrives whole on Google — one event carrying the series RRULE, so
+     * Google owns every occurrence and the retry converges on it. The
+     * export is write-once per link: when the link already exists the
+     * call rides the single-appointment path (noop when nothing moved,
+     * cancel/reschedule convergence otherwise), so a changed recurrence
+     * after the export never writes a silent second series — recurrence
+     * edits ride the scope-edit follow-up (backlog:6acf0a73bfc3).
+     */
+    async pushSeries(calendarId, sourceKey, { spaceId, actor, recurrence } = {}) {
+      const who = actor ?? defaultActor;
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      const lines = assertSeriesRecurrence(recurrence);
+      await requireLiveGrant(calendarId, spaceId);
+      const existing = await findLinkBySource(sourceKey);
+      if (existing) {
+        return api.pushAppointment(calendarId, sourceKey, { spaceId, actor: who });
+      }
+      const handle = bookHandle(who);
+      const row = await handle.appointmentBySourceKey(sourceKey);
+      if (!row) {
+        throw syncError('CALENDAR_SYNC_UNKNOWN_APPOINTMENT', 404, `no appointment with sourceKey "${sourceKey}"`);
+      }
+      const reconciled = await providerCall(calendarId, 'findByAccordoSourceKey',
+        { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ, who);
+      if (row.status === 'cancelled') {
+        // A cancelled head is never exported as an active series. An
+        // event an earlier export left without its link is cancelled
+        // first, then linked with the cancelled fingerprint; with nothing
+        // on Google there is nothing to converge and nothing is written
+        // anywhere — the same rule as the single-appointment path.
+        if (!reconciled) {
+          return { status: 'noop', sourceKey: row.sourceKey, reason: 'cancelled before any export: nothing to create on Google' };
+        }
+        const pushed = reconciled.status === 'cancelled'
+          ? reconciled
+          : await providerCall(calendarId, 'cancelEvent', { calendarId, eventId: reconciled.id }, GRANT_PURPOSE_WRITE, who);
+        await storeLink({
+          linkKey: linkKeyFor(calendarId, reconciled.id),
+          calendarId,
+          googleEventId: linkKeyFor(calendarId, reconciled.id),
+          appointmentSourceKey: row.sourceKey,
+          appointmentId: row.id,
+          googleUpdated: pushed?.updated ?? reconciled.updated,
+          localFingerprint: appointmentFingerprint(row),
+          revision: 0,
+          conflictNote: null,
+          pendingRemote: null,
+        }, who);
+        return { status: 'pushed', eventId: reconciled.id, sourceKey: row.sourceKey, change: 'cancelled', healed: true };
+      }
+      if (reconciled) {
+        await storeLink({
+          linkKey: linkKeyFor(calendarId, reconciled.id),
+          calendarId,
+          googleEventId: linkKeyFor(calendarId, reconciled.id),
+          appointmentSourceKey: row.sourceKey,
+          appointmentId: row.id,
+          googleUpdated: reconciled.updated,
+          localFingerprint: appointmentFingerprint(row),
+          revision: 0,
+          conflictNote: null,
+          pendingRemote: null,
+        }, who);
+        return { status: 'linked', eventId: reconciled.id, sourceKey: row.sourceKey, healed: true };
+      }
+      const summary = mapping.summaryForAppointment(row, calendarId);
+      if (typeof summary !== 'string' || summary.trim() === '') {
+        throw new ValidationError('calendar-sync mapping.summaryForAppointment must return non-empty text', {
+          field: 'mapping.summaryForAppointment',
+        });
+      }
+      // A private booking (backlog:9aa5c073) exports with Google
+      // visibility private; any other value exports with the calendar
+      // default, never a guessed one.
+      const created = await providerCall(calendarId, 'insertEvent', {
+        calendarId,
+        summary: summary.slice(0, 200),
+        description: row.notes ?? '',
+        start: { dateTime: row.startsAt },
+        end: { dateTime: row.endsAt },
+        ...((row?.visibility ?? 'default') === 'private' ? { visibility: 'private' } : {}),
+        recurrence: lines,
+        extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
+      }, GRANT_PURPOSE_WRITE, who);
+      await storeLink({
+        linkKey: linkKeyFor(calendarId, created.id),
+        calendarId,
+        googleEventId: linkKeyFor(calendarId, created.id),
+        appointmentSourceKey: row.sourceKey,
+        appointmentId: row.id,
+        googleUpdated: created.updated,
+        localFingerprint: appointmentFingerprint(row),
+        revision: 0,
+        conflictNote: null,
+        pendingRemote: null,
+      }, who);
+      return { status: 'exported', eventId: created.id, sourceKey: row.sourceKey };
+    },
+
+    /**
      * The BO-F3-01 event detail ("07 Calendario"): one appointment row with
      * its origin and its sync state. Origin is the stored source package —
      * `calendar-sync` rows were imported from Google, every other source
@@ -1752,7 +1876,7 @@ export function createCalendarSyncOperations(options = {}) {
   // ran, how many changes it decided, and the coded error when it threw.
   // The error code is already normalized by providerCall (a fixed code,
   // never provider text), so the status can expose it safely.
-  for (const key of ['importFuture', 'pullIncremental', 'syncOnce', 'pushAppointment', 'pushLocalChanges']) {
+  for (const key of ['importFuture', 'pullIncremental', 'syncOnce', 'pushAppointment', 'pushSeries', 'pushLocalChanges']) {
     const run = api[key].bind(api);
     api[key] = async (...args) => {
       const calendarId = canonicalIdOrNull(args[0]);
