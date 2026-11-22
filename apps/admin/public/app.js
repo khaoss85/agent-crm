@@ -160,6 +160,18 @@ function leaveForSpaceLogin(target) {
   }
 }
 
+// backlog:e1b3d56730fa: one queue for every read of the app — the page's
+// waves and the shell counters share it, so the in-flight peak stays within
+// SHELL_MAX_IN_FLIGHT (the same pilot bound Oggi already keeps). Codex P2
+// on #1062: the gate sits beneath the schema cache — every network fetch
+// behind the cache (first read and background renewal) takes a queue slot,
+// so an expired copy never adds a fetch past the bound. Cache hits answer
+// without holding a slot. schemaCachedRequest is only called at request
+// time, once the module below is fully evaluated.
+const sharedReads = createReadGate({
+  request: (path, options) => moduleClient.rawRequest(path, options),
+});
+
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
@@ -251,7 +263,7 @@ const moduleClient = {
 // renews behind it. Review Muse #898: a renewed copy that differs refreshes
 // the navigation only — the screen in use reads it at its next navigation.
 const schemaCachedRequest = createShellSchemaClient({
-  request: (path, options) => moduleClient.rawRequest(path, options),
+  request: (path, options) => sharedReads.request(path, options),
   adminBase: ADMIN_BASE,
   activeSpace: () => shellActiveSpace,
   storage: tabSessionStorage(),
@@ -549,6 +561,7 @@ import {
   ACTIVE_SPACE_KEY,
   SPACES_KEY,
   buildShellNav,
+  createReadGate,
   createShellView,
   keepSettingsTabs,
   loadClientCount,

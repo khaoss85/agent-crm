@@ -189,6 +189,56 @@ export function clientBadge(count, exact = true) {
 }
 
 /**
+ * Ceiling for reads flying together through the shared app queue
+ * (backlog:e1b3d56730fa): the same pilot bound Oggi already keeps
+ * (OGGI_MAX_IN_FLIGHT in admin-oggi.js) — one bound for the app, never a
+ * new one per screen.
+ */
+export const SHELL_MAX_IN_FLIGHT = 6;
+
+/**
+ * One shared queue for every read behind a client: the wrapped client runs
+ * at most `max` requests at once, the rest wait their turn. Fail-soft like
+ * before — a refused read still rejects to its own caller, and the queue
+ * keeps flowing. The page waves and the shell counters share the one
+ * instance in app.js, so the total in-flight peak stays within
+ * SHELL_MAX_IN_FLIGHT (backlog:e1b3d56730fa). Same shape as createReadGate
+ * in admin-oggi.js (MEM_ACC_REUSE): Oggi keeps its per-load instance, the
+ * app-wide one lives here.
+ * @param {{ request: (path: string, options?: any) => Promise<any> }} client
+ * @param {number} [max]
+ */
+export function createReadGate(client, max = SHELL_MAX_IN_FLIGHT) {
+  let flying = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  const pump = () => {
+    while (flying < max && waiting.length > 0) {
+      const next = waiting.shift();
+      flying += 1;
+      next();
+    }
+  };
+  return {
+    ...client,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        waiting.push(() => {
+          Promise.resolve()
+            .then(() => client.request(path, options))
+            .then(resolve, reject)
+            .finally(() => {
+              flying -= 1;
+              pump();
+            });
+        });
+        pump();
+      });
+    },
+  };
+}
+
+/**
  * Read the live client count for the badge: the smallest supported page
  * over the same customer list the Clienti screen reads, keeping only its
  * `total`. pageSize=1 is rejected by parseCustomerListQuery (400: only 10,
