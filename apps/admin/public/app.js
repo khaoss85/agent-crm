@@ -247,6 +247,26 @@ const moduleClient = {
     return readWhileWaking(once, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
   },
 };
+// Voce e1b3d56730fa: one queue for the shell counters and the page reads
+// (admin-shell.js) — at most six reads in flight together, whoever starts
+// them. The sidebar counters used to start beside the page reads, so on a
+// slow load past the afterScreen cap the two waves overlapped (ten reads
+// against a ceiling of six). Writes never ride this queue: they keep the
+// raw client, so a write sent while the page goes away still outlives the
+// page instead of waiting behind reads.
+const sharedShellReads = createShellReadGate(moduleClient);
+/**
+ * The Oggi screen on the shared queue: its reads wait their turn with the
+ * shell counters, its writes keep the raw client (isMutation, the same
+ * rule bindAdminMutations splits on).
+ */
+const oggiClient = {
+  ...moduleClient,
+  request(path, options = {}) {
+    if (isMutation(options.method)) return moduleClient.request(path, options);
+    return sharedShellReads.request(path, options);
+  },
+};
 // backlog:c048bf6f2dd3: the schema answers from the space's last copy and
 // renews behind it. Review Muse #898: a renewed copy that differs refreshes
 // the navigation only — the screen in use reads it at its next navigation.
@@ -549,6 +569,7 @@ import {
   ACTIVE_SPACE_KEY,
   SPACES_KEY,
   buildShellNav,
+  createShellReadGate,
   createShellView,
   keepSettingsTabs,
   loadClientCount,
@@ -1272,9 +1293,11 @@ async function refreshShellCounts() {
   // the same customer list the Clienti screen reads — unknown (never zero)
   // when the read fails, so the pill lights only from a real count.
   const spaceId = resolveBadgeSpaceId(shellActiveSpace, shellStorage);
+  // Voce e1b3d56730fa: the counters read through the queue they share
+  // with the page, never beside it.
   const [fixes, clients] = await Promise.all([
-    loadFixCount(moduleClient, { spaceId }),
-    loadClientCount(moduleClient),
+    loadFixCount(sharedShellReads, { spaceId }),
+    loadClientCount(sharedShellReads),
   ]);
   shellFixCount = fixes;
   shellView.update({
@@ -1298,7 +1321,9 @@ async function refreshSpaceAi() {
   if (typeof spaceId !== 'string' || spaceId === '') return;
   const mine = ++spaceAiSeq;
   try {
-    const answer = await moduleClient.request(
+    // Voce e1b3d56730fa: the AI bar read queues with the page and the
+    // other counters instead of starting beside them.
+    const answer = await sharedShellReads.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(spaceId)}`,
     );
     if (mine !== spaceAiSeq) return;
@@ -1628,7 +1653,9 @@ async function route() {
       oggiView = createOggiView({
         doc: document,
         mount: mountGate.owned('dashboard'),
-        client: moduleClient,
+        // Voce e1b3d56730fa: Oggi reads through the queue it shares with
+        // the shell counters; its writes keep the raw client.
+        client: oggiClient,
         navigate: (next) => { window.location.hash = next; },
         // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
         // the Calendario through the shared shell storage.

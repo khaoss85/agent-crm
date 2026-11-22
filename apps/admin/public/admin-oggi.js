@@ -39,6 +39,7 @@ import { isNotificationMessage, memberText, nameFromProfile, plural, readableNam
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
 import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
+import { SHELL_MAX_IN_FLIGHT as OGGI_MAX_IN_FLIGHT, createShellReadGate as createReadGate } from './admin-shell.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -276,46 +277,11 @@ export const ADVISOR_ACTION_LIMIT = 10;
 /**
  * The pilot's in-flight ceiling for Oggi's first load: never more reads
  * flying together than this, dependents included (backlog:57994a8c7287).
+ * Voce e1b3d56730fa: the same ceiling now caps the shell counters and the
+ * page reads together — one shared queue (admin-shell.js), so the sidebar
+ * can no longer push the combined peak past it (MEM_ACC_REUSE: no second
+ * gate implementation, same names downstream).
  */
-export const OGGI_MAX_IN_FLIGHT = 6;
-
-/**
- * One shared queue for every read of a load: the wrapped client runs at
- * most `max` requests at once, the rest wait their turn. Fail-soft like
- * before — a refused read still rejects to its own caller, and the queue
- * keeps flowing.
- * @param {{ request: (path: string, options?: any) => Promise<any> }} client
- * @param {number} [max]
- */
-function createReadGate(client, max = OGGI_MAX_IN_FLIGHT) {
-  let flying = 0;
-  /** @type {Array<() => void>} */
-  const waiting = [];
-  const pump = () => {
-    while (flying < max && waiting.length > 0) {
-      const next = waiting.shift();
-      flying += 1;
-      next();
-    }
-  };
-  return {
-    ...client,
-    request(path, options) {
-      return new Promise((resolve, reject) => {
-        waiting.push(() => {
-          Promise.resolve()
-            .then(() => client.request(path, options))
-            .then(resolve, reject)
-            .finally(() => {
-              flying -= 1;
-              pump();
-            });
-        });
-        pump();
-      });
-    },
-  };
-}
 
 /**
  * Voce 5fc6709109fa: a read discarded as stale (its screen moved on — a

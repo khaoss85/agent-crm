@@ -189,6 +189,57 @@ export function clientBadge(count, exact = true) {
 }
 
 /**
+ * The pilot's in-flight ceiling for the shell and page reads together
+ * (backlog:e1b3d56730fa): the sidebar counters (the data-quality and
+ * duplicate reads, the live client count, the space-master read behind
+ * the AI bar) used to start beside the page reads — on a slow load past
+ * the afterScreen cap the two waves overlapped, ten reads in flight
+ * against a ceiling of six. One queue for both waves instead.
+ */
+export const SHELL_MAX_IN_FLIGHT = 6;
+
+/**
+ * One shared queue for the shell counters and the page reads: the wrapped
+ * client runs at most `max` requests at once, the rest wait their turn.
+ * Fail-soft like the page load it shares the ceiling with — a refused
+ * read still rejects to its own caller, and the queue keeps flowing.
+ * Reads only: writes never ride this queue (the caller keeps them on the
+ * raw client), so a write sent while the page goes away outlives the page
+ * instead of waiting behind reads.
+ * @param {{ request: (path: string, options?: any) => Promise<any> }} client
+ * @param {number} [max]
+ */
+export function createShellReadGate(client, max = SHELL_MAX_IN_FLIGHT) {
+  let flying = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  const pump = () => {
+    while (flying < max && waiting.length > 0) {
+      const next = waiting.shift();
+      flying += 1;
+      next();
+    }
+  };
+  return {
+    ...client,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        waiting.push(() => {
+          Promise.resolve()
+            .then(() => client.request(path, options))
+            .then(resolve, reject)
+            .finally(() => {
+              flying -= 1;
+              pump();
+            });
+        });
+        pump();
+      });
+    },
+  };
+}
+
+/**
  * Read the live client count for the badge: the smallest supported page
  * over the same customer list the Clienti screen reads, keeping only its
  * `total`. pageSize=1 is rejected by parseCustomerListQuery (400: only 10,
