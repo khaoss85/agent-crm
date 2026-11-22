@@ -406,12 +406,19 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, visibility } = {}) {
       requireGrant({ secret }, 'insertEvent');
       const cal = calendar(calendarId);
       const eventId = id === undefined ? `fake-${cal.seq + 1}-${Math.floor(nowMs() % 100000)}` : checkEventId(id);
       if (liveEvent(cal, eventId)) {
         throw fakeError('GOOGLE_EVENT_CONFLICT', 409, `event "${eventId}" already exists`);
+      }
+      // Team visibility (backlog:9aa5c073): a private booking exports with
+      // Google visibility private. The closed Google set, refused otherwise —
+      // absent stays absent, like the engine read.
+      const visibilities = ['default', 'public', 'private', 'confidential'];
+      if (visibility !== undefined && visibility !== null && !visibilities.includes(visibility)) {
+        throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'insertEvent visibility must be one of default, public, private, confidential');
       }
       const stored = {
         id: eventId,
@@ -422,6 +429,7 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: nowIso(),
         extendedProperties: { ...extendedProperties },
+        ...(visibility === undefined || visibility === null ? {} : { visibility }),
       };
       cal.events.set(eventId, stored);
       touch(cal, eventId);

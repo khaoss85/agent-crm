@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Router } from './router.js';
 import {
   AppError,
+  ForbiddenError,
   NotFoundError,
   ValidationError,
   normalizeError,
@@ -19,6 +20,7 @@ import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js
 import { bundleVersion, getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
+import { projectMaskedWeekRow, viewerSeesFull } from '../../../packages/appointments/src/appointments.js';
 import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-window.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
@@ -451,6 +453,74 @@ export function buildRouter(app) {
     return await app.setManualProductActive({ ...stripServerControlledKeys(input), productId: params.id }, actor);
   });
 
+  // Team visibility (backlog:9aa5c073): the private-booking viewer every
+  // appointment surface reads through. Who calls and whether they
+  // administer is decided here from the verified identity, never from a
+  // query flag or a body field a caller could forge. When the membership
+  // lookup fails the read stays fail-closed (an administrator reads as an
+  // unprivileged viewer) and the failure is logged with the error code and
+  // the workspace id — never a token, a cookie, a subject or personal
+  // data — so a storage or membership outage stays diagnosable instead of
+  // looking like an ordinary privacy restriction.
+  //
+  // The generic module surface masks appointment rows with the same
+  // projection the team week paints, so a masked row never leaks its
+  // customer, service, notes or price through `/api/modules/appointment`
+  // either.
+  const APPOINTMENT_MODULE_NAME = 'appointment';
+  const resolveAppointmentViewer = async (routeApp, { actor, identity, organizationId }) => {
+    const actorId = typeof actor?.id === 'string' ? actor.id : '';
+    let isAdmin = false;
+    if (routeApp.spine && identity?.subject && organizationId) {
+      try {
+        const membership = await routeApp.spine.memberships.find({ organizationId, subject: identity.subject });
+        isAdmin = Array.isArray(membership?.permissions)
+          && membership.permissions.includes('admin.memberships.manage');
+      } catch (error) {
+        const normalized = normalizeError(error);
+        const loggedOrg = /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$/.test(String(organizationId))
+          ? String(organizationId)
+          : 'unknown';
+        console.error(`appointment-visibility membership lookup failed code=${normalized.code} name=${normalized.name} organizationId=${loggedOrg}`);
+        isAdmin = false;
+      }
+    }
+    return { actorId, isAdmin };
+  };
+  const maskAppointmentRowFor = (viewer, row) => (
+    viewerSeesFull(viewer, row) ? row : projectMaskedWeekRow(row)
+  );
+  // The masked «Occupato» projection (projectMaskedWeekRow) keeps only the
+  // slot and the hold: id, status, startsAt, endsAt, teamMemberId,
+  // visibility. Of those, only id, status, startsAt and teamMemberId are
+  // index-backed list filters; every other filterable field (subjectResource,
+  // subjectId, serviceKey, sourceKey, sourcePackage) names a value the
+  // masked row strips. A caller who is not an administrator must not filter
+  // on one: the pre-mask WHERE would oracle a private row by 1-vs-0 rows
+  // (backlog:9aa5c073). Refused 400 before the read runs — the same refusal
+  // whether or not a matching private row exists, so the error answers
+  // nothing by itself. Administrators read everything whole, so their
+  // filters stay untouched.
+  const APPOINTMENT_MASKED_SAFE_FILTERS = new Set(['id', 'status', 'startsAt', 'teamMemberId']);
+  const refuseMaskedAppointmentFilter = (viewer, where) => {
+    if (viewer?.isAdmin === true) return;
+    const refused = Object.keys(where ?? {}).filter((field) => !APPOINTMENT_MASKED_SAFE_FILTERS.has(field));
+    if (refused.length > 0) {
+      throw new ValidationError(
+        `filter.${refused[0]} is not filterable on private bookings for this caller: `
+        + 'it names a value the masked «Occupato» row strips. '
+        + 'Administrators may filter it; anyone else reads the team week or the customer history instead.',
+        { field: refused[0] },
+      );
+    }
+  };
+  const refuseUnlessAppointmentVisible = (viewer, row) => {
+    if (viewerSeesFull(viewer, row)) return row;
+    throw new ForbiddenError('only its creator and the administrators may change a private booking', {
+      field: 'visibility',
+    });
+  };
+
   // Team calendar (BO-F3 \"07 Calendario\"). Reads and the booking flow over
   // the declared appointments operations — the kernel owns the paths and
   // gates the role boundary, the package owns the reads and writes. Without
@@ -459,7 +529,7 @@ export function buildRouter(app) {
   // route. Query flags arrive as strings and are parsed here; bodies pass
   // through (server-controlled keys stripped) because the operations
   // validate their own input fail-closed.
-  router.add('GET', '/api/appointments/team-week', async ({ query, identity, organizationId }) => {
+  router.add('GET', '/api/appointments/team-week', async ({ query, identity, actor, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readAppointmentTeamWeek !== 'function') {
       throw new NotFoundError('Operation', 'team week');
@@ -467,11 +537,15 @@ export function buildRouter(app) {
     // Owner holds arrive server-side only, through the composed
     // calendar-sync handle inside the appointments operations — never
     // through the query, so no private commitment title lands in URLs,
-    // logs or browser history (backlog:af190faf).
+    // logs or browser history (backlog:af190faf). The private-booking
+    // viewer rides the same seam (backlog:9aa5c073): who calls and whether
+    // they administer is decided here from the verified identity, never
+    // from a query flag a caller could forge.
     return await app.readAppointmentTeamWeek({
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
       to: query.to,
+      viewer: await resolveAppointmentViewer(app, { actor, identity, organizationId }),
     });
   });
   router.add('GET', '/api/appointments/suggest-slots', async ({ query, identity, organizationId }) => {
@@ -523,7 +597,11 @@ export function buildRouter(app) {
       throw new NotFoundError('Operation', 'appointment reschedule');
     }
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
-    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+    // The private-booking viewer rides server-side (backlog:9aa5c073): a
+    // stranger's move of a private booking is refused 403 inside the
+    // operation, never decided by the hidden grid controls alone.
+    const viewer = await resolveAppointmentViewer(app, { actor, identity, organizationId });
+    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input), viewer }, actor);
   });
   // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
   // The lifecycle's own cancellation with a reason, idempotent on a row
@@ -534,7 +612,9 @@ export function buildRouter(app) {
       throw new NotFoundError('Operation', 'appointment cancellation');
     }
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
-    return await app.cancelAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+    // Same server-side viewer as the reschedule above (backlog:9aa5c073).
+    const cancelViewer = await resolveAppointmentViewer(app, { actor, identity, organizationId });
+    return await app.cancelAppointmentBooking({ ...stripServerControlledKeys(input), viewer: cancelViewer }, actor);
   });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
@@ -960,7 +1040,11 @@ export function buildRouter(app) {
     const page = {};
     if (query.before !== undefined && query.before !== null && query.before !== '') page.before = query.before;
     if (query.limit !== undefined && query.limit !== null && query.limit !== '') page.limit = query.limit;
-    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor, ...page });
+    // The private-booking viewer rides server-side too (backlog:9aa5c073):
+    // a teammate reads someone else's private booking in the timeline as
+    // «Occupato», never its service, price or notes.
+    const timelineViewer = await resolveAppointmentViewer(app, { actor, identity, organizationId });
+    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor, viewer: timelineViewer, ...page });
   });
 
   // «Da leggere» (backlog:9e003582): opening the scheda marks its inbound
@@ -1730,29 +1814,53 @@ export function buildRouter(app) {
       isCustomModule(app, module.name) ? 'bundle' : 'kernel',
     );
   });
-  router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, identity, organizationId }) => {
+  router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
-    return {
-      items: await module.service.list({
+    // A private booking (backlog:9aa5c073) reads as «Occupato» here too —
+    // never the customer, the service or the notes — for anyone but its
+    // creator and the administrators. The viewer resolves BEFORE the
+    // filtered read: a filter on a stripped field, applied first and masked
+    // second, would oracle the hidden value by 1-vs-0 rows.
+    if (params.module !== APPOINTMENT_MODULE_NAME) {
+      const items = await module.service.list({
         limit: strictLimit(searchParams),
         where: strictCollectionFilter(searchParams, module),
-      }),
-    };
+      });
+      return { items };
+    }
+    const viewer = await resolveAppointmentViewer(app, { actor, identity, organizationId });
+    const where = strictCollectionFilter(searchParams, module);
+    refuseMaskedAppointmentFilter(viewer, where);
+    const items = await module.service.list({ limit: strictLimit(searchParams), where });
+    return { items: items.map((row) => maskAppointmentRowFor(viewer, row)) };
   });
   router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
     return respond(201, await module.service.create(recordInput(body), writeContext(app, { actor, identity, organizationId, headers })));
   });
-  router.add('GET', '/api/modules/:module/records/:id', async ({ params, identity, organizationId }) => {
+  router.add('GET', '/api/modules/:module/records/:id', async ({ params, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
-    return await module.service.get(params.id);
+    const row = await module.service.get(params.id);
+    // Same rule as the collection above (backlog:9aa5c073): a private
+    // booking reads full only for its creator and the administrators.
+    if (params.module !== APPOINTMENT_MODULE_NAME) return row;
+    return maskAppointmentRowFor(await resolveAppointmentViewer(app, { actor, identity, organizationId }), row);
   });
   router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
+    // Someone else's private booking is unchangeable (backlog:9aa5c073):
+    // refused 403 before the update runs. Managed fields already refuse a
+    // direct write; this keeps the decision on the row, not on the field.
+    if (params.module === APPOINTMENT_MODULE_NAME && typeof module.service.get === 'function') {
+      refuseUnlessAppointmentVisible(
+        await resolveAppointmentViewer(app, { actor, identity, organizationId }),
+        await module.service.get(params.id),
+      );
+    }
     return await module.service.update(params.id, recordInput(body), writeContext(app, { actor, identity, organizationId, headers }));
   });
 
@@ -1765,7 +1873,16 @@ export function buildRouter(app) {
   // by the generic records surface). Anything else is a 404; unknown action
   // 404; bad input 400; invalid transition a stable 409.
   router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor, identity, organizationId, headers }) => {
-    resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
+    const actionable = resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
+    // Someone else's private booking stays untouchable here too
+    // (backlog:9aa5c073): no appointment action exists today, and any
+    // future one meets the same 403 first.
+    if (params.module === APPOINTMENT_MODULE_NAME && typeof actionable?.service?.get === 'function') {
+      refuseUnlessAppointmentVisible(
+        await resolveAppointmentViewer(app, { actor, identity, organizationId }),
+        await actionable.service.get(params.id),
+      );
+    }
     const context = writeContext(app, { actor, identity, organizationId, headers });
     return await app.runAction({
       module: params.module,

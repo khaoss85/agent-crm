@@ -233,7 +233,13 @@ export function createAppointmentsPackage(options = {}) {
     // required on every member group) and never offered as free. Server
     // seam only: no caller/request input carries blocks, so nothing to
     // forge and nothing to omit. Old callers unchanged.
-    version: 5,
+    // 6 (backlog:9aa5c073): team visibility default/public/private —
+    // `read-team-week` takes a server-side-only `viewer`, private rows mask
+    // to slot-and-hold for anyone but the creator and the administrators.
+    // 7 (backlog:9aa5c073): the same rule on every other surface — the
+    // generic module reads mask, reschedule/cancel refuse 403, and the
+    // customer schedule masks — with `viewer` on the mutation operations.
+    version: 7,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -284,6 +290,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { actorId, isAdmin }: a private booking reads full for its creator and the administrators, masked for anyone else. Never from the caller.' },
         ],
         create(runtime) {
           return (input) => flowFor(runtime).schedule.teamWeekFor(input);
@@ -365,6 +372,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
           { name: 'startsAt', type: 'string', required: true, hint: 'New slot start, ISO instant.' },
           { name: 'endsAt', type: 'string', required: true, hint: 'New slot end, ISO instant.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { isAdmin }: a private booking moves only for its creator and the administrators, refused 403 otherwise. Never from the caller.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
@@ -381,6 +389,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
           { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
           { name: 'reason', type: 'string', required: true, hint: 'Why the booking is cancelled, at most 300 characters.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { isAdmin }: a private booking cancels only for its creator and the administrators, refused 403 otherwise. Never from the caller.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).cancelAppointment(input);
