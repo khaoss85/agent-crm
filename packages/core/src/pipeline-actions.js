@@ -168,6 +168,100 @@ export function buildMoveStageAction({ module }) {
 }
 
 /**
+ * Generic, pipeline-driven `assign-pipeline` action factory (ADR-014,
+ * backlog:19efb8e3cee5). The single action that gives a pipeline to an
+ * offer that has none: where `move-stage` refuses a record with no
+ * pipeline state (409 NO_PIPELINE), this one adopts it — pipeline and
+ * stage land together, in one audited write.
+ *
+ * Rules: the offer must carry no pipeline state (a pipelineKey with a
+ * stage is already assigned — 409 ALREADY_ON_PIPELINE, move it with
+ * `move-stage` instead). The target defaults to the pipeline's
+ * defaultStage when `toStage` is omitted; a named stage must belong to
+ * the module's pipeline or it is refused with an Italian message naming
+ * the allowed stages. A move into `lost` requires a non-blank `reason`,
+ * recorded as `closeReason`; `won`/`paid` close like `move-stage`, an
+ * open/`renewal` target clears terminal-only fields — so Clienti,
+ * Reporting and the Pipeline header read the assigned offer through the
+ * same shared closed/won rule (backlog:1adf95307b31) from the first write.
+ *
+ * @param {{module: string}} options
+ */
+export function buildAssignPipelineAction({ module }) {
+  return {
+    module,
+    name: 'assign-pipeline',
+    label: 'Assign pipeline',
+    description: 'Give this record the module pipeline and a stage, in one audited write.',
+    actionContract: 1,
+    input: [
+      { name: 'toStage', type: 'string', hint: 'Target stage key from the pipeline definition; defaults to the pipeline default stage when omitted.' },
+      { name: 'pipeline', type: 'string', hint: 'Optional confirmation: must name the module pipeline when supplied.' },
+      { name: 'reason', type: 'string', hint: 'Required when assigning to the lost stage.' },
+    ],
+    /** @param {any} ctx */
+    async execute({ record, input, managed, pipelines, step, now }) {
+      const pipeline = pipelines.forModule(module);
+      if (!pipeline) {
+        throw new AppError(`No pipeline is registered for module "${module}"`, { code: 'NO_PIPELINE', status: 409 });
+      }
+      if (input.pipeline !== undefined && input.pipeline !== pipeline.name) {
+        throw new ValidationError(
+          `La pipeline "${input.pipeline}" non è quella di questo modulo: qui si assegna solo "${pipeline.name}"`,
+          { field: 'pipeline', allowed: [pipeline.name] },
+        );
+      }
+      if (record.pipelineKey && record.pipelineStage) {
+        throw new AppError(
+          `This record is already on pipeline "${record.pipelineKey}" (stage "${record.pipelineStage}") — move it with move-stage instead`,
+          { code: 'ALREADY_ON_PIPELINE', status: 409, details: { pipelineKey: record.pipelineKey, pipelineStage: record.pipelineStage } },
+        );
+      }
+      const targetKey = input.toStage ?? pipeline.defaultStage;
+      const targetStage = findStage(pipeline, targetKey);
+      if (!targetStage) {
+        throw new ValidationError(
+          `La fase "${targetKey}" non appartiene alla pipeline "${pipeline.name}": scegli una delle fasi: ${pipeline.stages.map((stage) => stage.key).join(', ')}`,
+          { field: 'toStage', allowed: pipeline.stages.map((stage) => stage.key) },
+        );
+      }
+      if (targetStage.type === 'lost' && !input.reason) {
+        throw new ValidationError('reason is required when assigning to the lost stage', { field: 'reason' });
+      }
+
+      const timestamp = now();
+      const patch = {
+        pipelineKey: pipeline.name,
+        pipelineStage: targetStage.key,
+        stageEnteredAt: timestamp,
+        ...(targetStage.type === 'open' || targetStage.type === 'renewal' ? { closedAt: null, closeReason: null } : {}),
+        ...(targetStage.type === 'won' || targetStage.type === 'paid' ? { closedAt: timestamp, closeReason: null } : {}),
+        ...(targetStage.type === 'lost' ? { closedAt: timestamp, closeReason: input.reason } : {}),
+      };
+      const updated = await managed(record.id, patch);
+      step('assign', {
+        pipeline: pipeline.name,
+        from: null,
+        to: targetStage.key,
+        type: targetStage.type,
+      });
+      return {
+        record: {
+          id: updated.id,
+          pipelineKey: updated.pipelineKey,
+          pipelineStage: updated.pipelineStage,
+          stageEnteredAt: updated.stageEnteredAt,
+          closedAt: updated.closedAt,
+          closeReason: updated.closeReason,
+        },
+        from: null,
+        to: targetStage.key,
+      };
+    },
+  };
+}
+
+/**
  * The board placement an input asks for, or null when it asks none.
  * @param {Record<string, any>} input
  * @returns {{afterId: string} | {first: true} | null}
