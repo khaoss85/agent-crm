@@ -638,6 +638,17 @@ export async function applyCustomerPhrase({ database, modules, core, names, impo
     for (const entry of fields) {
       if (!entry || typeof entry !== 'object') continue;
       const key = normalizeFieldKey(entry.key);
+      // Voce ed03a20360d5, correzione review P2: la conferma rifiuta il
+      // valore vuoto prima di definire, così la transazione annulla tutto
+      // (cliente, definizioni, valori) come su main. Svuotare («—») resta
+      // solo sulla rotta del singolo valore (setCustomFieldValue).
+      const rawValue = entry.value ?? entry.fieldValue;
+      if (rawValue === undefined || rawValue === null
+        || (typeof rawValue === 'string' && rawValue.trim() === '')) {
+        const name = typeof entry.label === 'string' && entry.label.trim() !== ''
+          ? entry.label.trim() : key;
+        throw new ValidationError(`«${name}» ha bisogno di un valore`, { field: 'value' });
+      }
       const defined = await defineCustomField({ modules, names }, {
         actor, key,
         label: entry.label,

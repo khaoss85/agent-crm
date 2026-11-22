@@ -367,6 +367,23 @@ test('voce ed03a20360d5: «—» clears the value and a bad value refuses in Ita
   );
 });
 
+test('voce ed03a20360d5, review P2: la conferma con valore vuoto rifiuta tutto, nessun cliente e nessuna definizione', async (t) => {
+  const { app } = scene(t);
+  const countBefore = (await app.listCustomers({})).items.length;
+  await assert.rejects(
+    () => app.applyCustomerPhrase({
+      actor: OPERATOR,
+      customer: { firstName: 'daniele', lastName: 'pelleri', email: 'daniele@gmail.com' },
+      fields: [{ key: 'amico', label: 'Amico', type: 'si-no', value: '' }],
+    }),
+    (error) => error?.code === 'VALIDATION_ERROR'
+      && /ha bisogno di un valore/.test(String(error?.message ?? '')),
+    'an empty field value refuses the whole confirmation in Italian',
+  );
+  assert.equal((await app.listCustomers({})).items.length, countBefore, 'no partial customer survives');
+  assert.deepEqual(await app.listCustomFields({}), [], 'no partial definition survives');
+});
+
 test('the Nuovo cliente note lands in the cronologia through the single writer', async (t) => {
   const { app } = scene(t);
   const preview = await app.parseCustomerPhrase({
