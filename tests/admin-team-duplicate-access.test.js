@@ -24,3 +24,35 @@ test('backlog:6563edf41aab: doppione con accessi diversi va segnalato', () => {
   assert.equal(hints.length, 1, 'stesso nome dipinto con accessi diversi: un segnale in Impostazioni');
   assert.match(hints[0].text, /daniele pelleri/i, 'il segnale nomina la persona');
 });
+
+/**
+ * backlog:6563edf41aab (review indipendente PR #1043, P2 su
+ * admin-spazi-accessi.js:471): due righe senza nome («Membro del team») con
+ * accessi diversi non sono un doppione — il segnaposto non fa prova e
+ * l'avviso invita a rimuovere una persona viva.
+ */
+test('backlog:6563edf41aab: il segnaposto senza nome non è un doppione', () => {
+  const rows = buildTeamRows([
+    { subject: 'google|111', role: 'operator', status: 'active' },
+    { subject: 'broker+xyz', role: 'operator', status: 'active' },
+  ]);
+  assert.deepEqual(rows.map((row) => row.name), ['Membro del team', 'Membro del team']);
+  assert.equal(duplicateTeamHints(rows).length, 0, 'due segnaposto con accessi diversi: nessun falso avviso');
+});
+
+/**
+ * backlog:6563edf41aab (ANSWER supervisore 18/11 22:0xZ, punti b+c): l'avviso
+ * spiega la causa (una riga è l'accesso di servizio, l'altra il login Google)
+ * e non consiglia mai Rimuovi: sospende la persona in tutta l'organizzazione.
+ */
+test('backlog:6563edf41aab: l\u2019avviso spiega gli accessi e non consiglia Rimuovi', () => {
+  const rows = buildTeamRows([
+    { subject: 'google|1049887766', displayName: 'Daniele Pelleri', role: 'owner', status: 'active' },
+    { subject: 'broker+adopted-7f3a', displayName: 'daniele pelleri', role: 'operator', status: 'active' },
+  ]);
+  const hints = duplicateTeamHints(rows);
+  assert.equal(hints.length, 1);
+  assert.ok(!hints[0].text.includes('Rimuovi'), `niente consiglio pericoloso, letto: ${hints[0].text}`);
+  assert.match(hints[0].text, /Google/, 'l\u2019avviso dice da dove viene una riga');
+  assert.match(hints[0].text, /servizio/i, 'l\u2019avviso dice da dove viene l\u2019altra riga');
+});

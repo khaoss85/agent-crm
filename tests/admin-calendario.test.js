@@ -416,6 +416,172 @@ test('a Saturday booking paints its own column on the same day and time', async 
   assert.ok(texts(mount, 'span').some((text) => /taglio/i.test(text) && text.includes('10:00')), 'the Saturday block keeps its Rome time on its compact line');
 });
 
+// backlog:f9cf5e4616c2 — the event Oggi asks for («Prima della prossima
+// call», ven 20 nov 17:00) must read in the team week 16-20 nov on the same
+// day and hour even when the roster is refused and no member is named: the
+// pending member scopes the entry load, like reloadAfterBooking does.
+test('the event Oggi asks for loads its week even with no named member', async () => {
+  const friday = {
+    ...WEEK,
+    from: '2026-11-15T00:00:00.000Z',
+    to: '2026-11-24T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'a-oggi',
+        status: 'booked',
+        // Friday 2026-11-20, 17:00–17:30 Rome (CET).
+        startsAt: '2026-11-20T16:00:00.000Z',
+        endsAt: '2026-11-20T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        priceCents: 4500,
+        currency: 'EUR',
+        notes: 'Prima della prossima call',
+        sourceKey: 'calendario:marco:oggi:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const store = {};
+  const storage = {
+    getItem: (key) => (Object.hasOwn(store, key) ? store[key] : null),
+    setItem: (key, value) => { store[key] = String(value); },
+    removeItem: (key) => { delete store[key]; },
+  };
+  storage.setItem('accordo.bo.calendar-event', JSON.stringify({ id: 'a-oggi', day: '2026-11-20', member: 'marco' }));
+  const refused = Object.assign(new Error('forbidden'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
+  const client = stubClient({ week: friday, membershipsError: refused });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-11-20T08:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const weeks = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.ok(weeks().some((call) => call.path.includes('teamMemberIds=marco')), 'the asked member scopes the entry load');
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  const fridayHead = heads.findIndex((node) => node.textContent.includes('ven 20'));
+  assert.notEqual(fridayHead, -1, 'the 16-20 nov week paints Friday');
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.ok(days[fridayHead].textContent.includes('17:00'), 'the asked appointment paints Friday at the same hour');
+  assert.ok(!days.some((day, index) => index !== fridayHead && day.textContent.includes('17:00')), 'the asked appointment paints nowhere else');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card && card.textContent.includes('17:00'), 'the asked event opens selected');
+});
+
+// backlog:f9cf5e4616c2 (seguito 19/11, famiglia persona-identificativi) —
+// Oggi shows today's appointments assigned to «coach-…», who is not in the
+// Team: the asked event still scopes the entry load and its blocks paint on
+// the same day and hour, never an empty grid. Same entry path as the test
+// above, with an assignee the roster does not know.
+test('the event Oggi asks for paints even when its member is outside the Team', async () => {
+  const friday = {
+    ...WEEK,
+    from: '2026-11-15T00:00:00.000Z',
+    to: '2026-11-24T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'coach-x',
+      appointments: [{
+        id: 'a-oggi',
+        status: 'booked',
+        // Friday 2026-11-20, 17:00–17:30 Rome (CET).
+        startsAt: '2026-11-20T16:00:00.000Z',
+        endsAt: '2026-11-20T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'coach-x',
+        priceCents: 4500,
+        currency: 'EUR',
+        notes: 'Prima della prossima call',
+        sourceKey: 'calendario:coach-x:oggi:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const store = {};
+  const storage = {
+    getItem: (key) => (Object.hasOwn(store, key) ? store[key] : null),
+    setItem: (key, value) => { store[key] = String(value); },
+    removeItem: (key) => { delete store[key]; },
+  };
+  storage.setItem('accordo.bo.calendar-event', JSON.stringify({ id: 'a-oggi', day: '2026-11-20', member: 'coach-x' }));
+  const refused = Object.assign(new Error('forbidden'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
+  const client = stubClient({ week: friday, membershipsError: refused });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-11-20T08:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const weeks = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.ok(weeks().some((call) => call.path.includes('teamMemberIds=coach-x')), 'the asked outsider scopes the entry load');
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  const fridayHead = heads.findIndex((node) => node.textContent.includes('ven 20'));
+  assert.notEqual(fridayHead, -1, 'the 16-20 nov week paints Friday');
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.ok(days[fridayHead].textContent.includes('17:00'), 'the outsider appointment paints Friday at the same hour');
+  assert.ok(!days.some((day, index) => index !== fridayHead && day.textContent.includes('17:00')), 'the outsider appointment paints nowhere else');
+});
+
+// backlog:f9cf5e4616c2 (il caso del Mac: tutti spuntati) — with the roster
+// known and the whole team listed, the asked outsider still joins the week
+// request beside the team, and its blocks paint on the same day and hour.
+test('the asked outsider joins the named team week instead of vanishing', async () => {
+  const friday = {
+    ...WEEK,
+    from: '2026-11-15T00:00:00.000Z',
+    to: '2026-11-24T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'coach-x',
+      appointments: [{
+        id: 'a-oggi',
+        status: 'booked',
+        // Friday 2026-11-20, 17:00–17:30 Rome (CET).
+        startsAt: '2026-11-20T16:00:00.000Z',
+        endsAt: '2026-11-20T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'coach-x',
+        priceCents: 4500,
+        currency: 'EUR',
+        notes: 'Prima della prossima call',
+        sourceKey: 'calendario:coach-x:oggi:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const store = {};
+  const storage = {
+    getItem: (key) => (Object.hasOwn(store, key) ? store[key] : null),
+    setItem: (key, value) => { store[key] = String(value); },
+    removeItem: (key) => { delete store[key]; },
+  };
+  storage.setItem('accordo.bo.calendar-event', JSON.stringify({ id: 'a-oggi', day: '2026-11-20', member: 'coach-x' }));
+  const client = stubClient({
+    week: friday,
+    memberships: [
+      { subject: 'marco', role: 'operator', displayName: 'Marco' },
+      { subject: 'sara', role: 'owner', displayName: 'Sara' },
+    ],
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-11-20T08:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 10; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const weeks = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.ok(weeks().some((call) => call.path.includes('marco')), 'the team still scopes the week');
+  assert.ok(weeks().some((call) => call.path.includes('coach-x')), 'the asked outsider joins the named team load');
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  const fridayHead = heads.findIndex((node) => node.textContent.includes('ven 20'));
+  assert.notEqual(fridayHead, -1, 'the 16-20 nov week paints Friday');
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.ok(days[fridayHead].textContent.includes('17:00'), 'the outsider appointment paints Friday at the same hour');
+});
+
 test('the week pager reloads the named members instead of blanking the week', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -3265,7 +3431,8 @@ test('no known team keeps the plain person field', async () => {
 // Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
 // draft naming someone outside the read team roster never prefills
 // «Persona del team» — the choice stays among the team, empty, and the card
-// says the name is not in the team.
+// says the person is unknown (backlog:a16726b5ea76 follow-up: never
+// «non è nel team» for a name the team does not hold).
 test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -3291,7 +3458,7 @@ test('a draft outsider leaves the team choice empty', async () => {
   const choice = mount.querySelector('select[name="teamMemberId"]');
   assert.ok(choice, 'the person stays a choice among the team');
   assert.equal(choice.value, '', 'the outsider name never fills it');
-  assert.ok(mount.textContent.includes('Marco non è nel team'), 'the card says why');
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), 'the card says the person is unknown');
 });
 
 // Fetta 10 (P2 di #481) protected the drafted outsider from a select that
@@ -3569,7 +3736,11 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco', [], homonyms),
+    ['a1', 'a2'],
+    'rows sharing the visible name are searched together (backlog:a16726b5ea76 follow-up)',
+  );
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
@@ -3591,7 +3762,11 @@ test('resolveDraftMemberIds strips the painted ordinal and reads the label (back
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco (1)', [], homonyms), [], 'two real homonyms stay unresolved');
+  assert.deepEqual(
+    resolveDraftMemberIds('Marco (1)', [], homonyms),
+    ['a1', 'a2'],
+    'the painted ordinal is not the name: both rows sharing it are searched (backlog:a16726b5ea76 follow-up)',
+  );
   assert.deepEqual(resolveDraftMemberIds(' (2)', [], solo), [], 'an ordinal alone drafts nothing');
 });
 

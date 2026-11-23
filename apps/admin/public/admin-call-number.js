@@ -79,15 +79,21 @@ function numberLabel(entry) {
  *   doc: any, host: any, customer?: string | null,
  *   numbers: Array<{number: string, held: boolean, systems: string[]}>,
  *   draft?: string | null,
+ *   mode?: 'call' | 'save',
+ *   onCancel?: (() => void) | null,
  *   choose: (number: string, held: boolean) => Promise<string | null>,
  * }} deps `choose` saves (when needed) and starts the call; it answers
- *   null when done, or the Italian sentence to show in the window.
+ *   null when done, or the Italian sentence to show in the window. With
+ *   `mode: 'save'` the window only saves and closes, never calling.
  */
 export function openCallNumberPanel(deps) {
+  // backlog:7eb7dc663bbd: the composer reuses this window to add a missing
+  // number — in `save` mode it saves and closes, never calling.
+  const saveOnly = deps.mode === 'save';
   const el = elFor(deps.doc);
   const { panel, body, foot, shut, gone } = openSchedaWindow({
     doc: deps.doc, host: deps.host, attr: 'data-phone', action: 'phone',
-    title: 'Chiama', customer: deps.customer ?? null,
+    title: saveOnly ? 'Aggiungi un numero' : 'Chiama', customer: deps.customer ?? null,
   });
   const numbers = Array.isArray(deps.numbers) ? deps.numbers : [];
   const OTHER = 'altro';
@@ -96,10 +102,13 @@ export function openCallNumberPanel(deps) {
   // backlog:af43dffdff83: say how the call really starts. This window only
   // saves the number; «Chiama dal CRM» then opens the computer's phone app
   // on the number (tel:) or, with a voice connector linked, the form that
-  // records the call.
+  // records the call. In `save` mode there is no call after: the number is
+  // saved on the scheda and the window closes.
   body.appendChild(el('p', 'bo-muted', numbers.length === 0
-    ? `Il cliente non ha ancora un numero: scrivilo qui. ${HOW_THE_CALL_STARTS}`
-    : `Quale numero chiamo? Un numero nuovo lo salvo sulla scheda. ${HOW_THE_CALL_STARTS}`));
+    ? (saveOnly ? 'Il cliente non ha ancora un numero: scrivilo qui.'
+      : `Il cliente non ha ancora un numero: scrivilo qui. ${HOW_THE_CALL_STARTS}`)
+    : (saveOnly ? 'Quale numero salvo sulla scheda?'
+      : `Quale numero chiamo? Un numero nuovo lo salvo sulla scheda. ${HOW_THE_CALL_STARTS}`)));
 
   const typed = el('input', 'bo-scheda-composer-subject');
   typed.setAttribute('type', 'tel');
@@ -153,13 +162,19 @@ export function openCallNumberPanel(deps) {
   const say = (text) => { error.textContent = text; };
   paintChoice();
 
-  const go = el('button', 'primary', 'Chiama');
+  const go = el('button', 'primary', saveOnly ? 'Salva numero' : 'Chiama');
   go.setAttribute('type', 'button');
-  go.setAttribute('data-action', 'call-with-number');
+  go.setAttribute('data-action', saveOnly ? 'save-number' : 'call-with-number');
   const cancel = el('button', undefined, 'Annulla');
   cancel.setAttribute('type', 'button');
   cancel.setAttribute('data-action', 'cancel-phone');
-  cancel.addEventListener('click', shut);
+  // backlog:28511aa43cc7: from the composer Annulla hands the screen back
+  // to the caller's onCancel (the composer reopens with the typed text);
+  // everywhere else it only closes the window, like before.
+  cancel.addEventListener('click', () => {
+    if (typeof deps.onCancel === 'function') deps.onCancel();
+    else shut();
+  });
   foot.appendChild(go);
   foot.appendChild(cancel);
 
@@ -172,7 +187,7 @@ export function openCallNumberPanel(deps) {
     if (selected === OTHER) {
       const raw = String(typed.value ?? '').trim();
       if (raw === '') {
-        say('Scrivi il numero prima di chiamare.');
+        say(saveOnly ? 'Scrivi il numero prima di salvarlo.' : 'Scrivi il numero prima di chiamare.');
         return;
       }
       number = dialableNumber(raw);

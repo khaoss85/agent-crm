@@ -468,10 +468,11 @@ export function createAgentOperations(options = {}) {
   }
 
   /**
-   * Pause or resume one hand-written agent (backlog:7d169a3b1dd2 «Ritira» /
-   * «Riattiva»): status only, never the fields. Space-scoped and
-   * human-gated like updateAgent; writing the status it already carries is
-   * a replay, never a second write.
+   * Pause or resume one team agent (backlog:7d169a3b1dd2 «Ritira» /
+   * «Riattiva»; backlog:8605b6f520c0: catalogue rows too): status only,
+   * never the fields. Space-scoped and human-gated like updateAgent;
+   * writing the status it already carries is a replay, never a second
+   * write.
    */
   async function setAgentStatus(request) {
     const record = request && typeof request === 'object' ? request : {};
