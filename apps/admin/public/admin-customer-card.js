@@ -5561,16 +5561,36 @@ export function createCustomerCardView(deps) {
     // offer page hero): never two bare figures that read as the same.
     const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
       fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
+    // backlog:d4270d5efebe: a quote line hid the offer value the Clienti list
+    // shows (the list sums open opportunities, the scheda showed only the
+    // quote total: 1 € vs 15 € on 19/11). Paint the linked opportunity's own
+    // value beside the quote total, with the same «valore dell’offerta»
+    // label the offer row uses — the same figure in the same words as the
+    // list. Shown only when it differs, so an equal quote paints once.
+    const linkedOffer = fromQuote && typeof first?.opportunityId === 'string' && Array.isArray(opportunities)
+      ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+      : null;
+    const linkedDiffers = linkedOffer !== null
+      && (linkedOffer.amountCents !== first?.amountCents || linkedOffer.currency !== first?.currency);
+    const offerAmount = linkedDiffers
+      && Number.isSafeInteger(linkedOffer?.amountCents) && linkedOffer.amountCents > 0
+      && typeof linkedOffer?.currency === 'string' && linkedOffer.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(linkedOffer.amountCents, linkedOffer.currency)) : null;
+    const offerAmountNote = offerAmount === null ? null : el('p', 'bo-scheda-offer-amount-note', 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
       if (amountNote) box.appendChild(amountNote);
+      if (offerAmount) box.appendChild(offerAmount);
+      if (offerAmountNote) box.appendChild(offerAmountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
       if (amountNote) link.appendChild(amountNote);
+      if (offerAmount) link.appendChild(offerAmount);
+      if (offerAmountNote) link.appendChild(offerAmountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a

@@ -5798,6 +5798,58 @@ test('backlog:1e07362849db: the scheda labels whose figure it shows when quote t
   assert.equal(offerNote.textContent, 'valore dell’offerta');
 });
 
+test('backlog:d4270d5efebe: a quote line also paints the linked offer value the Clienti list shows', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €', '1 €'], 'quote total first, then the linked offer value the list shows');
+  const notes = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note')
+    .map((node) => node.textContent);
+  assert.deepEqual(notes, ['preventivo in bozza', 'valore dell’offerta'], 'each figure carries its own label');
+});
+
+test('backlog:d4270d5efebe: an equal quote paints its figure once, never duplicated', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 100, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['1 €'], 'one figure when quote and offer agree');
+});
+
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
