@@ -25,6 +25,13 @@ export const OFFER_PROMPT_MAX = 500;
 export const OFFER_DRAFT_PATH = '/api/customer-hub/offers/draft';
 
 /**
+ * Voce 05dac489: the highest offer value the edit saves, in cents
+ * (1.000.000 €) — mirrors the framework's MAX_OPPORTUNITY_VALUE_CENTS.
+ * The server stays authoritative and refuses anything higher with 400.
+ */
+export const MAX_OFFER_VALUE_CENTS = 100_000_000;
+
+/**
  * Euro text to integer cents, or null. Reads the Italian form the field
  * shows («1.250,00», «350,5») and the plain one («350», «12.30»); a dotted
  * thousand without a comma («1.250») stays refused as ambiguous.

@@ -470,6 +470,24 @@ test('a negative Valore says it cannot be negative, never «obbligatorio» (back
     `a negative valore names why: ${form.__editError.textContent}`);
 });
 
+test('a Valore above the ceiling is refused with the ceiling message, never sent (voce 05dac489)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ quotes: [], audit: [] });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = '999.999.999.999,00';
+  form.__editInputs.owner.value = 'guido';
+  await form.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH above the ceiling');
+  assert.ok(form.__editError.textContent.includes('1.000.000,00'),
+    `an over-ceiling valore names the ceiling: ${form.__editError.textContent}`);
+});
+
 test('the edit error keeps Salva and Annulla on their own row, the message outside it (backlog:18cdf78c)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
