@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ValidationError } from '../../core/src/errors.js';
+import { isLostOfferStage, isOpenOfferStage, isWonOfferStage } from '../../core/src/pipeline-registry.js';
 import { OPPORTUNITY_STAGES } from '../../core/src/schema.js';
 import { compileReport } from './compiler.js';
 import { PIPELINE_SEMANTIC_MODEL } from './semantic-model.js';
@@ -54,7 +55,7 @@ const CURRENCY_RE = /^[A-Z]{3}$/;
 export const DASHBOARD_DEFAULT_CURRENCY = 'EUR';
 /** Monthly chart depth: the selected period plus the five after it — expected closings only, never the past (backlog:b3d88f6e38ef). */
 export const DASHBOARD_MONTHS = 6;
-/** Weekly bars on the channel card: the four weeks opening the period month. */
+/** Weekly bars on the channel card of the running month: the four weeks ending at today's week. */
 export const DASHBOARD_CHANNEL_WEEKS = 4;
 /** CSV uses the Italian list separator, so Excel opens it as columns. */
 export const DASHBOARD_CSV_SEPARATOR = ';';
@@ -264,15 +265,18 @@ function channelTodayIso(nowIso) {
 }
 
 /**
- * The four Monday-start weeks opening a YYYY-MM period: the Monday of the
- * week containing the 1st, plus three. For 2026-10 that is 28 set, 5, 12
- * and 19 ott — the prototype's axis.
+ * The Monday-start weeks of a YYYY-MM period.
  *
  * backlog:776cf3469e64 — in the running month the bars end at today: the
  * fourth week is the one holding today, never a future week the first
- * contacts cannot have filled yet. Any other period keeps the four weeks
- * opening the month. `nowIso` pins today (tests, the dashboard stamp);
- * without it the opening weeks stay, and an unreadable value keeps them.
+ * contacts cannot have filled yet.
+ *
+ * backlog:02e4b848 — any other period covers every day of the month: from
+ * the Monday of the week containing the 1st through the Monday of the week
+ * containing the last day. For 2026-10 that is 28 set, 5, 12, 19 and
+ * 26 ott — the last days of October are inside a bar, never cut off.
+ * `nowIso` pins today (tests, the dashboard stamp); without it, or with an
+ * unreadable value, the period is not the running month, so it reads whole.
  * @param {string} period YYYY-MM
  * @param {unknown} [nowIso] today as an ISO instant
  * @returns {Array<{week: string, label: string}>}
@@ -280,16 +284,22 @@ function channelTodayIso(nowIso) {
 export function channelWeeksOf(period, nowIso = null) {
   const first = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1));
   const monday = new Date(first.getTime() - (((first.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
-  let last = new Date(monday.getTime() + (DASHBOARD_CHANNEL_WEEKS - 1) * 7 * 24 * 60 * 60 * 1000);
-  if (nowIso !== undefined && nowIso !== null && nowIso !== '') {
-    const today = channelTodayIso(nowIso);
-    if (today !== null && period === today.slice(0, 7)) {
-      const day = new Date(`${today}T00:00:00.000Z`);
-      last = new Date(day.getTime() - (((day.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
-    }
+  const pinned = nowIso !== undefined && nowIso !== null && nowIso !== '' ? channelTodayIso(nowIso) : null;
+  if (pinned !== null && period === pinned.slice(0, 7)) {
+    const today = pinned;
+    const day = new Date(`${today}T00:00:00.000Z`);
+    const last = new Date(day.getTime() - (((day.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
+    return Array.from({ length: DASHBOARD_CHANNEL_WEEKS }, (_, index) => {
+      const start = new Date(last.getTime() - (DASHBOARD_CHANNEL_WEEKS - 1 - index) * 7 * 24 * 60 * 60 * 1000);
+      const week = start.toISOString().slice(0, 10);
+      return Object.freeze({ week, label: channelWeekLabel(week) });
+    });
   }
-  return Array.from({ length: DASHBOARD_CHANNEL_WEEKS }, (_, index) => {
-    const start = new Date(last.getTime() - (DASHBOARD_CHANNEL_WEEKS - 1 - index) * 7 * 24 * 60 * 60 * 1000);
+  const lastDay = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0));
+  const lastMonday = new Date(lastDay.getTime() - (((lastDay.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
+  const count = Math.round((lastMonday.getTime() - monday.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return Array.from({ length: count }, (_, index) => {
+    const start = new Date(monday.getTime() + index * 7 * 24 * 60 * 60 * 1000);
     const week = start.toISOString().slice(0, 10);
     return Object.freeze({ week, label: channelWeekLabel(week) });
   });
@@ -321,7 +331,7 @@ export function buildChannelBreakdown(origins, query, nowIso = null) {
     }
     let shaped = byChannel.get(channel);
     if (!shaped) {
-      shaped = { channel, weeks: Array(DASHBOARD_CHANNEL_WEEKS).fill(0), total: 0 };
+      shaped = { channel, weeks: Array(weeks.length).fill(0), total: 0 };
       byChannel.set(channel, shaped);
     }
     const at = weeks.findIndex((slot) => slot.week === entry.week);
@@ -332,7 +342,13 @@ export function buildChannelBreakdown(origins, query, nowIso = null) {
     .sort((a, b) => b.total - a.total || (a.channel < b.channel ? -1 : 1))
     .map((entry) => Object.freeze({ ...entry, weeks: Object.freeze([...entry.weeks]) })));
   const total = channels.reduce((sum, entry) => sum + entry.total, 0);
-  return Object.freeze({ weeks: Object.freeze(weeks), channels, total, undated });
+  // backlog:02e4b848 — in the running month the card subtitle must not name
+  // days after today: the last shown week still holds today, so the lede
+  // ends at today instead of that week's Sunday. Any other period shows
+  // whole weeks, so the lede ends at the last one's Sunday (`end: null`).
+  const pinned = nowIso !== undefined && nowIso !== null && nowIso !== '' ? channelTodayIso(nowIso) : null;
+  const end = pinned !== null && query.period === pinned.slice(0, 7) ? pinned : null;
+  return Object.freeze({ weeks: Object.freeze(weeks), channels, total, undated, end });
 }
 
 export function formatMonth(period) {
@@ -391,11 +407,6 @@ function sumRows(rows, predicate) {
   return { minor, count };
 }
 
-/** @param {unknown} value */
-function isOpenStage(value) {
-  return typeof value === 'string' && /** @type {Array<string>} */ ([...OPEN_STAGES]).includes(value);
-}
-
 /**
  * backlog:48993bed7294 (review lead #896): the historical close rate needs
  * at least this many decided offers (won, paid or lost) before it drives
@@ -450,17 +461,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       .sort((a, b) => a.order - b.order)
     : null;
   const typeOf = ordered ? new Map(ordered.map((stage) => [stage.key, stage.type])) : null;
+  // backlog:1adf95307b31 — one closed/won rule with the customer list
+  // (packages/core/src/pipeline-registry.js): Pagato is won.
   /** Same open rule as the board's working columns: open and renewal hold value. */
-  const isOpenValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'open' || typeOf.get(value) === 'renewal'
-    : isOpenStage(value);
+  const isOpenValue = (/** @type {unknown} */ value) => isOpenOfferStage(pipeline, value);
   /** Same close rule as the board: won and paid close at face value. */
-  const isWonValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'won' || typeOf.get(value) === 'paid'
-    : value === WON_STAGE;
-  const isLostValue = (/** @type {unknown} */ value) => pipeline
-    ? typeOf.get(value) === 'lost'
-    : value === LOST_STAGE;
+  const isWonValue = (/** @type {unknown} */ value) => isWonOfferStage(pipeline, value);
+  const isLostValue = (/** @type {unknown} */ value) => isLostOfferStage(pipeline, value);
   const nameOf = (/** @type {unknown} */ value) => {
     if (!pipeline) return stageLabel(value);
     const stage = ordered.find((entry) => entry?.key === value);
@@ -487,6 +494,24 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   )].sort();
 
   const open = sumRows(stageRows, (row) => isOpenValue(row['opportunity.stage']));
+  // Restyle 54b9a2a2706f (verifica Mac 20/11): the other currencies are
+  // never hidden. The card keeps `display` in the chosen currency (CSV and
+  // every reader unchanged) and gains `also`: the same value in each other
+  // currency, summed on its own (never converted), or null.
+  // Review Muse #1108 (P2): a stored code the formatter does not know
+  // (opportunity currency is free text) never breaks the dashboard — it is
+  // left out of `also`, like it was before.
+  const alsoCurrencies = otherCurrencies.filter((code) => isSupportedCurrency(code));
+  const otherOpen = alsoCurrencies.map((code) => ({
+    code,
+    ...sumRows(byStageRows, (row) => row['opportunity.currency'] === code && isOpenValue(row['opportunity.stage'])),
+  })).filter((entry) => entry.count > 0);
+  const alsoIn = (/** @type {{ code: string, minor: number, count: number }[]} */ others) => (others.length === 0
+    ? null
+    : Object.freeze({
+      display: others.map((entry) => formatMinor(entry.minor, entry.code)).join(' + '),
+      count: others.reduce((sum, entry) => sum + entry.count, 0),
+    }));
   const won = sumRows(stageRows, (row) => isWonValue(row['opportunity.stage']));
   const lost = sumRows(stageRows, (row) => isLostValue(row['opportunity.stage']));
   const closed = won.count + lost.count;
@@ -504,6 +529,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   const isOpen = (/** @type {Record<string, any>} */ row) => isOpenValue(row['opportunity.stage']);
   const openInPeriod = sumRows(dated, (row) => isOpen(row) && inPeriod(row));
   const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && closedInPeriod(row));
+  const otherWonInPeriod = alsoCurrencies.map((code) => ({
+    code,
+    ...sumRows(scheduleRows, (row) => row['opportunity.currency'] === code
+      && isWonValue(row['opportunity.stage']) && closedInPeriod(row)),
+  })).filter((entry) => entry.count > 0);
   // The open value the month may still close: expected in the month, or
   // with no expected date at all (it can close any day). Past-dated rows
   // are stale, never «in attesa». Same window as the Pipeline forecast.
@@ -528,6 +558,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       id: 'open-value', label: 'Valore pipeline aperto',
       display: formatMinor(open.minor, query.currency),
       sub: plural(open.count, 'preventivo aperto', 'preventivi aperti'),
+      also: alsoIn(otherOpen),
     }),
     Object.freeze({
       id: 'open-count', label: 'Preventivi aperti',
@@ -538,6 +569,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       id: 'won-period', label: `Vinte in ${periodLabel}`,
       display: formatMinor(wonInPeriod.minor, query.currency),
       sub: plural(wonInPeriod.count, 'chiusura', 'chiusure'),
+      also: alsoIn(otherWonInPeriod),
     }),
     Object.freeze({
       id: 'win-rate', label: 'Tasso di chiusura',
@@ -704,11 +736,14 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
         text: `${candidate.owner} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead con la data già passata a ${recipient.owner}.`,
       });
     }
-    if (lost.count > 0 && closed > 0 && lost.count / closed >= 0.3) {
+    // backlog:ed6bae5e5c0d: the phrase and the team table read the same
+    // window — closed in the period (won + lost of the month), never the
+    // lifetime totals the table does not show.
+    if (lostInPeriod.count > 0 && periodDecided > 0 && lostInPeriod.count / periodDecided >= 0.3) {
       insights.push({
         id: 'lost-rate',
         // backlog:48993bed7294: «1 preventivo perso», never «1 preventivi persi».
-        text: `${plural(lost.count, 'preventivo perso', 'preventivi persi')} su ${plural(closed, 'chiuso', 'chiusi')} (${Math.round((lost.count / closed) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
+        text: `${plural(lostInPeriod.count, 'preventivo perso', 'preventivi persi')} su ${plural(periodDecided, 'chiuso', 'chiusi')} (${Math.round((lostInPeriod.count / periodDecided) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
       });
     }
     if (staleOpen.count > 0) {

@@ -358,7 +358,7 @@ export function createModuleAdmin(deps) {
       fieldErrors[name] = errorNode;
     };
     addField('title', 'Titolo', { placeholder: 'es. Pacchetto 10 ingressi', required: true });
-    addField('value', 'Valore EUR', { placeholder: 'es. 250.00', required: true });
+    addField('value', 'Valore EUR', { placeholder: 'es. 250,00', required: true });
     addField('expiry', 'Scadenza', { type: 'date' });
     addField('owner', 'Referente', { placeholder: 'Chi la segue', required: true });
 
@@ -376,11 +376,17 @@ export function createModuleAdmin(deps) {
       const companyId = 'field-opportunity-company';
       customerRow.appendChild(el(doc, 'label', { text: 'Cliente (azienda)', attrs: { for: companyId } }));
       companySelect = el(doc, 'select', { attrs: { id: companyId, name: 'company' } });
+      // Voce 6740cea450b7: lo stesso cliente si elenca una sola volta —
+      // la lista del server può ripetere una riga, il menu no.
+      const seenCompanies = new Set();
       for (const company of companies) {
         if (company?.id === undefined || company?.id === null) continue;
+        const key = String(company.id);
+        if (seenCompanies.has(key)) continue;
+        seenCompanies.add(key);
         companySelect.appendChild(el(doc, 'option', {
           text: typeof company.name === 'string' && company.name !== '' ? company.name : String(company.id),
-          attrs: { value: String(company.id) },
+          attrs: { value: key },
         }));
       }
       customerRow.appendChild(companySelect);
@@ -412,11 +418,15 @@ export function createModuleAdmin(deps) {
           contactHint.setAttribute('class', 'field-error');
           return;
         }
+        const seenContacts = new Set();
         for (const contact of contacts) {
           if (contact?.id === undefined || contact?.id === null) continue;
+          const key = String(contact.id);
+          if (seenContacts.has(key)) continue;
+          seenContacts.add(key);
           const label = [contact.firstName, contact.lastName].filter((part) => typeof part === 'string' && part !== '').join(' ')
             || contact.email || String(contact.id);
-          contactSelect.appendChild(el(doc, 'option', { text: label, attrs: { value: String(contact.id) } }));
+          contactSelect.appendChild(el(doc, 'option', { text: label, attrs: { value: key } }));
         }
       };
       companySelect.addEventListener('change', reloadContacts);
@@ -453,9 +463,16 @@ export function createModuleAdmin(deps) {
           }
           tickable += 1;
           const row = el(doc, 'div', { class: 'catalog-pick' });
+          // Voce 6740cea450b7: la casella sta dentro la sua etichetta, mai
+          // staccata — il testo nomina l'offerta e attiva la casella.
+          const pickLabel = el(doc, 'label', { class: 'catalog-pick-label' });
           const checkbox = el(doc, 'input', { attrs: { type: 'checkbox', name: `product-${offer.offerId}` } });
           checkbox.setAttribute('aria-label', `Aggiungi ${offer.name}`);
-          row.appendChild(checkbox);
+          pickLabel.appendChild(checkbox);
+          pickLabel.appendChild(el(doc, 'span', {
+            text: `${product?.name ?? 'Prodotto'} · ${offer.name} — ${offerPriceText(offer)}`,
+          }));
+          row.appendChild(pickLabel);
           const needsQty = offer.components.some((component) => component.pricingModel === 'per_unit');
           /** @type {any} */
           let qtyInput = null;
@@ -463,9 +480,7 @@ export function createModuleAdmin(deps) {
             qtyInput = el(doc, 'input', { attrs: { type: 'number', name: `qty-${offer.offerId}`, value: '1' } });
             qtyInput.setAttribute('aria-label', `Quantità per ${offer.name}`);
           }
-          row.appendChild(el(doc, 'span', {
-            text: `${product?.name ?? 'Prodotto'} · ${offer.name} — ${offerPriceText(offer)}${needsQty ? ' × ' : ''}`,
-          }));
+          if (needsQty) row.appendChild(el(doc, 'span', { text: ' × ' }));
           if (qtyInput !== null) row.appendChild(qtyInput);
           section.appendChild(row);
           productPicks.push({ offer, checkbox, qtyInput });
@@ -587,7 +602,7 @@ export function createModuleAdmin(deps) {
       /** @type {Record<string, string>} */
       const failures = {};
       if (title === '') failures.title = 'Il titolo è obbligatorio.';
-      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250.00).';
+      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250,00).';
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {

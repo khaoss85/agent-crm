@@ -330,6 +330,7 @@ export function createAccordoApp(options = {}) {
       signatureTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
     },
     core: coreAdapters,
+    pipelines,
   });
   const { aliases: operationAliases } = composePackageOperations({ registry: domains, runtime: operationRuntime });
 

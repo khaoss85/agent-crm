@@ -65,7 +65,14 @@ export function channelsLede(breakdown) {
     || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))
     || Number.isNaN(Date.parse(`${lastStart}T00:00:00.000Z`))) return count;
   const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · ogni cliente conta una volta, nel canale del primo contatto`;
+  // backlog:02e4b848 — in the running month the server caps the subtitle at
+  // today (`end`): the last shown week still holds today, so naming its
+  // Sunday would name days that have not happened yet. A missing or
+  // unreadable cap keeps the week's Sunday, as before.
+  const cap = typeof breakdown?.end === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(breakdown.end)
+    && !Number.isNaN(Date.parse(`${breakdown.end}T00:00:00.000Z`)) ? breakdown.end : null;
+  const end = cap !== null && cap < lastEnd ? cap : lastEnd;
+  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(end)} · ogni cliente conta una volta, nel canale del primo contatto`;
 }
 
 /**
@@ -557,8 +564,14 @@ export function createReportingView(deps) {
     for (const kpi of model.kpis ?? []) {
       const card = el(doc, 'div', { class: 'metric' });
       card.appendChild(el(doc, 'span', { text: kpi.label }));
-      card.appendChild(el(doc, 'strong', { text: kpi.display }));
-      card.appendChild(el(doc, 'span', { text: kpi.sub }));
+      // Restyle 54b9a2a2706f: «2.596,50 € + 30 USD», like the Pipeline
+      // header — the other currencies are never hidden behind a note.
+      const also = typeof kpi.also?.display === 'string' && kpi.also.display !== '' ? kpi.also.display : null;
+      card.appendChild(el(doc, 'strong', { text: also === null ? kpi.display : `${kpi.display} + ${also}` }));
+      // Review Muse #1108 (P2): the count follows the value — never a value
+      // that covers more offers than its line says.
+      const alsoCount = also !== null && Number.isSafeInteger(kpi.also?.count) && kpi.also.count > 0 ? kpi.also.count : 0;
+      card.appendChild(el(doc, 'span', { text: alsoCount > 0 ? `${kpi.sub} · ${alsoCount} in altre valute` : kpi.sub }));
       grid.appendChild(card);
     }
     section.appendChild(grid);
@@ -797,8 +810,8 @@ export function createReportingView(deps) {
     const thead = el(doc, 'thead');
     const headRow = el(doc, 'tr');
     // backlog:ed6bae5e5c0d: the column counts open offers, so the header
-    // names them — a bare «Preventivi» hid what it counted.
-    for (const head of ['Persona', 'Preventivi aperti', 'Valore aperto', 'Vinte', 'Tasso']) {
+    // calls them that — «Preventivi aperti» named something else.
+    for (const head of ['Persona', 'Offerte aperte', 'Valore aperto', 'Vinte', 'Tasso']) {
       headRow.appendChild(el(doc, 'th', { text: head }));
     }
     thead.appendChild(headRow);
@@ -949,7 +962,9 @@ export function createReportingView(deps) {
     if ((model.currencies?.others ?? []).length > 0) {
       host.appendChild(el(doc, 'p', {
         class: 'lede',
-        text: `Solo ${model.currency} mostrati; presenti anche: ${model.currencies.others.join(', ')}.`,
+        // Restyle 54b9a2a2706f: the cards above already read «€ + USD»;
+        // this line only says where the other currencies are left out.
+        text: `Valore aperto e vinte contano anche ${model.currencies.others.join(', ')}; grafici, tasso e previsione sono in ${model.currency}.`,
       }));
     }
     kpiCards(host, model);

@@ -153,7 +153,8 @@ test('bd5e84545021: while the names are read the day shows grey bars and every a
   await flush();
   assert.equal(rendered, true);
   const after = mount.textContent;
-  assert.ok(after.includes('Fio Neri') && after.includes('Lia Marroni') && after.includes('Daniele Pelleri'), after);
+  assert.ok(after.includes('Fio Neri') && after.includes('Lia Marroni') && after.includes('Prova verifica 07/11 L1 github'), after);
+  assert.ok(!after.includes('Daniele Pelleri'), 'the roster name never paints the chi line (backlog:57e3d1685e58)');
   assert.equal(mount.querySelector('span[data-skeleton="true"]'), null, 'no grey bar left');
   assert.equal(mount.querySelector('button[data-triage="postpone"]'), postpone, 'the same Domani button');
   const advisorButtons = buttons.filter((node) => node.getAttribute('data-triage') !== null);

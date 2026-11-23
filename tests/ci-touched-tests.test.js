@@ -42,6 +42,7 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  textReferencesOf,
   touchedTestDistances,
   nearestFirst,
   fillNearest,
@@ -212,6 +213,100 @@ test('a re-exporting test is selected for its re-exported source', () => {
     }),
   );
   assert.deepEqual(selected, ['tests/re-export.test.js']);
+});
+
+test('an app.js-only diff selects the test reading app.js as text (backlog:bdfa2aa54a78)', () => {
+  // tests/admin-navigation-loading.test.js never imports
+  // apps/admin/public/app.js: it reads it with readFileSync(new URL(...)).
+  // The 19/11 main reddened on that file while app.js-only PRs stayed
+  // green, because the import mapping selected nothing.
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/admin-navigation-loading.test.js':
+        "import { paintScreenLoading } from '../apps/admin/public/admin-navigation.js';\n"
+        + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, ['tests/admin-navigation-loading.test.js']);
+});
+
+test('textReferencesOf maps readFileSync and new URL literals, never dynamics', () => {
+  const refs = textReferencesOf(
+    'tests/admin-navigation-loading.test.js',
+    "import test from 'node:test';\n"
+    + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');\n"
+    + "const css = readFileSync(join(root, 'apps/admin/public/styles.css'), 'utf8');\n"
+    + 'const live = readFileSync(file, \'utf8\');\n'
+    + 'const walked = readFileSync(new URL(file, PUBLIC_DIR), \'utf8\');\n',
+  );
+  assert.deepEqual(
+    [...refs].sort(),
+    ['apps/admin/public/app', 'apps/admin/public/styles.css'],
+  );
+  // Bare variables and interpolated templates are not fixed references.
+  assert.deepEqual(
+    [...textReferencesOf('tests/x.test.js', 'const t = `${root}/apps/a.js`;\nreadFileSync(t);\n')],
+    [],
+  );
+  // Absolute URLs and non-repository literals are not references either.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'tests/x.test.js',
+      "await fetch(new URL('https://example.invalid/hook'));\nassert.equal(kind, 'text/plain');\n",
+    )],
+    [],
+  );
+});
+
+test('a doc example naming a path selects nothing: comments are not code', () => {
+  // The gate's own script documents readFileSync(new URL('../x')) shapes in
+  // its header: without comment-stripping those examples would edge the
+  // script to every named path, and every test importing the script would
+  // run on unrelated diffs.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'scripts/ci-touched-tests.js',
+      '// readFileSync(new URL(\'../apps/admin/public/app.js\', import.meta.url))\n'
+      + '/* join(root, \'apps/admin/public/styles.css\') */\n'
+      + "import test from 'node:test';\n",
+    )],
+    [],
+  );
+  // A `//` inside a string is not a comment: the read on the same line
+  // still maps.
+  assert.deepEqual(
+    [...textReferencesOf(
+      'tests/x.test.js',
+      "const url = 'https://example.invalid/hook'; // probe\n"
+      + "const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8'); // text\n",
+    )],
+    ['apps/admin/public/app'],
+  );
+});
+
+test('a text read through a helper selects the importing test', () => {
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/via-helper.test.js': "import { readApp } from './helpers/read-app.js';\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+    new Map([
+      ['tests/helpers/read-app', new Set([
+        ...relativeImportsOf(
+          'tests/helpers/read-app.js',
+          "import { readFileSync } from 'node:fs';\n",
+        ),
+        ...textReferencesOf(
+          'tests/helpers/read-app.js',
+          "const app = readFileSync(new URL('../../apps/admin/public/app.js', import.meta.url), 'utf8');\n",
+        ),
+      ])],
+    ]),
+  );
+  assert.deepEqual(selected, ['tests/via-helper.test.js']);
 });
 
 test('hasCodeChange is true for source, false for docs-only changes', () => {
@@ -601,7 +696,7 @@ const forwardSelect = (changedFiles, testContents, fileImports = new Map()) => {
     if (extra) return extra;
     const content = testContents.get(file);
     if (content === undefined) return new Set();
-    return relativeImportsOf(file, content);
+    return new Set([...relativeImportsOf(file, content), ...textReferencesOf(file, content)]);
   };
   const reachesOf = (/** @type {string} */ testPath) => {
     const reached = new Set();
@@ -752,6 +847,14 @@ test('the declared list holds the acceptance guards', () => {
     REPO_WIDE_GUARDS.includes('tests/tour-claim.test.js'),
     'a composition-only PR must run tests/tour-claim.test.js (nightly main run 43665590178)',
   );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-client-only PR must run tests/admin-client-noslash-regex.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only PR must run tests/admin-navigation-loading.test.js (main run 44453039304)',
+  );
 });
 
 test('a payments-only change runs the guards on top of its selection', () => {
@@ -792,6 +895,53 @@ test('a CSS-only admin change runs the authority-token guard on top of its selec
   assert.ok(
     guarded.includes('tests/admin-authority-tokens.test.js'),
     'a styles.css-only change must run tests/admin-authority-tokens.test.js',
+  );
+});
+
+test('an admin-client-only change runs the noslash regex guard on top of its selection', () => {
+  // admin-calendario.js is a browser script, not relatively imported by the
+  // guard: tests/admin-client-noslash-regex.test.js reads every
+  // apps/admin/public/*.js file with readFileSync instead — so without the
+  // guard list a client-only PR would run that screen's own tests while a
+  // reintroduced `//` regex breaks the served /bo shell
+  // (b545aca18b8f, agent-crm#890).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/admin-calendario.js'],
+    contents({
+      'tests/admin-client-noslash-regex.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/admin-calendario.js']);
+  assert.ok(
+    guarded.includes('tests/admin-client-noslash-regex.test.js'),
+    'an admin-calendario.js-only change must run tests/admin-client-noslash-regex.test.js',
+  );
+});
+
+test('an app.js-only change runs the navigation-loading guard on top of its selection', () => {
+  // apps/admin/public/app.js is a browser script no test relatively
+  // imports: tests/admin-navigation-loading.test.js reads it with
+  // readFileSync instead — so without the guard list an app.js-only PR
+  // would run nothing of it while the scheduled full suite fails on the
+  // router catch (main run 44453039304, #1009).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/app.js'],
+    contents({
+      'tests/admin-navigation-loading.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/app.js']);
+  assert.ok(
+    guarded.includes('tests/admin-navigation-loading.test.js'),
+    'an app.js-only change must run tests/admin-navigation-loading.test.js',
   );
 });
 
@@ -1771,13 +1921,53 @@ const scratchTests = (/** @type {Record<string, string>} */ files) => {
   return dir;
 };
 
-test('runTestShards runs the parts together and passes', async () => {
+/**
+ * Reap detached part-group pids (backlog:f24b5628): `runTestShards` kills
+ * the groups on its own bound, and this backstop closes them in `t.after`
+ * even when the test itself fails, so no fixture process stays orphaned.
+ * @param {{ after: (fn: () => void) => void }} t
+ * @returns {number[]}
+ */
+const trackPartGroups = (t) => {
+  /** @type {number[]} */
+  const groups = [];
+  t.after(() => { killGroups(groups); });
+  return groups;
+};
+
+/** @param {number[]} groups */
+const killGroups = (groups) => {
+  if (process.platform === 'win32') return;
+  for (const pgid of groups) {
+    if (!Number.isInteger(pgid) || pgid <= 0) continue;
+    try {
+      process.kill(-pgid, 'SIGKILL');
+    } catch {
+      // Already gone: the bound reaped it, or the part never started.
+    }
+  }
+};
+
+/**
+ * Command lines still referencing `dir`: empty once every fixture process
+ * of the scratch directory is dead (backlog:f24b5628).
+ * @param {string} dir
+ * @returns {string[]}
+ */
+const processesIn = (dir) => {
+  const ps = spawnSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8', timeout: 15_000, killSignal: 'SIGKILL' });
+  if (ps.status !== 0) return [];
+  return String(ps.stdout ?? '').split('\n').filter((line) => line.includes(dir)).map((line) => line.trim());
+};
+
+test('runTestShards runs the parts together and passes', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'a.test.js': "import test from 'node:test';\ntest('a passes', () => {});\n",
     'b.test.js': "import test from 'node:test';\ntest('b passes', () => {});\n",
   });
   try {
-    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
+    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, false);
     assert.deepEqual(result.remaining, []);
     assert.equal(result.status, 0);
@@ -1787,13 +1977,14 @@ test('runTestShards runs the parts together and passes', async () => {
   }
 });
 
-test('runTestShards fails red when a part fails, without timing out', async () => {
+test('runTestShards fails red when a part fails, without timing out', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'a.test.js': "import test from 'node:test';\ntest('a passes', () => {});\n",
     'b.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('b fails', () => { assert.equal(1, 2); });\n",
   });
   try {
-    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
+    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, false);
     assert.deepEqual(result.remaining, []);
     assert.notEqual(result.status, 0);
@@ -1803,12 +1994,13 @@ test('runTestShards fails red when a part fails, without timing out', async () =
   }
 });
 
-test('runTestShards times out naming the files that remained', async () => {
+test('runTestShards times out naming the files that remained', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'slow.test.js': "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n",
   });
   try {
-    const result = await runTestShards(['slow.test.js'], { parts: 1, timeoutSec: 3, cwd: dir });
+    const result = await runTestShards(['slow.test.js'], { parts: 1, timeoutSec: 3, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['slow.test.js']);
     assert.notEqual(result.status, 0);
@@ -1818,7 +2010,48 @@ test('runTestShards times out naming the files that remained', async () => {
   }
 });
 
-test('runTestShards: a free part takes the next queued file while another part is still busy', async () => {
+test('runTestShards leaves no orphan behind: the timed-out group is dead (backlog:f24b5628)', async (t) => {
+  // On 19/11 three fixture processes stayed orphaned (parent 1, scratch
+  // directory already removed), alive 15–19 minutes: the bound killed only
+  // the direct `node --test` child, never its per-file workers. The bound
+  // now kills the whole detached process group; this test checks with the
+  // group pid that nothing of the part stays alive afterwards.
+  const groups = trackPartGroups(t);
+  const dir = scratchTests({
+    'hang.test.js': "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n",
+  });
+  try {
+    const result = await runTestShards(['hang.test.js'], {
+      parts: 1,
+      timeoutSec: 2,
+      cwd: dir,
+      onPartSpawn: (pid) => { groups.push(pid); },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['hang.test.js']);
+    assert.ok(groups.length > 0 && Number.isInteger(groups[0]) && groups[0] > 0, 'the part must report its group pid');
+    // The bound already killed the group: poll until the group pid is gone,
+    // then sweep for any process still referencing the scratch directory.
+    const deadline = Date.now() + 10_000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(-groups[0], 0);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } catch {
+        alive = false;
+        break;
+      }
+    }
+    assert.equal(alive, false, `process group ${groups[0]} must be dead after the bound`);
+    assert.deepEqual(processesIn(dir), [], 'no process may still reference the scratch directory');
+  } finally {
+    killGroups(groups);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTestShards: a free part takes the next queued file while another part is still busy', async (t) => {
   // agent-crm#621: round-robin slices pinned the slow files to two of four
   // parts; at 270 s two parts were done and idle, two still busy, and the
   // run failed red with every test green. Here `a` (first in the queue)
@@ -1828,6 +2061,7 @@ test('runTestShards: a free part takes the next queued file while another part i
   // queue hands `c` to the other part as soon as `b` is done, and the run
   // passes well inside the bound.
   const marker = 'c-ran.marker';
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'a.test.js': "import test from 'node:test';\nimport { existsSync } from 'node:fs';\n"
       + `test('a waits for c', async () => { while (!existsSync('${marker}')) await new Promise((resolve) => setTimeout(resolve, 50)); });\n`,
@@ -1837,7 +2071,7 @@ test('runTestShards: a free part takes the next queued file while another part i
     'd.test.js': "import test from 'node:test';\ntest('d passes', () => {});\n",
   });
   try {
-    const result = await runTestShards(['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js'], { parts: 2, timeoutSec: 60, cwd: dir });
+    const result = await runTestShards(['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js'], { parts: 2, timeoutSec: 60, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, false, `queued files must flow to the free part: ${JSON.stringify(result)}`);
     assert.equal(result.status, 0);
     assert.deepEqual(result.remaining, []);
@@ -1848,7 +2082,8 @@ test('runTestShards: a free part takes the next queued file while another part i
   }
 });
 
-test('runTestShards times out naming the running and the still-queued files', async () => {
+test('runTestShards times out naming the running and the still-queued files', async (t) => {
+  const groups = trackPartGroups(t);
   const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
   const dir = scratchTests({
     'slow1.test.js': sleeper,
@@ -1856,7 +2091,7 @@ test('runTestShards times out naming the running and the still-queued files', as
     'quick.test.js': "import test from 'node:test';\ntest('never started', () => {});\n",
   });
   try {
-    const result = await runTestShards(['slow1.test.js', 'slow2.test.js', 'quick.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    const result = await runTestShards(['slow1.test.js', 'slow2.test.js', 'quick.test.js'], { parts: 2, timeoutSec: 3, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['slow1.test.js', 'slow2.test.js', 'quick.test.js']);
     assert.notEqual(result.status, 0);
@@ -1899,13 +2134,14 @@ test('a timeout after a file failed fails red even when the core finished', () =
   assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/far.test.js'], ['tests/far.test.js']), 'fail');
 });
 
-test('runTestShards names the files that failed', async () => {
+test('runTestShards names the files that failed', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'ok.test.js': "import test from 'node:test';\ntest('ok passes', () => {});\n",
     'bad.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bad fails', () => { assert.equal(1, 2); });\n",
   });
   try {
-    const result = await runTestShards(['ok.test.js', 'bad.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
+    const result = await runTestShards(['ok.test.js', 'bad.test.js'], { parts: 2, timeoutSec: 120, cwd: dir, onPartSpawn: (pid) => { groups.push(pid); } });
     assert.equal(result.timedOut, false);
     assert.deepEqual(result.remaining, []);
     assert.notEqual(result.status, 0);
@@ -1915,7 +2151,7 @@ test('runTestShards names the files that failed', async () => {
   }
 });
 
-test('a timeout over core plus bonus drains the core and warns on the bonus remainder', async () => {
+test('a timeout over core plus bonus drains the core and warns on the bonus remainder', async (t) => {
   // The queue the cure builds for an oversized selection: the core first,
   // the dropped remainder behind it. The bound hits mid-bonus with the core
   // finished and green: warn, naming the bonus files that remained.
@@ -1925,6 +2161,7 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
   // injected bound fires the moment the core file has finished — so the
   // core is done and the bonus remains, whatever the machine's load.
   const blocked = "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n";
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
     'bonus.test.js': blocked,
@@ -1938,6 +2175,7 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
       cwd: dir,
       startTimer: (fire) => { fireBound = fire; return () => {}; },
       onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+      onPartSpawn: (pid) => { groups.push(pid); },
     });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
@@ -2009,7 +2247,8 @@ test('the fallback core says how many tests the PR changed and how many filled t
   assert.equal(describeFallbackCore([], ['docs/x.md']), '0 changed test file(s), 0 nearest selected');
 });
 
-test('an injected bound that fires at once settles timed out, without a TDZ error', async () => {
+test('an injected bound that fires at once settles timed out, without a TDZ error', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({ 'never.test.js': "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n" });
   try {
     let cancelled = 0;
@@ -2018,6 +2257,7 @@ test('an injected bound that fires at once settles timed out, without a TDZ erro
       timeoutSec: 3600,
       cwd: dir,
       startTimer: (fire) => { fire(); return () => { cancelled += 1; }; },
+      onPartSpawn: (pid) => { groups.push(pid); },
     });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['never.test.js']);
@@ -2027,7 +2267,8 @@ test('an injected bound that fires at once settles timed out, without a TDZ erro
   }
 });
 
-test('an onJobDone observer that throws never stalls its part', async () => {
+test('an onJobDone observer that throws never stalls its part', async (t) => {
+  const groups = trackPartGroups(t);
   const dir = scratchTests({
     'a.test.js': "import test from 'node:test';\ntest('a', () => {});\n",
     'b.test.js': "import test from 'node:test';\ntest('b', () => {});\n",
@@ -2040,6 +2281,7 @@ test('an onJobDone observer that throws never stalls its part', async () => {
       timeoutSec: 3600,
       cwd: dir,
       onJobDone: (files) => { seen.push(...files); throw new Error('observer boom'); },
+      onPartSpawn: (pid) => { groups.push(pid); },
     });
     assert.equal(result.timedOut, false);
     assert.equal(result.status, 0);
@@ -2083,7 +2325,7 @@ test('a timeout with nothing remaining fails red instead of warning green', () =
   assert.equal(timeoutVerdict(['tests/mine.test.js'], [], ['tests/mine.test.js']), 'fail');
 });
 
-test('a bound that lands mid-flight leaves the killed files unfinished, never failed', async () => {
+test('a bound that lands mid-flight leaves the killed files unfinished, never failed', async (t) => {
   // The bonus would fail if it ran to completion, but the bound kills it
   // first: a SIGKILLed child counts as unfinished (named in `remaining`),
   // never as failed — with no failure and only bonus unrun, the verdict
@@ -2096,12 +2338,14 @@ test('a bound that lands mid-flight leaves the killed files unfinished, never fa
   try {
     /** @type {() => void} */
     let fireBound = () => {};
+    const groups = trackPartGroups(t);
     const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
       parts: 2,
       timeoutSec: 3600,
       cwd: dir,
       startTimer: (fire) => { fireBound = fire; return () => {}; },
       onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+      onPartSpawn: (pid) => { groups.push(pid); },
     });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
@@ -2112,7 +2356,7 @@ test('a bound that lands mid-flight leaves the killed files unfinished, never fa
   }
 });
 
-test('a bonus failure just before the bound is recorded, never warned green', async () => {
+test('a bonus failure just before the bound is recorded, never warned green', async (t) => {
   // backlog:d9d3336cf5b0: the suite failed just before the time limit — its
   // close may arrive only after the bound fires, and settling on a snapshot
   // would lose it (warn-green over a red suite). The core sleeps past any
@@ -2126,12 +2370,14 @@ test('a bonus failure just before the bound is recorded, never warned green', as
   try {
     /** @type {() => void} */
     let fireBound = () => {};
+    const groups = trackPartGroups(t);
     const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
       parts: 2,
       timeoutSec: 3600,
       cwd: dir,
       startTimer: (fire) => { fireBound = fire; return () => {}; },
       onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+      onPartSpawn: (pid) => { groups.push(pid); },
     });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.failedFiles, ['bonus.test.js']);
@@ -2210,7 +2456,7 @@ test('main() end to end: --list prints the queue, bonus after the guards', () =>
     const run = spawnSync(
       process.execPath,
       [touchedScript, '--base', base, '--list', '--max-selected', '1'],
-      { cwd: dir, encoding: 'utf8' },
+      { cwd: dir, encoding: 'utf8', timeout: 150_000, killSignal: 'SIGKILL' },
     );
     assert.equal(run.status, 0);
     const lines = String(run.stdout).trim().split('\n').filter((line) => line.endsWith('.test.js'));
@@ -2237,7 +2483,7 @@ test('main() end to end: the queue runs, bonus included, exit 0', () => {
     const run = spawnSync(
       process.execPath,
       [touchedScript, '--base', base, '--max-selected', '1', '--timeout-sec', '60'],
-      { cwd: dir, encoding: 'utf8' },
+      { cwd: dir, encoding: 'utf8', timeout: 150_000, killSignal: 'SIGKILL' },
     );
     assert.equal(run.status, 0);
     const coreSize = 1 + REPO_WIDE_GUARDS.length;
@@ -2261,7 +2507,7 @@ test('main() end to end: a timeout past a green core warns naming the bonus, exi
     const run = spawnSync(
       process.execPath,
       [touchedScript, '--base', base, '--max-selected', '1', '--timeout-sec', '60'],
-      { cwd: dir, encoding: 'utf8' },
+      { cwd: dir, encoding: 'utf8', timeout: 150_000, killSignal: 'SIGKILL' },
     );
     assert.equal(run.status, 0);
     assert.match(String(run.stdout), /core file\(s\) finished green/);

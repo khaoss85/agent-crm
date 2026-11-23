@@ -10,11 +10,25 @@
 set -uo pipefail
 record="${CI_TOUCHED_BUSY_FILE:-}"
 [ -z "$record" ] || rm -f "$record" "$record.candidate"
+# Cure lane (backlog:55ca4e0cb76d): the workflow names a `cure` PR's gate
+# `fast-main-red-cure`, which the CI server queue ranks 0
+# (heavy-job-priority.json `*/main-red-*`). Anything missing or outside
+# [A-Za-z0-9_-] falls back to `fast`: today's lane for every other PR.
+heavy_name="${CI_FAST_HEAVY_NAME:-fast}"
+case "$heavy_name" in
+  ''|*[!A-Za-z0-9_-]*) heavy_name="fast" ;;
+esac
+echo "ci-fast-step: heavy-name=$heavy_name"
 rc=0
 if [ -n "${CI_FAST_GATE_CMD:-}" ]; then
   bash -c "$CI_FAST_GATE_CMD" || rc=$?
-else
+elif [ "$heavy_name" = "fast" ]; then
+  # Today's lane, byte for byte (the step budget test certifies this line):
+  # a PR without the `cure` label runs the exact gate it always ran.
   HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh || rc=$?
+else
+  # Cure lane: the same gate under the same cap, under the rank-0 heavy name.
+  HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh "$heavy_name" -- bash scripts/ci-fast.sh || rc=$?
 fi
 if [ "$rc" != 0 ] && [ -n "$record" ] && [ -s "$record" ]; then
   if [ -n "${CI_FAST_RETRY_CMD:-}" ]; then

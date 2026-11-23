@@ -3,7 +3,7 @@ import { createAssistantPanel } from './admin-assistant.js';
 import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
-import { createShellSchemaClient } from './admin-schema-cache.js';
+import { createShellSchemaClient, schemaStampOf } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
 import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
@@ -67,6 +67,10 @@ function isMutation(method) {
 
 async function api(path, options = {}) {
   const method = options.method ?? 'GET';
+  // backlog:0d25ed7dc34f (review Muse #1009): the navigation token at call
+  // time — route() bumps navSeq on every navigation, so a poll left behind
+  // aborts instead of fetching stray requests for a screen already left.
+  const navToken = navSeq;
   /** @type {Record<string, string>} */
   const requestHeaders = { ...headers, ...(options.headers || {}) };
   if (isMutation(method)) {
@@ -77,7 +81,7 @@ async function api(path, options = {}) {
   // The body is read as text first (review khaoss85/agent-crm#673): a waking
   // host may answer non-JSON (e.g. 503 HTML), and response.json() would throw
   // a bare SyntaxError the wake verdict never sees.
-  return withWakeRetry(async () => {
+  const run = async () => {
     const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
     const text = await response.text();
     let body;
@@ -93,7 +97,14 @@ async function api(path, options = {}) {
       throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
     }
     return body;
-  }, { method, onWaking: wakingNotice });
+  };
+  // backlog:0d25ed7dc34f: a write keeps the single retry, same key; a read
+  // polls past the first refusal while the space wakes, so the screen paints
+  // by itself when the space answers. The poll dies with the screen that
+  // started it (review Muse #1009): a late answer never fetches on, and a
+  // dropped read throws coded stale — never a failure on the new screen.
+  if (isMutation(method)) return withWakeRetry(run, { method, onWaking: wakingNotice });
+  return readWhileWaking(run, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
 }
 
 const submissions = createSubmissionController({
@@ -149,6 +160,18 @@ function leaveForSpaceLogin(target) {
   }
 }
 
+// backlog:e1b3d56730fa: one queue for every read of the app — the page's
+// waves and the shell counters share it, so the in-flight peak stays within
+// SHELL_MAX_IN_FLIGHT (the same pilot bound Oggi already keeps). Codex P2
+// on #1062: the gate sits beneath the schema cache — every network fetch
+// behind the cache (first read and background renewal) takes a queue slot,
+// so an expired copy never adds a fetch past the bound. Cache hits answer
+// without holding a slot. schemaCachedRequest is only called at request
+// time, once the module below is fully evaluated.
+const sharedReads = createReadGate({
+  request: (path, options) => moduleClient.rawRequest(path, options),
+});
+
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
@@ -163,6 +186,9 @@ const moduleClient = {
   },
   async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
+    // backlog:0d25ed7dc34f (review Muse #1009): same navigation token as
+    // api() — a module read left behind aborts instead of fetching on.
+    const navToken = navSeq;
     /** @type {Record<string, string>} */
     const requestHeaders = {
       'content-type': 'application/json',
@@ -174,10 +200,11 @@ const moduleClient = {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
     // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
-    // answer may be a waking service — one retry, same key, while the
-    // screen still shows its loading state, instead of an error. A lost
-    // session is never a retry: it leaves for the login at once and only
-    // once (review #673 giro 3: isWakeTransient excludes it).
+    // answer may be a waking service — while the screen still shows its
+    // loading state, instead of an error. A lost session is never a retry:
+    // it leaves for the login at once and only once (review #673 giro 3:
+    // isWakeTransient excludes it). A write keeps the single retry, same
+    // key (backlog:0d25ed7dc34f); a read polls until the space answers.
     const once = async () => {
       const response = await fetch(`${ADMIN_BASE}${path}`, {
         ...options,
@@ -228,14 +255,15 @@ const moduleClient = {
       }
       return payload;
     };
-    return withWakeRetry(once, { method, onWaking: wakingNotice });
+    if (isMutation(method)) return withWakeRetry(once, { method, onWaking: wakingNotice });
+    return readWhileWaking(once, { method, stale: () => navToken !== navSeq, onWaking: spaceWakingNotice });
   },
 };
 // backlog:c048bf6f2dd3: the schema answers from the space's last copy and
 // renews behind it. Review Muse #898: a renewed copy that differs refreshes
 // the navigation only — the screen in use reads it at its next navigation.
 const schemaCachedRequest = createShellSchemaClient({
-  request: (path, options) => moduleClient.rawRequest(path, options),
+  request: (path, options) => sharedReads.request(path, options),
   adminBase: ADMIN_BASE,
   activeSpace: () => shellActiveSpace,
   storage: tabSessionStorage(),
@@ -264,6 +292,27 @@ function wakingNotice(waking) {
   }
   wakingReads += 1;
   if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
+
+/**
+ * backlog:0d25ed7dc34f: while a read waits for the space to wake past a
+ * single retry, the shell says so once — the waiting line, never a refusal
+ * — and the screen keeps its loading state until the space answers and
+ * paints. The notice stays for the whole wait: a plain toast hides after
+ * 3.2 s while the poll runs up to a minute (Codex review on #1009), so the
+ * wait carries its own duration and leaves only with the last waiting read
+ * — and only when it still shows ours. Writes keep the short notice above:
+ * a second write attempt may already have committed, so it never polls.
+ */
+let spaceWakingReads = 0;
+function spaceWakingNotice(waking) {
+  if (!waking) {
+    spaceWakingReads = Math.max(0, spaceWakingReads - 1);
+    if (spaceWakingReads === 0 && toaster !== null) toaster.hideScope('space-waking');
+    return;
+  }
+  spaceWakingReads += 1;
+  if (spaceWakingReads === 1 && elements.toast) toast(SPACE_WAKING_TEXT, false, { duration: 65000, scope: 'space-waking' });
 }
 
 async function refresh() {
@@ -512,6 +561,7 @@ import {
   ACTIVE_SPACE_KEY,
   SPACES_KEY,
   buildShellNav,
+  createReadGate,
   createShellView,
   keepSettingsTabs,
   loadClientCount,
@@ -546,6 +596,7 @@ import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createAgentiView } from './admin-agenti.js';
+import { createSquadreView } from './admin-squadre.js';
 import { readCommandAgents } from './admin-cmdk.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
@@ -555,7 +606,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView, masterEnabled } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { SPACE_WAKING_TEXT, WAKING_TEXT, apiFailure, humanizeLabel, isStaleRead, parseModuleRoute, readWhileWaking, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -1069,6 +1120,11 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
+  // backlog:312dd81f83ba (ritorno 1): the new space has its own schema —
+  // the menu waits for it instead of keeping the space just left behind.
+  shellItems = buildShellNav({ schemaKnown: false });
+  syncShell(targetForHash(window.location.hash || '#/'));
+  void populateNav();
   // backlog 3136d15da7bd: the bar keeps the last words until the new
   // space's own master is read — no optimistic aiSpaceOff:false, which
   // would flash an inviting question for a space whose AI is off (or
@@ -1178,7 +1234,10 @@ if (boSidebar && boTopbar) {
   if (shellActiveSpace) shellView.setSpaces(shellSpaces, shellActiveSpace);
 }
 
-let shellItems = buildShellNav();
+// backlog:312dd81f83ba (ritorno 1): until the space's schema is read, the
+// menu waits («Spazio in caricamento…») instead of claiming packages the
+// space was never asked about are missing.
+let shellItems = buildShellNav({ schemaKnown: false });
 
 /** The Oggi home view, created once per session under a space mount. */
 let oggiView = null;
@@ -1191,6 +1250,8 @@ let lastRoutedView = null;
 const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 /** The Agenti screen (backlog:33782ba68747), created once per session. */
 let agentiView = null;
+/** The Squadre screen (backlog:0d2d8f2e), created once per session. */
+let squadreView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
 /** The render of the screen opened at boot (backlog:94eabbd4762f). @type {Promise<unknown> | null} */
@@ -1272,9 +1333,64 @@ async function refreshSpaceAi() {
  * @param {{ repaintScreen?: boolean }} [options] review Muse #898: a schema
  * renewed in the background refreshes the navigation only, never the screen.
  */
+// backlog:c048bf6f2dd3 (ritorno 1, EVIDENCE_LINE_NOT_PASS 2026-11-17): the
+// identity of the copy the navigation was built from, stamped on the shell
+// root where the supervisor's browser probe can read it. On a reload the
+// stamp is already there when the page paints (the copy answered, no wait);
+// a background renewal that differs moves the stamp while rebuilding the
+// nav. Stamping never breaks the shell.
+function stampSchemaIdentity(schema) {
+  try {
+    if (typeof document === 'undefined' || !document || !document.documentElement) return;
+    const stamp = schemaStampOf(schema);
+    document.documentElement.dataset.boSchemaVersion = stamp.version;
+    document.documentElement.dataset.boSchemaDigest = stamp.digest;
+  } catch {
+    // A stamp that fails never breaks the navigation.
+  }
+}
+
+/** A schema read that failed stays diagnosable (backlog:312dd81f83ba). @param {unknown} error */
+function warnSchemaRead(error) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const cause = error instanceof Error ? error.name : (/** @type {any} */ (error)?.code ?? 'unknown');
+  console.warn('bo-nav schema unreadable:', cause, /** @type {any} */ (error)?.code ?? null);
+}
+
+/** @param {number} ms */
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One delayed re-read after a refused schema wait (backlog:312dd81f83ba). */
+const SCHEMA_NAV_RETRY_MS = 3000;
+
+/**
+ * The space's schema for the navigation (backlog:312dd81f83ba, ritorno 1):
+ * one delayed re-read covers a transient refusal (release, wake-up). The
+ * menu keeps its loading state — never a false «non composto».
+ */
+async function readNavSchema() {
+  try {
+    return await moduleClient.request('/api/schema');
+  } catch (error) {
+    warnSchemaRead(error);
+  }
+  await waitMs(SCHEMA_NAV_RETRY_MS);
+  try {
+    return await moduleClient.request('/api/schema');
+  } catch (retryError) {
+    warnSchemaRead(retryError);
+    throw retryError;
+  }
+}
+
 async function populateNav({ repaintScreen = true } = {}) {
   try {
-    const schema = await moduleClient.request('/api/schema');
+    // The space the wait left for: a switch meanwhile owns the repaint, so
+    // a late answer for the space just left never paints over the new one.
+    const waitedSpace = shellActiveSpace;
+    const schema = await readNavSchema();
+    if (shellActiveSpace !== waitedSpace) return;
+    stampSchemaIdentity(schema);
     // Backoffice shell (BO-F0-02): generated modules are the
     // "personalizzati" group; the first composed pipeline backs Pipeline.
     // The envelope-to-input reading lives in shellNavInput (admin-core.js),
@@ -1282,7 +1398,7 @@ async function populateNav({ repaintScreen = true } = {}) {
     const input = shellNavInput(schema);
     const { customModules: modules, modulesSupported: supported } = input;
     shellCustomerData = input.customerDataAvailable;
-    shellItems = buildShellNav(input);
+    shellItems = buildShellNav({ ...input, schemaKnown: true });
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
@@ -1381,7 +1497,8 @@ async function populateNav({ repaintScreen = true } = {}) {
       }
     }
   } catch {
-    // A schema failure must not break the dashboard; leave nav empty silently.
+    // A refusal that stays leaves the loading menu and its warnings above;
+    // a failure can never break the dashboard.
   }
 }
 
@@ -1433,6 +1550,7 @@ async function route() {
     if (oggiView) oggiView.invalidate();
     if (sequenzeView) sequenzeView.invalidate();
     if (agentiView) agentiView.invalidate();
+    if (squadreView) squadreView.invalidate();
     calendarioView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
@@ -1492,6 +1610,11 @@ async function route() {
   // screen just opened. Same shared-mount race as the list and the form.
   if (target.view !== 'customer-card') {
     customerCardView.invalidate();
+    // backlog:fc09e6f16326: leaving the scheda takes its «Nota eliminata ·
+    // Annulla» toast away — never left on the next screen. A withdrawal
+    // still waiting stays waiting: back on the same customer the card shows
+    // its Annulla again until the window ends (never silently undone).
+    customerCardView.suspendNoteToast();
     // Leaving the scheda forgets its name: a later visit never paints a
     // stale one before its own read (review Muse #878).
     customerTitle = null;
@@ -1504,6 +1627,7 @@ async function route() {
   if (target.view !== 'dashboard' && oggiView) oggiView.invalidate();
   if (target.view !== 'sequenze' && sequenzeView) sequenzeView.invalidate();
   if (target.view !== 'agenti' && agentiView) agentiView.invalidate();
+  if (target.view !== 'squadre' && squadreView) squadreView.invalidate();
   if (target.view !== 'calendario') calendarioView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
@@ -1546,6 +1670,7 @@ async function route() {
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
+      (target.view === 'squadre' && link.getAttribute('href') === '#/squadre') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
@@ -1565,7 +1690,7 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
-    else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId, { from: target.from ?? null });
     else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId, { from: target.from ?? null });
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') {
@@ -1613,6 +1738,21 @@ async function route() {
       }
       await agentiView.render();
     }
+    else if (target.view === 'squadre') {
+      if (!squadreView) {
+        squadreView = createSquadreView({
+          doc: document,
+          // backlog:0d2d8f2e: paint only while Squadre is the routed screen.
+          mount: mountGate.owned('squadre'),
+          client: moduleClient,
+          submissions,
+          storage: shellStorage,
+          spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+          navigate: (next) => { window.location.hash = next; },
+        });
+      }
+      await squadreView.render();
+    }
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
@@ -1635,6 +1775,17 @@ async function route() {
     }
     if (restored > 0) toast('Ho ripreso il testo che non era stato salvato: controllalo e salva di nuovo.');
   } catch (error) {
+    // backlog:0d25ed7dc34f (review Muse #1009): a read dropped because its
+    // screen moved on proves nothing — no toast, no failure paint.
+    // backlog:f268787b: the drop still logs a sanitized warn (cause and
+    // view, never the payload) before the return, so a stale failure stays
+    // diagnosable like the stale branch below.
+    if (isStaleRead(error)) {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-nav stale read dropped:', error?.code ?? null, target.view);
+      }
+      return;
+    }
     if (navToken !== navSeq) {
       // A screen already left: its handle was inert and the operator is on
       // another screen, so no toast there — but the failure stays

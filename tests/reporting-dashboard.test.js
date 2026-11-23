@@ -202,6 +202,9 @@ test('dashboard KPIs match hand-computed totals for 2026-10 EUR', (t) => {
   assert.equal(closing.display, formatMinor(14000, 'EUR'));
   assert.equal(closing.sub, '2 preventivi, 1 senza data attesa');
   assert.deepEqual(model.currencies.others, ['USD']);
+  // Restyle 54b9a2a2706f: the USD offer a6 (proposal, open) is never hidden.
+  assert.deepEqual(openValue.also, { display: formatMinor(5000, 'USD'), count: 1 });
+  assert.equal(wonPeriod.also, null, 'no USD won in the month: nothing added');
   assert.equal(model.truncated, false);
   assert.ok(Object.isFrozen(model) && Object.isFrozen(model.kpis) && Object.isFrozen(model.team));
 });
@@ -604,16 +607,19 @@ test('dashboard query refuses hostile input with a 400 and has no write surface'
   assert.equal(post.status, 404, 'no POST under /api/reporting/*: the proposal cannot reassign by itself');
 });
 
-test('channel weeks open the period month on the Monday of the week with the 1st', () => {
+test('channel weeks cover every day of a set month, opening on the Monday of the week with the 1st', () => {
+  // backlog:02e4b848 — ottobre 2026 mostra anche la settimana del 26 ott:
+  // il 26-31 ottobre sta dentro una barra, mai tagliato fuori.
   assert.deepEqual(channelWeeksOf('2026-10'), [
     { week: '2026-09-28', label: '28 set' },
     { week: '2026-10-05', label: '5 ott' },
     { week: '2026-10-12', label: '12 ott' },
     { week: '2026-10-19', label: '19 ott' },
+    { week: '2026-10-26', label: '26 ott' },
   ]);
   assert.deepEqual(
     channelWeeksOf('2026-06').map((slot) => slot.week),
-    ['2026-06-01', '2026-06-08', '2026-06-15', '2026-06-22'],
+    ['2026-06-01', '2026-06-08', '2026-06-15', '2026-06-22', '2026-06-29'],
   );
 });
 
@@ -632,19 +638,20 @@ test('776cf3469e64: nel mese in corso le settimane del grafico finiscono a oggi'
     channelWeeksOf('2026-11', '2026-11-30T10:00:00.000Z').map((slot) => slot.week),
     ['2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'],
   );
-  // Un mese passato tiene le settimane di apertura, anche con oggi fissato.
+  // Un mese passato copre tutto il mese, anche con oggi fissato
+  // (backlog:02e4b848): niente settimane tagliate fuori.
   assert.deepEqual(
     channelWeeksOf('2026-10', '2026-11-14T10:00:00.000Z').map((slot) => slot.week),
-    ['2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19'],
+    ['2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'],
   );
-  // Senza oggi, o con un oggi illeggibile: le settimane di apertura, come prima.
+  // Senza oggi, o con un oggi illeggibile: il mese intero, come prima i mesi passati.
   assert.deepEqual(
     channelWeeksOf('2026-11').map((slot) => slot.week),
-    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16'],
+    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'],
   );
   assert.deepEqual(
     channelWeeksOf('2026-11', 'non-una-data').map((slot) => slot.week),
-    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16'],
+    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'],
   );
 });
 
@@ -660,6 +667,35 @@ test('776cf3469e64: la ripartizione conta solo le settimane fino a oggi nel mese
   assert.deepEqual(breakdown.weeks.map((slot) => slot.week), ['2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09']);
   assert.equal(breakdown.total, 3, 'la settimana futura non si conta');
   assert.deepEqual(breakdown.channels.map((entry) => entry.channel), ['whatsapp']);
+});
+
+test('02e4b848: un mese passato conta anche l\u2019ultima settimana, il sottotitolo non ha un tetto', () => {
+  const breakdown = buildChannelBreakdown(
+    [
+      { system: 'instagram', week: '2026-10-26', count: 4 },
+      { system: 'whatsapp', week: '2026-10-05', count: 3 },
+    ],
+    { period: '2026-10' },
+    '2026-11-19T10:00:00.000Z',
+  );
+  assert.deepEqual(
+    breakdown.weeks.map((slot) => slot.week),
+    ['2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26'],
+  );
+  assert.equal(breakdown.total, 7, 'il 26-31 ottobre sta dentro una barra');
+  assert.equal(breakdown.end, null, 'mese passato: il sottotitolo legge la domenica dell\u2019ultima settimana');
+});
+
+test('02e4b848: nel mese in corso la ripartizione dice fino a oggi', () => {
+  const breakdown = buildChannelBreakdown(
+    [
+      { system: 'instagram', week: '2026-11-16', count: 5 },
+      { system: 'whatsapp', week: '2026-11-09', count: 3 },
+    ],
+    { period: '2026-11' },
+    '2026-11-19T10:00:00.000Z',
+  );
+  assert.equal(breakdown.end, '2026-11-19', 'il sottotitolo si ferma a oggi, non alla domenica');
 });
 
 test('channel week labels pin UTC so a western timezone keeps the Monday', () => {
@@ -678,10 +714,10 @@ test('channel breakdown counts per channel and week, totals over the shown weeks
     ],
     { period: '2026-10' },
   );
-  assert.equal(breakdown.total, 14, 'only the four shown weeks count');
+  assert.equal(breakdown.total, 14, 'only the shown weeks count');
   assert.equal(breakdown.undated, 2, 'dateless identities are named, not dropped');
   const instagram = breakdown.channels.find((entry) => entry.channel === 'instagram');
-  assert.deepEqual(instagram.weeks, [0, 5, 6, 0]);
+  assert.deepEqual(instagram.weeks, [0, 5, 6, 0, 0]);
   assert.equal(instagram.total, 11);
   assert.ok(breakdown.channels[0].total >= breakdown.channels[1].total, 'legend sorts by total');
   assert.ok(breakdown.channels.every((entry) => entry.channel !== 'tiktok'), 'outside weeks stay out');
@@ -974,4 +1010,48 @@ test('48993bed7294: no proposal from or to «senza referente»; only past-dated 
   const stale = model.insights.find((entry) => entry.id === 'stale');
   assert.match(stale.text, /^1 preventivo aperto con la data di chiusura attesa già passata/, 'the two undated offers are in the forecast, not stale');
   assert.equal(model.forecast.bestMinor, 2000, 'the undated ones are the forecast window');
+});
+
+// backlog:ed6bae5e5c0d (verifica indipendente 18/11 sul live: «1 preventivo
+// perso su 2 chiusi» mentre la tabella mostra 0 vinte e tasso n.d.): la frase
+// di «Cosa noto» e la tabella leggono la stessa finestra — chiusi del periodo
+// (vinte + perse del mese), mai il totale storico. Con 1 vinta e 1 persa
+// chiuse a novembre e altre 4 chiuse a ottobre, la frase dice 1 su 2 (50%)
+// come la tabella, non 4 su 6 (67%).
+test('ed6bae5e5c0d: «Cosa noto» reads the period closed (1 won + 1 lost), like the table', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR' });
+  const row = (stage, totalMinor, closedAt = null) => ({
+    'opportunity.owner': 'alice', 'opportunity.stage': stage, 'opportunity.expectedCloseDate': null,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const nov = '2026-11-07T10:00:00.000Z';
+  const oct = '2026-10-05T10:00:00.000Z';
+  const schedule = [
+    row('qualification', 10000),
+    row('won', 9000, nov),
+    row('lost', 3000, nov),
+    row('won', 5000, oct),
+    row('lost', 1000, oct), row('lost', 1000, oct), row('lost', 1000, oct),
+  ];
+  const byStage = [
+    { 'opportunity.stage': 'qualification', 'opportunity.currency': 'EUR', totalMinor: 10000, count: 1 },
+    { 'opportunity.stage': 'won', 'opportunity.currency': 'EUR', totalMinor: 14000, count: 2 },
+    { 'opportunity.stage': 'lost', 'opportunity.currency': 'EUR', totalMinor: 6000, count: 4 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS);
+  const alice = model.team.find((entry) => entry.owner === 'alice');
+  assert.deepEqual([alice.wonCount, alice.lostCount, alice.winRateDisplay], [1, 1, '50%'], 'the table reads the period: 1 won, 1 lost, 50%');
+  const lostRate = model.insights.find((entry) => entry.id === 'lost-rate');
+  assert.match(lostRate.text, /^1 preventivo perso su 2 chiusi \(50%\)/, 'the phrase reads the same period closed as the table, never the lifetime 4 of 6');
+});
+
+test('review Muse #1108: una valuta registrata che il formatter non conosce non rompe il dashboard', (t) => {
+  const database = fixtureDatabase(t);
+  const results = dashboardResults(database, QUERY_OCT);
+  const odd = { 'opportunity.currency': 'FOO', 'opportunity.stage': 'proposal', totalMinor: 700, count: 1 };
+  const withOdd = { ...results, byStage: { ...results.byStage, rows: [...results.byStage.rows, odd] } };
+  const model = buildDashboardModel(withOdd, [], QUERY_OCT, TS);
+  const openValue = model.kpis.find((kpi) => kpi.id === 'open-value');
+  assert.equal(openValue.display, formatMinor(26000, 'EUR'));
+  assert.deepEqual(openValue.also, { display: formatMinor(5000, 'USD'), count: 1 }, 'USD stays, FOO is left out');
 });
