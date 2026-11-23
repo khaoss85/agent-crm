@@ -5789,7 +5789,7 @@ test('backlog:1e07362849db: the scheda labels whose figure it shows when quote t
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       opportunities: {
         available: true, count: 1, countIsComplete: true, truncated: false,
-        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+        items: [{ id: 'o1', stage: 'proposta', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
       },
     },
   }));
