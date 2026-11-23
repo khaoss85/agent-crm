@@ -155,7 +155,21 @@ test('ricorrenza: «Ogni settimana» manda la regola nella claim, senza scelta m
   await settle();
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1, 'Conferma scrive una volta');
-  assert.deepEqual(confirms[0].body.recurrence, { kind: 'weekly' }, 'la regola settimanale viaggia nella claim');
+  assert.deepEqual(confirms[0].body.recurrence, { kind: 'weekly', count: 12 }, 'la regola settimanale viaggia nella claim con la sua fine');
+});
+
+test('ricorrenza: la fine della serie è scritta sotto «Si ripete» prima di Conferma', async () => {
+  const { mount } = await openCalendar();
+  openManual(mount);
+  const none = mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'recurrence-end-note');
+  assert.equal(none.length, 0, '«Non si ripete» non promette nessuna serie');
+  const repeat = byName(mount, 'recurrence');
+  repeat.value = 'weekly';
+  repeat.dispatch('change');
+  await settle(2);
+  const notes = mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'recurrence-end-note');
+  assert.equal(notes.length, 1, 'la fine si vede sotto la scelta');
+  assert.match(notes[0].textContent, /12 appuntamenti/, 'quante ne crea un click');
 });
 
 test('ricorrenza: senza scelta la claim manda recurrence null', async () => {

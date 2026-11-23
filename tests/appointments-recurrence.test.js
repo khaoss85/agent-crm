@@ -118,6 +118,41 @@ test('count e until insieme vengono rifiutati: o un numero di volte o una data d
   ));
 });
 
+test('una serie senza fine (né count né until) viene rifiutata 400 su ogni percorso, senza scrivere', async () => {
+  for (const kind of ['daily', 'weekly', 'monthly']) {
+    assert.throws(() => validateRecurrence({ kind }), (error) => (
+      error instanceof ValidationError && error.details?.field === 'recurrence'
+    ), `kind ${kind} senza fine rifiutato con 400`);
+  }
+  const open = { recurrence: { kind: 'weekly' } };
+  const bookService = fakeAppointments();
+  await assert.rejects(bookAppointment(contextFor(bookService), booking(open)), (error) => {
+    assert.equal(error.status, 400);
+    assert.equal(error.details?.field, 'recurrence');
+    return true;
+  });
+  assert.equal(bookService.rows.length, 0, 'nessuna riga scritta dalla serie senza fine');
+  const proposeService = fakeAppointments();
+  await assert.rejects(
+    proposeBooking({ ...contextFor(proposeService), permissionGate: allowGate() }, { ...booking(open), spaceId: SPACE }),
+    (error) => error instanceof ValidationError && error.details?.field === 'recurrence',
+  );
+  assert.equal(proposeService.rows.length, 0, 'la proposta non scrive niente');
+  const confirmService = fakeAppointments();
+  await assert.rejects(
+    confirmBooking(
+      { ...contextFor(confirmService), permissionGate: allowGate() },
+      { ...booking(open), spaceId: SPACE, confirmed: true },
+    ),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.details?.field, 'recurrence');
+      return true;
+    },
+  );
+  assert.equal(confirmService.rows.length, 0, 'la conferma non scrive niente');
+});
+
 test('le etichette si calcolano dalla data scelta', () => {
   const labels = Object.fromEntries(recurrenceOptions(TUE).map((entry) => [entry.value, entry.label]));
   assert.equal(labels.none, 'Non si ripete');

@@ -8,9 +8,12 @@ import { ValidationError } from '../../core/index.js';
  * Google Calendar. Yearly, weekdays and «Personalizza…» are follow-ups,
  * so the validator refuses them naming `recurrence` instead of guessing.
  *
- * One validated rule describes the whole series; `expandRecurrence` turns it
- * into concrete occurrence slots the booking path checks one by one (each
- * occurrence is refused 409 on its own conflict, naming its date).
+ * One validated rule describes the whole series — a series kind always
+ * carries its end (`count` or `until`): an open-ended rule is refused 400
+ * naming `recurrence`, so one click can never fan out to hundreds of rows.
+ * `expandRecurrence` turns it into concrete occurrence slots the booking
+ * path checks one by one (each occurrence is refused 409 on its own
+ * conflict, naming its date).
  *
  * All calendar arithmetic runs in Europe/Rome wall time (the operator books
  * «ogni martedì alle 17:00», Rome time): occurrences keep their wall hour
@@ -154,6 +157,12 @@ export function validateRecurrence(rule) {
       { field: 'recurrence' },
     );
   }
+  if (count === null && until === null) {
+    throw new ValidationError(
+      'una ricorrenza deve finire: scegli un numero di volte o una data di fine, senza fine non si prenota',
+      { field: 'recurrence' },
+    );
+  }
   return Object.freeze({ kind, interval, days: null, unit, count, until });
 }
 
@@ -181,8 +190,10 @@ export function recurrenceOptions(startsAtIso) {
 /**
  * Turn a validated rule into occurrence slots. The first occurrence is the
  * named slot itself; every later one keeps the same Rome wall hour. Months
- * without the named day are skipped, never rolled. Open-ended rules stop a
- * year out; nothing ever expands past RECURRENCE_MAX_OCCURRENCES.
+ * without the named day are skipped, never rolled. Validation refuses
+ * open-ended rules before expansion, so the year-out fallback below only
+ * guards a caller that skips validation; nothing ever expands past
+ * RECURRENCE_MAX_OCCURRENCES.
  * @param {{ startsAtMs: number, endsAtMs: number, recurrence: any }} input
  */
 export function expandRecurrence({ startsAtMs, endsAtMs, recurrence }) {

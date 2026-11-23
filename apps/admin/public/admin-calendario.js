@@ -5798,9 +5798,18 @@ export function createCalendarioView(deps) {
   }
 
   /**
+   * backlog:0f2ae629e09b — how many appointments one honest click books.
+   * DECISION (to be confirmed): the manual form has no end picker yet (the
+   * count/until control is a follow-up), so every series the form sends
+   * ends after 12 occurrences — bounded, and the row below «Si ripete»
+   * says so. The server refuses an open-ended rule naming `recurrence`.
+   */
+  const MANUAL_RECURRENCE_DEFAULT_COUNT = 12;
+  /**
    * backlog:0f2ae629e09b — the recurrence rule the manual form will book.
-   * Null is «Non si ripete»; anything else is the validated kind the series
-   * books. With a linked Google Calendar the form never sends a series.
+   * Null is «Non si ripete»; anything else is the validated kind plus its
+   * end, so the claim can never fan out to hundreds of rows. With a
+   * linked Google Calendar the form never sends a series.
    */
   function recurrenceRuleFromState() {
     // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
@@ -5810,7 +5819,7 @@ export function createCalendarioView(deps) {
     if (rec === null || rec === undefined || typeof rec !== 'object') return null;
     const kind = String(rec.kind ?? 'none');
     if (kind === '' || kind === 'none') return null;
-    return { kind };
+    return { kind, count: MANUAL_RECURRENCE_DEFAULT_COUNT };
   }
 
   /**
@@ -5849,6 +5858,14 @@ export function createCalendarioView(deps) {
       note.textContent = 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.';
       form.appendChild(note);
       return select;
+    }
+    // backlog:0f2ae629e09b — the end one click books is painted, not just
+    // sent: the operator sees how many appointments «Si ripete» creates
+    // before pressing Conferma. No end picker yet (follow-up).
+    if (String(select.value ?? 'none') !== 'none') {
+      const endNote = el(doc, 'div', { attrs: { 'data-role': 'recurrence-end-note' } });
+      endNote.textContent = 'La serie crea ' + String(MANUAL_RECURRENCE_DEFAULT_COUNT) + ' appuntamenti.';
+      form.appendChild(endNote);
     }
     // The labels follow the chosen day: a day picked after the choice
     // renames «Ogni settimana di …» in place, without losing the choice.
