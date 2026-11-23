@@ -123,7 +123,7 @@ export function createCalendarSyncPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: CALENDAR_SYNC_PACKAGE,
-    version: 2,
+    version: 3,
     label: 'Calendar sync',
     description: 'Two-way Accordo / Google Calendar sync: future-event import, incremental pull on sync tokens with push-notification triggers, and push of local bookings and cancellations. Accordo owns lifecycle, Google owns schedule — the conflict rule both sides converge on.',
     resources: [...CALENDAR_SYNC_RESOURCES],

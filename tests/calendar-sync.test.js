@@ -329,7 +329,7 @@ test('the package conforms: identity, two owned records, one declared reach', ()
     dir: join(here, '..', 'packages', 'calendar-sync'),
     expected: {
       name: 'calendar-sync',
-      version: 2,
+      version: 3,
       resources: ['calendar-link', 'calendar-sync-state'],
       requires: ['appointments/appointment-book@1'],
       provides: [],
