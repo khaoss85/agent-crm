@@ -206,3 +206,24 @@ test('review #821 giro 2: the view weighs «never written to» over the whole sc
   }
   assert.ok(logged.some((line) => line.includes('own mailboxes unreadable') && line.includes('BOOM')), logged.join('\n'));
 });
+
+test('5f8029f987d8: la vista conosce solo le caselle dello spazio, il titolare a se stesso non aspetta', async () => {
+  const base = fakeModules({
+    ...SCENE,
+    messages: [...SCENE.messages, msg({ subjectId: 'c4', conversationId: 'mail:own', channel: 'email', remoteHandle: 'op@palestra-esempio.it', occurredAt: at(9), body: 'Copia' })],
+  });
+  const spaced = (spaceId) => ({
+    get: (name) => (name === 'channel-connection'
+      ? {
+        service: {
+          listWhere: async (filters) => [{ channel: 'email', account: 'op@palestra-esempio.it', spaceId: 's1' }]
+            .filter((row) => (!filters.channel || row.channel === filters.channel) && (!filters.spaceId || row.spaceId === filters.spaceId)),
+        },
+      }
+      : base.get(name)),
+  });
+  const same = await listCustomerRecords({ modules: spaced('s1'), core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere', spaceId: 's1' });
+  assert.ok(!same.items.some((item) => item.name === 'Lia Marroni'), 'la copia dalla casella dello spazio non fa attendere Lia');
+  const other = await listCustomerRecords({ modules: spaced('s2'), core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere', spaceId: 's2' });
+  assert.ok(other.items.some((item) => item.name === 'Lia Marroni'), 'la casella di un altro spazio non nasconde la attesa');
+});
