@@ -636,6 +636,52 @@ test('57e3d1685e58: the chi line never shows the coach name', () => {
   );
 });
 
+test('1a8f1bff2086: the chi line never shows the space owner email under a customer', () => {
+  // Production 13/11 (rilascio 34, spazio di test): under a customer name
+  // the agenda read the email of the space owner instead of customer data.
+  // The stored label can carry the organizer address while the title reads
+  // the customer profile name — the chi line must never read a roster
+  // address, and falls back to the notes cue, or to nothing.
+  const ownerMail = 'titolare@spazio-di-prova.it';
+  const roster = [{ subject: 'op-1', displayName: 'Titolare Spazio', email: ownerMail }];
+  const names = { 'lead:lead-1': 'Mario Rossi' };
+  const labelled = {
+    ...APPT_TODAY, id: 'appt-owner-label', teamMemberId: 'op-1',
+    subjectLabel: ownerMail, notes: '',
+  };
+  const agenda = buildTodayAgenda([labelled], OGGI_NOW, names, roster);
+  assert.equal(agenda[0].title, 'Mario Rossi', 'the title still reads the customer profile name');
+  assert.equal(agenda[0].who, null, 'an owner address in the label: nothing, never the owner email');
+  const cased = { ...labelled, id: 'appt-owner-case', subjectLabel: ownerMail.toUpperCase() };
+  assert.equal(
+    buildTodayAgenda([cased], OGGI_NOW, names, roster)[0].who,
+    null,
+    'the roster match is case-insensitive',
+  );
+  const fallback = { ...labelled, id: 'appt-owner-fallback', notes: 'Il cliente chiede il listino.' };
+  assert.equal(
+    buildTodayAgenda([fallback], OGGI_NOW, names, roster)[0].who,
+    'Il cliente chiede il listino.',
+    'with the owner address out, a customer notes cue still reads',
+  );
+  const noted = {
+    ...APPT_TODAY, id: 'appt-owner-notes', teamMemberId: 'op-1',
+    subjectLabel: 'Mario Rossi', notes: ownerMail,
+  };
+  const notedAgenda = buildTodayAgenda([noted], OGGI_NOW, names, roster);
+  assert.equal(notedAgenda[0].title, 'Mario Rossi');
+  assert.equal(notedAgenda[0].who, null, 'an owner address in the notes: nothing, never the owner email');
+  const mixed = {
+    ...APPT_TODAY, id: 'appt-owner-mixed', teamMemberId: 'op-1',
+    subjectLabel: 'Mario Rossi', notes: `Chiamare il cliente, ref ${ownerMail} per il rinnovo.`,
+  };
+  assert.equal(
+    buildTodayAgenda([mixed], OGGI_NOW, names, roster)[0].who,
+    null,
+    'a customer cue quoting a team address still reads nothing, never the owner email',
+  );
+});
+
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
