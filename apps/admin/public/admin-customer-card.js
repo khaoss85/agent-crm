@@ -6685,7 +6685,9 @@ export function createCustomerCardView(deps) {
     }
     appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
-      box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
+      // backlog:f2e52f14: il singolare conta — «+ 1 appuntamenti successivi» è sbagliato.
+      const rest = upcoming.length - 1;
+      box.appendChild(el('p', 'bo-muted', rest === 1 ? '+ 1 appuntamento successivo' : `+ ${rest} appuntamenti successivi`));
     }
   }
 
