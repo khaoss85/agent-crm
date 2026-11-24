@@ -44,6 +44,16 @@ test('7fa422415232: share builders carry only the token path, never an id or a p
   assert.equal(offerShareMessage({}), null, 'without a URL there is nothing to send');
 });
 
+test('30323bca: scade l’8 e l’11, scade l’1, gli altri giorni scade il', () => {
+  const msg = (expiresAt) => offerShareMessage({ url: URL, expiresAt });
+  assert.ok(msg('2026-12-08T10:00:00.000Z').includes('scade l’8 dic 2026'), 'day 8 takes l’');
+  assert.ok(msg('2026-12-11T10:00:00.000Z').includes('scade l’11 dic 2026'), 'day 11 takes l’');
+  assert.ok(msg('2026-12-01T10:00:00.000Z').includes('scade l’1 dic 2026'), 'day 1 takes l’');
+  assert.ok(msg('2026-12-02T10:00:00.000Z').includes('scade il 2 dic 2026'), 'other days keep il');
+  assert.ok(msg('2026-12-18T10:00:00.000Z').includes('scade il 18 dic 2026'), '18 keeps il');
+  assert.ok(msg('2026-12-20T10:00:00.000Z').includes('scade il 20 dic 2026'), '20 keeps il');
+});
+
 const SCHEMA = {
   pipelines: [{
     pipelineContract: 1,
