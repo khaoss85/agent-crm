@@ -1,5 +1,7 @@
 # Tasks
 
+- [x] Contact card archive follow-up (91c92940274c): integrate the service/card projection from #1077; restore refreshes the active card, named refusal codes select action-specific text, and unrelated 409/503 keep the shared error handling. Live verification and merge remain independently gated.
+
 The first unchecked item is the default next task for Codex.
 
 - [x] Reconcile the public product surface around separate Product Truth and Repository Truth layers: a human-first homepage and intent navigation, four JTBD-derived solution stories, first-class developer and coding-agent journeys, progressive product proof, a provenance-bearing deployment artifact and a regression gate for the retired authentication/tenancy/RBAC composite (`docs/plans/gtm-site-truth-reconciliation.md`, `docs/marketing/SITE_ARCHITECTURE.md`).
@@ -253,4 +255,5 @@ Execution: `docs/plans/traction-first-working-example.md`. Live publication rece
 - [ ] **MK1 recovery review:** opt-in funnel observation, complete-or-refused proposal and human approval implementation recovered with real HTTP/SDK and fault-injection evidence; final clean-clone verification and pre-merge review remain in `docs/plans/mk1-marketing-recovery.md`. No send, publish or spend path.
 
 - [ ] **Restyle: catalogo skill cliente (backlog:0e9f723da891, mano: mac).** Candidate UI excludes project-based coding skills from discovery, preserves existing activations for deactivation, and points an empty catalog to Agenti. See `docs/plans/restyle-catalogo-skill-cliente.md`; design approval, merge and production verification remain pending.
+- [ ] **Restyle: offerta, passo di invio (backlog:78f79b0768ac, mano: mac).** Candidate UI gives the approved quote one main action («Prepara e copia il messaggio»): it mints or reuses the share link, shows the ready message with the link as a short copyable pill (no raw URL in the text) and copies the whole message. One status line at a time; «Crea un nuovo link» is a quiet text action whose confirm and cancel carry different weights. Not covered: staging the message in the scheda composer from the offer page, and the scheda's own «Invia offerta» line. Live browser proof pending.
 - [ ] **Restyle: Reporting, grafico canali e testata (backlog:526e1bf4bd28, mano: mac).** Candidate UI replaces the three labels under the Reporting title with two plain lines read from the channel breakdown (count, main channel, last two weeks shown); the channel bars keep small values readable with a floor height and show value and channel on hover and focus; the legend is its own block; a period with no new customer says what to do instead of a row of zeros. The summary is deterministic text, not an AI-written one. Live browser proof pending.

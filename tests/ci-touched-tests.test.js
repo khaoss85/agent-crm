@@ -51,6 +51,7 @@ import {
   shardCountFor,
   testJobs,
   timeoutVerdict,
+  withAdminModuleBrowserTests,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -1256,6 +1257,94 @@ test('a missing freeze test throws even on a docs-only diff', () => {
       ['docs/QUALITY_GATES.md'],
     ),
     /tests\/work-package-absence\.test\.js/,
+  );
+});
+
+// --------------------------------------------------- admin module browser tests
+//
+// #1141 changed apps/admin/public/admin-agenti.js green-alone while breaking
+// tests/admin-agenti-form-browser.test.js, which runs only in the full suite:
+// a browser proof drives the served page in a real Chromium instead of
+// importing the screen, so the import mapping never selects it. A PR that
+// touches apps/admin/public/admin-<module>.js now also runs the existing
+// tests/admin-<module>*-browser.test.js files (backlog:f286f7af); a diff
+// touching no admin module adds none, so the fast time of other PRs is
+// unchanged. These tests hold both acceptance directions.
+
+const ADMIN_BROWSER_HAVE = () => contents({
+  'tests/admin-agenti-form-browser.test.js': "import test from 'node:test';\n",
+  'tests/admin-sync-browser.test.js': "import test from 'node:test';\n",
+  'tests/admin-agenti.test.js': "import test from 'node:test';\n",
+});
+
+test('an admin-agenti.js change runs admin-agenti-form-browser on top of its selection (backlog:f286f7af)', () => {
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      ['tests/admin-agenti.test.js'],
+      ADMIN_BROWSER_HAVE(),
+      ['apps/admin/public/admin-agenti.js'],
+    ),
+    ['tests/admin-agenti-form-browser.test.js', 'tests/admin-agenti.test.js'],
+  );
+});
+
+test('an admin-sync.js change runs only the sync browser test, never another module', () => {
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      [],
+      ADMIN_BROWSER_HAVE(),
+      ['apps/admin/public/admin-sync.js'],
+    ),
+    ['tests/admin-sync-browser.test.js'],
+  );
+});
+
+test('an admin module with no browser test adds nothing', () => {
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      ['tests/admin-shell.test.js'],
+      ADMIN_BROWSER_HAVE(),
+      ['apps/admin/public/admin-shell.js'],
+    ),
+    ['tests/admin-shell.test.js'],
+  );
+});
+
+test('a diff touching no admin module adds no browser test', () => {
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      ['tests/api.test.js'],
+      ADMIN_BROWSER_HAVE(),
+      ['packages/app/src/index.js'],
+    ),
+    ['tests/api.test.js'],
+  );
+  assert.deepEqual(
+    withAdminModuleBrowserTests([], ADMIN_BROWSER_HAVE(), ['docs/QUALITY_GATES.md', 'README.md']),
+    [],
+  );
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      [],
+      ADMIN_BROWSER_HAVE(),
+      ['apps/admin/public/app.js', 'apps/admin/public/styles.css'],
+    ),
+    [],
+  );
+});
+
+test('an empty diff stays empty of admin module browser tests', () => {
+  assert.deepEqual(withAdminModuleBrowserTests([], ADMIN_BROWSER_HAVE(), []), []);
+});
+
+test('a browser test the mapping already selected runs once', () => {
+  assert.deepEqual(
+    withAdminModuleBrowserTests(
+      ['tests/admin-agenti-form-browser.test.js'],
+      ADMIN_BROWSER_HAVE(),
+      ['apps/admin/public/admin-agenti.js'],
+    ),
+    ['tests/admin-agenti-form-browser.test.js'],
   );
 });
 

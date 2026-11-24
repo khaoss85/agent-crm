@@ -1828,14 +1828,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // typing — not after the other fields — and goes as soon as it changes.
     const checkName = () => {
       // backlog:776cf3469e64 — an emptied Nome reads the missing-name error
-      // at once: a stale «already taken» — the live line or Crea's — must
-      // never cover an empty field.
+      // at once: a stale «already taken» live line must never cover an
+      // empty field. fieldErrorOf already prefers this line over Crea's,
+      // so Crea's refusal (error/field) stays untouched here.
+      // backlog:c9c266c352d2 — Crea's paint removes the focused input, and
+      // the blur on it runs this check mid-paint: clearing error/field
+      // then would wipe the refusal submitNewAgent just set, and
+      // focusFieldError would get a null field and never scroll the row
+      // under the sticky top bar (f06d06f242d6).
       if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') {
         form.nameError = AGENT_NAME_MISSING_NOTE;
-        if (form.field === 'name') {
-          form.error = '';
-          form.field = null;
-        }
         const cleared = fieldErrorOf(form, 'name');
         if (cleared !== '') showFieldError(nameRow, name, cleared);
         else clearFieldError(nameRow, name);

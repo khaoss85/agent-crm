@@ -785,11 +785,19 @@ test('a loaded read-only document reaches the reader composition, not a refusal'
   // instance does not. `tests/read-only-composition-postgresql.test.js` proves
   // the composition itself over the harness channel; this proves the document
   // reaches it.
+  // The bound below is fail-fast only: the endpoint refuses immediately by
+  // construction (loopback port 1), so the value never sets how long the
+  // passing case takes. It must clear worst-case scheduler lag, because this
+  // file runs beside five other shards in the full suite: at load 26-28 the
+  // 250 ms timer fired at 565 ms and won the race against the refusal,
+  // producing STORAGE_TIMEOUT instead of the STORAGE_UNAVAILABLE this
+  // composition proves (main d90cf75e, run 45440265199). Production default
+  // untouched (DEFAULT_ACQUISITION_MS in postgresql-bootstrap.js).
   await assert.rejects(
     () => createAccordoAppAsync({
       deployment: prepared,
       projectRoot: root,
-      acquisitionDeadlineMs: 250,
+      acquisitionDeadlineMs: 10_000,
     }),
     (error) => error.code === 'STORAGE_UNAVAILABLE',
   );
