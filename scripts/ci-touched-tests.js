@@ -1954,8 +1954,7 @@ async function main() {
     ? []
     : plan.tests.filter(
       (test) => !preGuardTests.includes(test)
-        && /-browser\.test\.[cm]?js$/.test(test)
-        && !addedGuards.includes(test),
+        && /-browser\.test\.[cm]?js$/.test(test),
     );
 
   // Selected tests outside the core suite, after the guards joined: a
