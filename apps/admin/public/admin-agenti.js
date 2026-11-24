@@ -1832,13 +1832,24 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // never cover an empty field.
       if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') {
         form.nameError = AGENT_NAME_MISSING_NOTE;
-        if (form.field === 'name') {
+        // backlog:776cf3469e64 follow-up (review Muse rev-agent-crm-1141):
+        // a server-side Crea AGENT_NAME_TAKEN refusal carries form.field
+        // null (top banner), so the old `form.field === 'name'` guard left
+        // the taken banner over the empty field. A taken error never covers
+        // an empty Nome, wherever it sits; other server errors stay.
+        if (form.field === 'name' || form.error === AGENT_NAME_TAKEN_NOTE) {
           form.error = '';
           form.field = null;
         }
         const cleared = fieldErrorOf(form, 'name');
         if (cleared !== '') showFieldError(nameRow, name, cleared);
         else clearFieldError(nameRow, name);
+        for (const child of [...(panel.childNodes ?? [])]) {
+          if (child?.getAttribute?.('class') !== 'bo-seq-create-error') continue;
+          if (child?.getAttribute?.('data-field-error') === 'true') continue;
+          if (child?.textContent !== AGENT_NAME_TAKEN_NOTE) continue;
+          if (typeof panel.removeChild === 'function') panel.removeChild(child);
+        }
         return;
       }
       const checked = checkNewAgent({ name: form.name, role: 'x', instructions: 'x' }, state.agents);

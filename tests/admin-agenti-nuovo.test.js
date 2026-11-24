@@ -191,6 +191,24 @@ test('776cf3469e64: Nome svuotato dopo il rifiuto di Crea — la riga dice che i
   assert.equal(posts(client).length, 0, 'niente POST con il Nome vuoto');
 });
 
+test('776cf3469e64 follow-up rev-agent-crm-1141: Nome svuotato dopo il 409 del server — sparisce anche il banner in alto', async () => {
+  const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
+  const { mount, client } = await paintedView({ failCreate: [taken] });
+  button(mount, 'new-agent').dispatch('click', {});
+  fillPanel(mount);
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client).length, 1, 'la prima Crea parte');
+  assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE, 'il 409 del server sta nel banner in alto');
+  type(mount, 'agent-name', '');
+  assert.match(mount.textContent, /Dagli un nome/, 'il Nome vuoto dice che il nome manca');
+  assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'il banner del doppione non copre il Nome vuoto');
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client).length, 1, 'niente POST con il Nome vuoto');
+  assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'resta solo il nome mancante');
+});
+
 test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio clic; la card compare «in attesa del motore»', async () => {
   const { mount, client } = await paintedView();
   button(mount, 'new-agent').dispatch('click', {});
