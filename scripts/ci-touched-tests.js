@@ -107,7 +107,8 @@
  * from one shared queue, so a core-wide fan-in still fits the bound. Fixed
  * round-robin slices did not: #621 then timed out again with "2 of 4
  * parts" done — two slices held most of the slow files while the other
- * two parts had finished and sat idle. A timeout kills what still runs but
+ * two parts had finished and sat idle. A timeout kills the whole process
+ * group of what still runs (backlog:f24b5628) but
  * settles only after every in-flight close has reported, so a suite that
  * failed just before the bound is recorded as failed instead of warning
  * green over the missing close; a timeout with core files unfinished
@@ -1243,11 +1244,14 @@ export function testJobs(
  * unluckiest fixed slice is. Every part's output streams live tagged with
  * its part (`[touched 1/4]`), each file's elapsed time is logged, and so is
  * each part's and the whole run's, so the cause of a slow run reads from
- * the log. Past `timeoutSec` the running processes die by SIGKILL and the
+ * the log. Past `timeoutSec` the running process groups die by SIGKILL and the
  * run resolves timed out naming every file not finished — the caller fails
  * red unless only the bonus remainder is unrun with everything green (see
- * `timeoutVerdict`), never green without the core having run. Past the bound
- * no outcome is lost: the timeout kills the running processes but settles
+ * `timeoutVerdict`), never green without the core having run. Each part runs
+ * detached in its own process group (backlog:f24b5628), so the bound reaps
+ * the per-file `node --test` workers too instead of orphaning them with the
+ * scratch directory already removed. Past the bound
+ * no outcome is lost: the timeout kills the running process groups but settles
  * only once every in-flight child has reported (or a short grace expires),
  * so a suite that failed just before the bound is recorded as failed instead
  * of warning green over the missing close event (backlog:d9d3336cf5b0). A
@@ -1262,7 +1266,9 @@ export function testJobs(
  * counts the parts that drained; `partSec` is each part's busy time;
  * `failedFiles` lists every file whose own process exited nonzero, so a
  * timeout that also saw a failure can still fail red instead of warning
- * green over it. `cwd` is the repository root; the processes inherit this
+ * green over it. `onPartSpawn`, when given, receives each part's process id
+ * right after spawn, so tests can check with the group pid that no part of
+ * a timed-out run stays alive. `cwd` is the repository root; the processes inherit this
  * process's environment (including `ACCORDO_TEST_POSTGRES` and
  * `ACCORDO_PG_TEST_URL`), minus `NODE_TEST_CONTEXT` so each is always a
  * fresh top-level runner.
@@ -1271,7 +1277,7 @@ export function testJobs(
  */
 export function runTestShards(
   /** @type {string[]} */ tests,
-  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void }} */ options,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void, onPartSpawn?: (pid: number) => void }} */ options,
 ) {
   const jobs = testJobs(tests, options.parts);
   const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
@@ -1345,16 +1351,24 @@ export function runTestShards(
     // reported; only a missing close (which SIGKILL should make impossible)
     // falls back to the grace below.
     let timedOut = false;
+    // A part leads its own process group (see `spawn` below): the bound
+    // kills the whole group so the per-file `node --test` workers die with
+    // their part instead of staying orphaned (backlog:f24b5628). Same shape
+    // as `packages/core/src/backup-restore.js` `runTool`.
+    const killGroup = (/** @type {import('node:child_process').ChildProcess} */ child) => {
+      if (process.platform !== 'win32' && Number.isInteger(child.pid)) {
+        try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* direct-child fallback below */ }
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // Already gone: its close is on the way with the genuine outcome.
+      }
+    };
     const cancel = startTimer(() => {
       if (settled || timedOut) return;
       timedOut = true;
-      for (const child of children) {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // Already gone: its close is on the way with the genuine outcome.
-        }
-      }
+      for (const child of children) killGroup(child);
       if (children.size === 0) {
         settleTimeout();
         return;
@@ -1400,9 +1414,15 @@ export function runTestShards(
       const child = spawn(
         options.nodePath ?? process.execPath,
         ['--no-warnings', '--test', `--test-concurrency=${concurrency}`, '--test-reporter=spec', ...files],
-        { cwd: options.cwd, env: partEnv },
+        { cwd: options.cwd, env: partEnv, detached: process.platform !== 'win32' },
       );
       children.add(child);
+      try {
+        options.onPartSpawn?.(child.pid ?? 0);
+      } catch (error) {
+        // An observer must never stall its part: log and keep draining.
+        process.stdout.write(`ci-touched-tests: onPartSpawn threw for ${tag}: ${error instanceof Error ? error.message : error}\n`);
+      }
       let tail = '';
       const tagged = (/** @type {Buffer|string} */ chunk) => {
         tail += String(chunk);

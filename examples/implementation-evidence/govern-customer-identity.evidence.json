@@ -23,7 +23,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/customer-data/src/operations.js",
-          "sha256": "d563c3931499820c5175c14e171b681417b540e6581ae726d010c3b20bbcf060"
+          "sha256": "dd4919703341604ed17c8493f18d61e352d8d7139bb5e7fd0d4989dc4c901db4"
         }
       ]
     },
@@ -265,7 +265,7 @@
         {
           "kind": "source.artifact",
           "path": "apps/admin/public/admin-customer-data.js",
-          "sha256": "9e8753652297d8ba46b852afa6d7235d39f2adce6c9e59f82ab67ee1eee6dc89"
+          "sha256": "c6b429400a746786a75a58301e1db27b2bd51bb0af4c268066223c31d2509a21"
         }
       ],
       "partial": {

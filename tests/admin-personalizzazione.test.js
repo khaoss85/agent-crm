@@ -59,12 +59,12 @@ function stubClient({ catalog = UNITS, rows = [], preview = null, connectors = [
         return preview ?? { headline: 'Demo.', counts: [], uncomposed: [], writes: 0 };
       }
       if (path === '/api/space-packages/activate') {
-        const unit = options?.body?.unit;
+        const unit = body?.unit;
         rows.push({ unit, status: 'active', id: `row-${unit}` });
         return { unit, status: 'active', replayed: false, id: `row-${unit}` };
       }
       if (path === '/api/space-packages/deactivate') {
-        const unit = options?.body?.unit;
+        const unit = body?.unit;
         const found = rows.find((row) => row.unit === unit);
         if (found) found.status = 'removed';
         return { unit, status: 'removed' };
@@ -1096,6 +1096,72 @@ test('6d0df351: with the pilot adapters Connettori offers Collega only where ser
     'Telegram served: Collega, coherent with Stato sync');
   assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
     'unknown adapters: the previous answer stays');
+});
+
+test('owner catalog hides project skills from discovery but preserves active management', async () => {
+  const { SPACE_PACKAGE_CATALOG } = await import('../packages/space-permissions/src/composition.js');
+  const units = [...SPACE_PACKAGE_CATALOG];
+  const active = activeByUnit({ units, rows: units.filter((u) => u.kind === 'skill').map((u) => ({ unit: u.name, status: 'active' })) });
+  assert.deepEqual(filterUnits({ units, tab: 'skill' }), [], 'the shipped coding catalog is not a business automation catalog');
+  assert.equal(filterUnits({ units, active, tab: 'skill', view: 'tuoi' }).length, active.size, 'every existing activation remains manageable');
+  assert.deepEqual(filterUnits({ units, active, tab: 'skill' }), [], 'active coding skills are never offered in discovery');
+  assert.ok(filterUnits({ units, tab: 'pacchetti' }).length > 0, 'packages stay available');
+  const customerSkill = { name: 'skill:reply-draft', kind: 'skill', label: 'Bozze di risposta', blurb: 'Prepara una risposta da rileggere.' };
+  assert.deepEqual(filterUnits({ units: [...units, customerSkill], tab: 'skill', query: 'risposta' }).map((x) => x.entry.name), [customerSkill.name]);
+});
+
+test('a customer space with only coding skills has an honest empty state and a working route to Agenti, without writes', async () => {
+  const { SPACE_PACKAGE_CATALOG } = await import('../packages/space-permissions/src/composition.js');
+  for (const viewName of ['tuoi', 'scopri']) {
+    const doc = createFakeDocument(); const mount = createMount(); const calls = []; const routes = [];
+    const view = createPersonalizzazioneView({ doc, mount, client: stubClient({ catalog: [...SPACE_PACKAGE_CATALOG], calls }), spaceId, navigate: (route) => routes.push(route) });
+    await view.render();
+    view.test.state.tab = 'skill'; view.test.state.view = viewName;
+    await view.render();
+    assert.match(mount.textContent, /Non ci sono skill disponibili per questo spazio/);
+    assert.doesNotMatch(mount.textContent, /Revisione pre-merge|Nuovi oggetti|Sviluppa per Accordo|Come pubblicare|Attiva le tue prime skill|copia il prompt/);
+    const action = mount.findAll('button').find((n) => n.getAttribute('data-action') === 'perso-agents');
+    assert.ok(action, 'one useful next step');
+    action.dispatch('click');
+    assert.deepEqual(routes, ['#/agenti']);
+    assert.ok(calls.every((c) => c.method === 'GET'), 'rendering and navigation never change composition');
+  }
+});
+
+test('owner package cards do not advertise developer publishing', async () => {
+  const doc = createFakeDocument(); const mount = createMount();
+  const view = createPersonalizzazioneView({ doc, mount, client: stubClient(), spaceId });
+  await view.render(); view.test.state.tab = 'pacchetti'; view.test.state.view = 'scopri'; await view.render();
+  assert.match(mount.textContent, /Canali/);
+  assert.doesNotMatch(mount.textContent, /Sviluppa per Accordo|Come pubblicare un pacchetto/);
+});
+
+
+test('active coding skills remain visible and can be deactivated without being offered again', async () => {
+  const { SPACE_PACKAGE_CATALOG } = await import('../packages/space-permissions/src/composition.js');
+  const skill = SPACE_PACKAGE_CATALOG.find((u) => u.kind === 'skill');
+  const rows = [{ unit: skill.name, status: 'active' }];
+  const calls = []; const doc = createFakeDocument(); const mount = createMount();
+  const view = createPersonalizzazioneView({ doc, mount, client: stubClient({ catalog: [...SPACE_PACKAGE_CATALOG], rows, calls }), spaceId });
+  await view.render();
+  view.test.state.tab = 'skill'; view.test.state.view = 'scopri'; await view.render();
+  assert.match(mount.textContent, /Non ci sono skill disponibili/);
+  const mine = mount.findAll('button').find((n) => n.textContent === 'I tuoi');
+  assert.ok(mine, 'discovery must retain a route to existing activations');
+  mine.dispatch('click'); await flush();
+  assert.match(mount.textContent, /Attivata in precedenza/);
+  assert.match(mount.textContent, /non è un’automazione per il tuo lavoro/);
+  const off = mount.findAll('button').find((n) => n.textContent === 'Disattiva');
+  assert.ok(off, 'the existing activation can be removed');
+  assert.ok(calls.every((c) => c.method === 'GET'), 'no automatic deactivation');
+  off.dispatch('click'); await flush();
+  assert.equal(rows[0].status, 'removed');
+  assert.equal(calls.filter((c) => c.path === '/api/space-packages/deactivate').length, 1);
+  assert.match(mount.textContent, /Non ci sono skill disponibili/);
+  assert.equal(mount.findAll('button').filter((n) => n.textContent === 'Disattiva').length, 0);
+  view.test.state.view = 'scopri'; await view.render();
+  assert.match(mount.textContent, /Non ci sono skill disponibili/);
+  assert.ok(!calls.some((c) => c.path === '/api/space-packages/activate'));
 });
 
 test('verifica Mac 20/11 (fdc711253dbd): «Dettagli» di una skill apre il suo dettaglio, senza errori', async () => {

@@ -115,6 +115,13 @@ class FakeNode {
     this.__focused = true;
   }
 
+  // Scroll stand-in: production view code may call .scrollIntoView() to
+  // bring a confirmation into view. The flag lets a test assert the page
+  // scrolled to the node; there is no layout or viewport.
+  scrollIntoView() {
+    this.__scrolledIntoView = true;
+  }
+
   // Recursively collect descendants by tag name (test helper).
   findAll(tagName) {
     const wanted = tagName.toUpperCase();

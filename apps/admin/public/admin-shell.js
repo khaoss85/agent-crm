@@ -1104,7 +1104,10 @@ export function createShellView({
           link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
         } else {
           // backlog:b76770f82fe9: same reserved room for the fix count.
-          const empty = el(doc, 'span', 'bo-badge is-empty', '0');
+          // backlog:acd136b3cd5d: the placeholder carries no «0» text — the
+          // room stays reserved by the badge's own min-width, and the link's
+          // accessible name reads exactly «Impostazioni».
+          const empty = el(doc, 'span', 'bo-badge is-empty', '');
           empty.setAttribute('aria-hidden', 'true');
           link.appendChild(empty);
         }
@@ -1132,7 +1135,7 @@ export function createShellView({
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
     const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
-      line: 'Descrivi il modulo, il tuo agente di coding lo prepara separato dal resto' });
+      line: 'Descrivi il modulo con parole tue: ti faccio io le domande giuste' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {

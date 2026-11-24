@@ -312,7 +312,7 @@ test('form: «anna 333» drops the company-only match and shows the matched word
   assert.ok(!labels.some((text) => text.includes('Magrini')), `no company-only match: ${labels.join(' | ')}`);
   assert.ok(labels.includes('Anna Bianchi'), `the name match stays bare: ${labels.join(' | ')}`);
   assert.ok(labels.includes('Mario Rossi · mario.anna…@example.it'), `the email match shows the searched word: ${labels.join(' | ')}`);
-  assert.ok(labels.includes('Ada Rossi · tel. …3331…'), `the phone match shows the searched digits: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Ada Rossi · tel. 39333123…'), `the phone match shows the searched digits: ${labels.join(' | ')}`);
   assert.ok(!labels.some((text) => text.includes('mario.annabella@') || text.includes('3331234567')), 'never the whole address or number');
 });
 
