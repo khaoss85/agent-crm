@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -826,6 +826,10 @@ export function createOfferDetail(deps) {
         failures.value = rawValue.startsWith('-')
           ? 'Il valore non può essere negativo, in euro (es. 250,00).'
           : 'Il valore è obbligatorio, in euro (es. 250,00).';
+      } else if (cents > MAX_OFFER_VALUE_CENTS) {
+        // voce 05dac489: the live 17/11 saved 999.999.999.999,00 € — over
+        // the ceiling the edit refuses before writing, the server too.
+        failures.value = 'Il valore non può superare 1.000.000,00 €.';
       }
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';

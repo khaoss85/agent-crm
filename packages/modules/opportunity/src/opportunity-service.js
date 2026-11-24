@@ -15,6 +15,23 @@ import { assertContactLinkable } from '../../contact/src/contact-service.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 
+/**
+ * Voce 05dac489: the highest offer value the service stores, in cents
+ * (1.000.000 €). A gym never sells a single offer above a million: anything
+ * higher is a typed or pasted mistake (live 17/11 saved 999.999.999.999,00 €).
+ * The admin shell mirrors it client-side, the /bo deposit fail-fast.
+ */
+export const MAX_OPPORTUNITY_VALUE_CENTS = 100_000_000;
+
+/** @param {unknown} value */
+function opportunityValueCents(value) {
+  const cents = nonNegativeInteger(value, 'valueCents');
+  if (cents > MAX_OPPORTUNITY_VALUE_CENTS) {
+    throw new ValidationError(`valueCents must be at most ${MAX_OPPORTUNITY_VALUE_CENTS}`, { field: 'valueCents' });
+  }
+  return cents;
+}
+
 const ALLOWED_TRANSITIONS = Object.freeze({
   discovery: ['qualification', 'lost'],
   qualification: ['proposal', 'approval_pending', 'lost'],
@@ -273,7 +290,7 @@ export class OpportunityService {
       contactId,
       name: requiredString(input.name, 'name'),
       type: enumValue(input.type ?? 'new_business', [...OPPORTUNITY_TYPES], 'type'),
-      valueCents: nonNegativeInteger(input.valueCents, 'valueCents'),
+      valueCents: opportunityValueCents(input.valueCents),
       currency: requiredString(input.currency ?? 'EUR', 'currency').toUpperCase(),
       stage: enumValue(input.stage ?? 'qualification', [...OPPORTUNITY_STAGES], 'stage'),
       owner: requiredString(input.owner, 'owner'),
@@ -373,7 +390,7 @@ export class OpportunityService {
     const values = [];
     const next = { ...current };
     if (patch.valueCents !== undefined) {
-      next.valueCents = nonNegativeInteger(patch.valueCents, 'valueCents');
+      next.valueCents = opportunityValueCents(patch.valueCents);
       values.push({ column: 'value_cents', value: next.valueCents });
     }
     if (patch.expectedCloseDate !== undefined) {
