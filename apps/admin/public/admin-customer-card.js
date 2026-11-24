@@ -1175,6 +1175,25 @@ export function noteRefusalText(error) {
 }
 
 /**
+ * What a refused custom-field value says (backlog:ed03a20360d5, verifica Mac
+ * 20/11: «—» svuota, un 400 senza spiegazione no): a validation refusal
+ * reads the reason the server named — retrying the same value would meet
+ * the same refusal, so never «Riprova più tardi». Anything the server did
+ * not name keeps the write's own wording.
+ * @param {unknown} error
+ */
+export function fieldValueRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'VALIDATION_FAILED' || status === 400 || status === 422) {
+    const said = String(record.message ?? '').trim();
+    if (said !== '') return said;
+  }
+  return humanWriteError(error, { failed: 'Campo non salvato: il server non risponde, riprova tra poco.' });
+}
+
+/**
  * What a refused «Modifica» or «Elimina» says (backlog:cb348c9fcaeb): each
  * refusal the server names reads what happened and what to do — never
  * «Riprova più tardi», which would only meet the same refusal again.
@@ -3971,7 +3990,7 @@ export function createCustomerCardView(deps) {
         closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
-        entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
+        entry.setError(fieldValueRefusalText(err));
         busy = false;
       }
     }));

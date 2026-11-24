@@ -321,6 +321,69 @@ test('an unreadable value store refuses a campo filter instead of an exact-looki
   }
 });
 
+test('voce ed03a20360d5: «—» clears the value and a bad value refuses in Italian', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Amico', type: 'si-no' });
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it',
+  });
+  const untouched = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Maria', lastName: 'Rossi', email: 'maria@palestra-esempio.it',
+  });
+  await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'amico', value: 'sì',
+  });
+
+  const cleared = await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'amico', value: '',
+  });
+  assert.equal(cleared.value.value, null, 'choosing «—» empties the value, never a 400');
+  const service = app.modules.get('custom-field-value').service;
+  assert.equal(
+    service.listWhere({ subjectResource: 'contact', subjectId: contact.id, fieldKey: 'amico' }).length,
+    1, 'clearing rewrites the single row, never a second row',
+  );
+  const values = await app.readCustomFieldValues({ resource: 'contact', id: contact.id });
+  assert.equal(values.find((entry) => entry.key === 'amico')?.value, null, 'the reload reads empty');
+
+  const neverSet = await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: untouched.id, key: 'amico', value: '',
+  });
+  assert.equal(neverSet.value.value, null, 'clearing a never-set field stays empty without writing');
+  assert.equal(
+    service.listWhere({ subjectResource: 'contact', subjectId: untouched.id, fieldKey: 'amico' }).length,
+    0, 'no row is created for a clear without a value',
+  );
+
+  await assert.rejects(
+    () => app.setCustomFieldValue({
+      actor: OPERATOR, resource: 'contact', id: contact.id, key: 'amico', value: 'forse',
+    }),
+    (error) => error?.code === 'VALIDATION_ERROR'
+      && /vuole sì o no/.test(String(error?.message ?? ''))
+      && !/riprova più tardi/i.test(String(error?.message ?? '')),
+    'a bad Sì/No value refuses naming the reason in Italian, never «riprova più tardi»',
+  );
+});
+
+test('voce ed03a20360d5, review P2: la conferma con valore vuoto rifiuta tutto, nessun cliente e nessuna definizione', async (t) => {
+  const { app } = scene(t);
+  const countBefore = (await app.listCustomers({})).items.length;
+  await assert.rejects(
+    () => app.applyCustomerPhrase({
+      actor: OPERATOR,
+      customer: { firstName: 'daniele', lastName: 'pelleri', email: 'daniele@gmail.com' },
+      fields: [{ key: 'amico', label: 'Amico', type: 'si-no', value: '' }],
+    }),
+    (error) => error?.code === 'VALIDATION_ERROR'
+      && /ha bisogno di un valore/.test(String(error?.message ?? '')),
+    'an empty field value refuses the whole confirmation in Italian',
+  );
+  assert.equal((await app.listCustomers({})).items.length, countBefore, 'no partial customer survives');
+  assert.deepEqual(await app.listCustomFields({}), [], 'no partial definition survives');
+});
+
 test('the Nuovo cliente note lands in the cronologia through the single writer', async (t) => {
   const { app } = scene(t);
   const preview = await app.parseCustomerPhrase({
