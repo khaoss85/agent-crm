@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
-import { offerShareMessage, offerSharePath, offerShareUrl } from '../apps/admin/public/admin-offer-panel.js';
+import { offerShareMessage, offerSharePath, offerShareShortLabel, offerShareUrl } from '../apps/admin/public/admin-offer-panel.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -125,8 +125,9 @@ function shareClient({ quotes }) {
   };
 }
 
-async function openOfferPage({ quotes }) {
+async function openOfferPage({ quotes, clipboard = null }) {
   const doc = createFakeDocument();
+  if (clipboard !== null) doc.defaultView = { navigator: { clipboard } };
   const mount = createMount();
   const client = shareClient({ quotes });
   const toasts = [];
@@ -153,19 +154,27 @@ const historyPanel = (mount) => mount.findAll('div')
   .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-history'));
 const shareBox = (mount) => mount.findAll('div')
   .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-share'));
+/** backlog:78f79b0768ac: the link is on screen as an href, never as raw text. */
+const showsLink = (mount, url) => mount.findAll('a').some((node) => node.getAttribute('href') === url);
+const shareStatus = (mount) => mount.findAll('p')
+  .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-share-line'));
 
-test('7fa422415232: «Invia offerta» mints the public link and reuses it on second press', async () => {
-  const { mount, client, toasts } = await openOfferPage({ quotes: [approvedQuote()] });
+test('7fa422415232: the send action mints the public link and reuses it on second press', async () => {
+  const { mount, client } = await openOfferPage({ quotes: [approvedQuote()] });
   const button = shareButton(mount);
-  assert.ok(button, 'the approved quote offers «Invia offerta» (red before the cure: no such button)');
-  assert.equal(button.textContent, 'Invia offerta');
+  assert.ok(button, 'the approved quote offers the send action (red before the cure: no such button)');
+  assert.equal(button.textContent, 'Prepara e copia il messaggio');
+  assert.ok(String(button.getAttribute('class')).split(/\s+/).includes('primary'), 'it is the one main action of the box');
   button.dispatch('click');
   await flushAll();
   const posts = client.calls.filter((call) => call.method === 'POST'
     && call.path === '/api/modules/quote/records/q1/actions/share-link');
   assert.equal(posts.length, 1, 'one press mints through the share-link action');
   assert.ok(posts[0].key, 'the mint rides the submission controller key');
-  assert.ok(mount.textContent.includes(URL), 'the ready message shows the link');
+  assert.ok(showsLink(mount, URL), 'the ready message carries the link');
+  assert.ok(!mount.textContent.includes(URL), 'no raw URL in the text: the link reads as a short pill');
+  assert.ok(shareBox(mount)?.textContent.includes(offerShareShortLabel(URL)), 'the pill reads short');
+  assert.ok(shareBox(mount)?.textContent.includes('Cucina per Giulia'), 'the ready message names the offer');
   assert.ok(shareBox(mount)?.textContent.includes('Link pronto, da inviare.'),
     'the mint state reads in the share box, outside the audit list');
   assert.ok(!mount.textContent.includes('Offerta inviata'),
@@ -176,7 +185,7 @@ test('7fa422415232: «Invia offerta» mints the public link and reuses it on sec
     'no minted link leaks into the cronologia');
   const open = mount.findAll('a').find((node) => node.getAttribute('href') === URL);
   assert.ok(open, 'the share box links the public URL');
-  assert.ok(!/[^/]a{64}/.test(mount.textContent.replace(URL, '')), 'the raw token never leaks outside its URL');
+  assert.ok(!/a{64}/.test(mount.textContent), 'the raw token never reaches the text');
 
   shareButton(mount).dispatch('click');
   await flushAll();
@@ -191,7 +200,8 @@ test('7fa422415232: «Invia offerta» mints the public link and reuses it on sec
   assert.ok(shareBox(mount)?.textContent.includes('Link già pronto, da inviare'),
     'a reuse reads as a mint, never as a send');
   assert.ok(!historyPanel(mount).textContent.includes('Offerta inviata'), 'still no fake send row after reuse');
-  assert.ok(toasts.some((toast) => /stesso/.test(toast.text)), 'the operator is told it is the same link');
+  assert.equal(shareStatus(mount).length, 1, 'one status line, never two notices');
+  assert.ok(/stesso/.test(shareStatus(mount)[0].textContent), 'the operator is told it is the same link');
 });
 
 test('7fa422415232: a draft quote has no share button — only an approved version shares', async () => {
@@ -210,7 +220,7 @@ test('bf1bc20a: a reuse without a visible token points at «Crea un nuovo link»
 });
 
 test('bf1bc20a: «Crea un nuovo link» arms, cancels, then revokes and mints one fresh link', async () => {
-  const { mount, client, toasts } = await openOfferPage({ quotes: [approvedQuote()] });
+  const { mount, client } = await openOfferPage({ quotes: [approvedQuote()] });
   const button = regenButton(mount);
   assert.ok(button, 'the approved quote offers «Crea un nuovo link»');
   assert.equal(button.textContent, 'Crea un nuovo link');
@@ -246,10 +256,11 @@ test('bf1bc20a: «Crea un nuovo link» arms, cancels, then revokes and mints one
   assert.ok(regens[0].key, 'the regenerate rides the submission controller key');
   assert.deepStrictEqual(regens[0].body, {},
     'the regenerate posts the exact empty body the /bo bridge accepts (bo-crm-writes.js regenerate-quote-link allows only spaceId/expiresInDays/expectedRevision, else 400)');
-  assert.ok(mount.textContent.includes(URL2), 'the fresh link shows on screen');
+  assert.ok(showsLink(mount, URL2), 'the fresh link shows on screen');
   assert.ok(shareBox(mount)?.textContent.includes('il vecchio non funziona più'),
     'the operator is told the old link is dead');
-  assert.ok(toasts.some((toast) => /vecchio non funziona più/.test(toast.text)), 'toast says the same');
+  assert.ok(!mount.textContent.includes('smetterà di funzionare'),
+    'the armed question is gone: one message at a time (78f79b0768ac)');
 });
 
 async function openOfferPageWith(request) {
@@ -315,15 +326,15 @@ test('bf1bc20a: a regeneration waits while a send runs — one shared in-flight 
   assert.equal(regenCalls().length, 0, 'a regeneration press in flight sends nothing');
   releaseShare();
   await flushAll();
-  assert.ok(mount.textContent.includes(URL), 'the send paints its link first');
+  assert.ok(showsLink(mount, URL), 'the send paints its link first');
   assert.equal(regenButton(mount).getAttribute('disabled'), null, 'the regeneration is back after the send');
   regenButton(mount).dispatch('click');
   await flushAll();
   regenButton(mount).dispatch('click');
   await flushAll();
   assert.equal(regenCalls().length, 1, 'one confirmed press after the send mints one fresh link');
-  assert.ok(mount.textContent.includes(URL2), 'the regenerated link paints');
-  assert.ok(!mount.textContent.includes(URL), 'the revoked mint never comes back on screen');
+  assert.ok(showsLink(mount, URL2), 'the regenerated link paints');
+  assert.ok(!showsLink(mount, URL), 'the revoked mint never comes back on screen');
 });
 
 test('bf1bc20a: an uncertain regeneration forgets the cached link — the next press asks for a new one (Codex #995 P2)', async () => {
@@ -346,14 +357,14 @@ test('bf1bc20a: an uncertain regeneration forgets the cached link — the next p
   const { mount } = await openOfferPageWith(request);
   shareButton(mount).dispatch('click');
   await flushAll();
-  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  assert.ok(showsLink(mount, URL), 'the first mint caches its link');
   regenButton(mount).dispatch('click');
   await flushAll();
   regenButton(mount).dispatch('click');
   await flushAll();
   shareButton(mount).dispatch('click');
   await flushAll();
-  assert.ok(!mount.textContent.includes(URL), 'no revoked link is ever offered as ready');
+  assert.ok(!showsLink(mount, URL), 'no revoked link is ever offered as ready');
   assert.ok(mount.textContent.includes('Crea un nuovo link'),
     'after an uncertain regeneration the operator is sent back to a fresh link');
 });
@@ -382,14 +393,66 @@ test('bf1bc20a: a lost regeneration contest forgets the cached link — the next
   const { mount } = await openOfferPageWith(request);
   shareButton(mount).dispatch('click');
   await flushAll();
-  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  assert.ok(showsLink(mount, URL), 'the first mint caches its link');
   regenButton(mount).dispatch('click');
   await flushAll();
   regenButton(mount).dispatch('click');
   await flushAll();
   shareButton(mount).dispatch('click');
   await flushAll();
-  assert.ok(!mount.textContent.includes(URL), 'the contested link is never offered as ready');
+  assert.ok(!showsLink(mount, URL), 'the contested link is never offered as ready');
   assert.ok(mount.textContent.includes('Crea un nuovo link'),
     'after a lost contest the operator is sent back to a fresh link');
+});
+
+test('78f79b0768ac: one press puts the whole message on the clipboard; the pill copies the link alone', async () => {
+  const written = [];
+  const clipboard = { writeText: async (text) => { written.push(text); } };
+  const { mount } = await openOfferPage({ quotes: [approvedQuote()], clipboard });
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.deepStrictEqual(written, [offerShareMessage({ offerName: 'Cucina per Giulia', url: URL, expiresAt: EXPIRES })],
+    'the clipboard carries the ready message with the whole URL');
+  assert.ok(shareStatus(mount)[0].textContent.includes('Messaggio copiato'), 'the status says the message is copied');
+  const copy = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'offer-share-copy-link');
+  assert.ok(copy, 'the pill has its own copy action');
+  copy.dispatch('click');
+  await flushAll();
+  assert.equal(written[1], URL, 'one click copies the link alone');
+  assert.equal(copy.textContent, 'Copiato', 'the copy confirms in place, without a toast');
+});
+
+test('78f79b0768ac: a refused clipboard never fails the mint — the status points at the pill', async () => {
+  const clipboard = { writeText: async () => { throw new Error('denied'); } };
+  const { mount } = await openOfferPage({ quotes: [approvedQuote()], clipboard });
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(showsLink(mount, URL), 'the link is ready all the same');
+  assert.ok(shareStatus(mount)[0].textContent.includes('Copia il link qui sopra'), 'the status names the way out');
+  assert.ok(!String(shareStatus(mount)[0].getAttribute('class')).includes('field-error'), 'a ready link is not an error');
+});
+
+test('78f79b0768ac: arming a new link replaces the ready notice and «Annulla» restores it', async () => {
+  const { mount } = await openOfferPage({ quotes: [approvedQuote()] });
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  const before = shareStatus(mount)[0].textContent;
+  assert.ok(before.includes('Link pronto, da inviare.'));
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  assert.equal(shareStatus(mount).length, 1, 'still one status line');
+  assert.ok(shareStatus(mount)[0].textContent.includes('smetterà di funzionare'));
+  assert.ok(!shareStatus(mount)[0].textContent.includes('Link pronto'), 'the ready notice is not shown beside the question');
+  assert.notEqual(regenButton(mount).getAttribute('class'), regenCancel(mount).getAttribute('class'),
+    'confirm and cancel never carry the same weight');
+  regenCancel(mount).dispatch('click');
+  await flushAll();
+  assert.equal(shareStatus(mount)[0].textContent, before, '«Annulla» brings the ready notice back');
+  assert.ok(showsLink(mount, URL), 'the old link stays ready after a cancelled arm');
+});
+
+test('78f79b0768ac: the short label never carries the whole token', () => {
+  assert.equal(offerShareShortLabel(URL), 'spazio.example/q/aaaaaa…');
+  assert.equal(offerShareShortLabel('non un link'), 'link dell’offerta');
+  assert.equal(offerShareShortLabel(null), 'link dell’offerta');
 });
