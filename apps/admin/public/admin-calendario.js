@@ -1013,6 +1013,11 @@ export function calendarRefusalText(error) {
   if (code === 'APPOINTMENTS_OVERLAP') {
     return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
   }
+  // backlog:0f2ae629e09b — la serie non si conferma con il calendario
+  // collegato (la spinta coprirebbe solo la testa): niente è stato scritto.
+  if (code === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+    return 'Con Google Calendar collegato le ricorrenze arrivano presto: conferma un appuntamento alla volta, senza ripetizione.';
+  }
   if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
     return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
   }
@@ -2014,6 +2019,8 @@ export function createCalendarioView(deps) {
     cancelNote: '',
     /** The optional reason the operator typed, kept across repaints. */
     cancelReason: '',
+    /** backlog:0f2ae629e09b — the recurrence rule the manual form books: null is «Non si ripete». @type {any} */
+    manualRecurrence: null,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -3205,6 +3212,7 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    state.manualRecurrence = null;
     // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): the typed
     // marks go with the values, or the next opening reads the proposed
     // date as «written» and raises a false unsaved-text warning.
@@ -5401,6 +5409,7 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    state.manualRecurrence = null;
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
@@ -5749,6 +5758,131 @@ export function createCalendarioView(deps) {
     return select;
   }
 
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» choices of the manual form:
+   * «Non si ripete» first, then the options computed from the chosen day.
+   * The form paints from a YYYY-MM-DD Rome day, so the weekday and the
+   * month position come straight from that day. No regex literals here
+   * (backlog:b545aca18b8f: the pilot serves the /bo client through a pass
+   * that cuts `//`, so a literal holding it breaks the whole shell).
+   * @param {string} dayKey
+   */
+  function recurrenceChoiceLabels(dayKey) {
+    const weekdays = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+    const raw = String(dayKey ?? '');
+    const parts = raw.split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const date = Number(parts[2]);
+    const ok = parts.length === 3 && raw.length === 10
+      && Number.isSafeInteger(year) && Number.isSafeInteger(month) && Number.isSafeInteger(date)
+      && month >= 1 && month <= 12 && date >= 1 && date <= 31
+      && !Number.isNaN(Date.parse(`${raw}T12:00:00Z`));
+    if (!ok) {
+      return [
+        { value: 'none', label: 'Non si ripete' },
+        { value: 'daily', label: 'Ogni giorno' },
+        { value: 'weekly', label: 'Ogni settimana' },
+        { value: 'monthly', label: 'Ogni mese' },
+      ];
+    }
+    const weekday = new Date(Date.UTC(year, month - 1, date)).getUTCDay();
+    const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const nth = Math.floor((date - 1 - ((weekday - firstWeekday + 7) % 7)) / 7) + 1;
+    return [
+      { value: 'none', label: 'Non si ripete' },
+      { value: 'daily', label: 'Ogni giorno' },
+      { value: 'weekly', label: `Ogni settimana di ${weekdays[weekday]}` },
+      { value: 'monthly', label: `Ogni mese il ${nth}° ${weekdays[weekday]}` },
+    ];
+  }
+
+  /**
+   * backlog:0f2ae629e09b — how many appointments one honest click books.
+   * DECISION (to be confirmed): the manual form has no end picker yet (the
+   * count/until control is a follow-up), so every series the form sends
+   * ends after 12 occurrences — bounded, and the row below «Si ripete»
+   * says so. The server refuses an open-ended rule naming `recurrence`.
+   */
+  const MANUAL_RECURRENCE_DEFAULT_COUNT = 12;
+  /**
+   * backlog:0f2ae629e09b — the recurrence rule the manual form will book.
+   * Null is «Non si ripete»; anything else is the validated kind plus its
+   * end, so the claim can never fan out to hundreds of rows. With a
+   * linked Google Calendar the form never sends a series.
+   */
+  function recurrenceRuleFromState() {
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // la serie non si conferma — il form non ne manda mai una.
+    if (state.calendar?.connected === true) return null;
+    const rec = state.manualRecurrence;
+    if (rec === null || rec === undefined || typeof rec !== 'object') return null;
+    const kind = String(rec.kind ?? 'none');
+    if (kind === '' || kind === 'none') return null;
+    return { kind, count: MANUAL_RECURRENCE_DEFAULT_COUNT };
+  }
+
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» row of the manual form: the
+   * four choices with the labels computed from the chosen day.
+   * @param {any} form
+   */
+  function renderRecurrenceChoice(form) {
+    const rec = state.manualRecurrence !== null && typeof state.manualRecurrence === 'object'
+      ? state.manualRecurrence : { kind: 'none' };
+    const dayKey = String(state.manual?.date ?? '');
+    const wrap = uiSelect(doc, {
+      name: 'recurrence', value: String(rec.kind ?? 'none'), options: recurrenceChoiceLabels(dayKey),
+    });
+    const select = wrap.querySelector('select') ?? wrap;
+    // Explicit: the fake DOM in tests has no first-option default, and the
+    // claim reads this node — the painted choice and the node agree.
+    select.value = String(rec.kind ?? 'none');
+    const trackKind = () => {
+      state.manualRecurrence = { kind: String(select.value ?? 'none') };
+      state.manualTyped.add('recurrence');
+      state.bookingNote = '';
+      renderAll();
+    };
+    select.addEventListener('input', trackKind);
+    select.addEventListener('change', trackKind);
+    form.appendChild(fieldBox('Si ripete', wrap, { wide: true }));
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // le ricorrenze arrivano presto — «Si ripete» resta su «Non si ripete»
+    // e disattivato, con la riga che dice perché.
+    if (state.calendar?.connected === true) {
+      state.manualRecurrence = { kind: 'none' };
+      select.value = 'none';
+      select.setAttribute('disabled', 'disabled');
+      const note = el(doc, 'div', { attrs: { 'data-role': 'recurrence-linked-note' } });
+      note.textContent = 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.';
+      form.appendChild(note);
+      return select;
+    }
+    // backlog:0f2ae629e09b — the end one click books is painted, not just
+    // sent: the operator sees how many appointments «Si ripete» creates
+    // before pressing Conferma. No end picker yet (follow-up).
+    if (String(select.value ?? 'none') !== 'none') {
+      const endNote = el(doc, 'div', { attrs: { 'data-role': 'recurrence-end-note' } });
+      endNote.textContent = 'La serie crea ' + String(MANUAL_RECURRENCE_DEFAULT_COUNT) + ' appuntamenti.';
+      form.appendChild(endNote);
+    }
+    // The labels follow the chosen day: a day picked after the choice
+    // renames «Ogni settimana di …» in place, without losing the choice.
+    const dayInput = form.querySelector?.('input[name="date"]') ?? null;
+    if (dayInput && typeof dayInput.addEventListener === 'function') {
+      dayInput.addEventListener('input', () => {
+        const labels = recurrenceChoiceLabels(String(dayInput.value ?? ''));
+        const options = select.findAll ? select.findAll('option') : [...(select.childNodes ?? [])].filter((node) => node.tagName === 'OPTION');
+        for (const option of options) {
+          const hit = labels.find((entry) => entry.value === option.getAttribute('value'));
+          if (hit) option.textContent = hit.label;
+        }
+      });
+    }
+    return select;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM inside its hidden popover, so a draft can still
@@ -5818,6 +5952,9 @@ export function createCalendarioView(deps) {
       if (name === 'locationUrl') linkBox = box;
       form.appendChild(box);
     }
+    // backlog:0f2ae629e09b — «Si ripete» rides below the day and times, so
+    // its labels are computed from the chosen day (see above).
+    renderRecurrenceChoice(form);
     // Team visibility (backlog:9aa5c073), like Google Calendar: «Predefinita
     // / Pubblico / Privato». Predefinita is the team default (everyone
     // reads everything); Privato reads as «Occupato» for everyone but the
@@ -6004,6 +6141,9 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        // backlog:0f2ae629e09b — «Non si ripete» is null; anything else is
+        // the validated rule the series books.
+        recurrence: recurrenceRuleFromState(),
         visibility: read('visibility'),
         location: read('location') === '' ? null : read('location'),
         locationUrl: read('locationUrl') === '' ? null : read('locationUrl'),
@@ -6211,6 +6351,20 @@ export function createCalendarioView(deps) {
         console.warn('bo-calendario booking refused:', String(error?.code ?? 'unknown'), `spaceId=${readSpace()}`);
         state.serviceError = calendarRefusalText(error) ?? '';
         state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+        // backlog:0f2ae629e09b — la serie non si conferma con Google
+        // collegato: il server non ha scritto niente, la frase dice cosa fare.
+        state.bookingNote = calendarRefusalText(error) ?? 'Con Google Calendar collegato le ricorrenze arrivano presto.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_OVERLAP' && claim?.recurrence) {
+        // backlog:0f2ae629e09b — a series is checked occurrence by
+        // occurrence: the refusal names which one is busy, never a bare
+        // «riprova più tardi».
+        const details = error?.details ?? {};
+        const total = Number(details.occurrenceCount ?? 0);
+        const at = Number(details.occurrenceIndex ?? 0) + 1;
+        state.bookingNote = Number.isFinite(total) && total > 0
+          ? `L'occorrenza ${at} di ${total} è occupata per questa persona: scegli un altro orario o annulla l'appuntamento che la occupa, poi riprova.`
+          : 'Una delle occorrenze è occupata per questa persona: scegli un altro orario, poi riprova.';
       } else {
         state.bookingNote = humanWriteError(error, {
           failed: 'Prenotazione non riuscita. Riprova più tardi.',
@@ -6263,6 +6417,7 @@ export function createCalendarioView(deps) {
       state.selection = null;
       state.manualOpen = false;
       state.manual = null;
+      state.manualRecurrence = null;
       // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): leaving
       // and returning drops the typed marks too, never a stale «written».
       state.manualTyped.clear();
@@ -6344,7 +6499,8 @@ export function createCalendarioView(deps) {
  * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
  *   teamMemberId: string, serviceKey: string, priceCents: number | null,
  *   startsAt: string | null, endsAt: string | null, notes?: string | null,
- *   location?: string | null, locationUrl?: string | null}} input
+ *   visibility?: string, location?: string | null, locationUrl?: string | null,
+ *   recurrence?: { kind: string } | null}} input
  */
 export function bookingClaim(input) {
   const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
@@ -6368,6 +6524,9 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    // backlog:0f2ae629e09b — «Non si ripete» rides null; a series rides
+    // the validated rule the server expands.
+    recurrence: input.recurrence ?? null,
     // Team visibility (backlog:9aa5c073): the live select value, or absent
     // when the form never painted one — the server reads absent as the team
     // default and refuses anything outside default/public/private.
