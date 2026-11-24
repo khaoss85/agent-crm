@@ -395,6 +395,28 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+/* backlog:78f79b0768ac: the send step of an approved quote — one main action,
+ * the ready message as a quiet card with the link as a short copyable pill,
+ * one status line, and «Crea un nuovo link» as a text action below. */
+.bo-offer .offer-share { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 14px; }
+.bo-offer .offer-share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bo-offer .offer-share-ready { box-sizing: border-box; max-width: min(640px, 100%); min-width: 0; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface-soft); }
+.bo-offer .offer-share-ready[hidden] { display: none; }
+.bo-offer .offer-share-message { margin: 0; font-size: 14px; line-height: 1.7; color: var(--ink); overflow-wrap: anywhere; }
+.bo-offer .offer-share-pill { display: flex; align-items: center; gap: 4px; box-sizing: border-box; width: fit-content; max-width: 100%; margin: 6px 0; padding: 2px 3px 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); vertical-align: middle; line-height: 1.3; }
+.bo-offer .offer-share-pill .offer-share-link-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; color: var(--ink); text-decoration: none; }
+.bo-offer .offer-share-pill .offer-share-link-open:hover { color: var(--accent); }
+.bo-offer button.offer-share-copy { flex: none; padding: 4px 10px; border: 0; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+.bo-offer button.offer-share-copy:hover { transform: none; background: var(--accent); color: var(--paper); }
+.bo-offer .offer-share-line { margin: 0; max-width: min(640px, 100%); }
+.bo-offer .offer-share-line:empty { display: none; }
+.bo-offer .offer-share-regen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.bo-offer button.offer-share-regen, .bo-offer button.offer-share-regen-cancel { padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
+.bo-offer button.offer-share-regen:hover, .bo-offer button.offer-share-regen-cancel:hover { transform: none; color: var(--ink); text-decoration: underline; }
+@media (max-width: 480px) {
+  .bo-offer .offer-share { align-items: stretch; }
+  .bo-offer .offer-share-actions > button { flex: 1 1 auto; }
+}
 /* backlog 169cd4bc988c: the offer page is never a dead end — the customer
  * opens their scheda, «Cambia stato» sits beside Modifica as a small menu
  * card, «Crea preventivo» heads the quotes. */
