@@ -1335,11 +1335,15 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (state.editSaved !== null && state.editSaved.key === card.sourceKey) {
       const saved = el(documentNode, 'p', 'bo-agent-done', state.editSaved.text);
       saved.setAttribute('role', 'status');
+      // backlog:26afd13657c5 (ritorno 2): dopo Salva il fuoco va alla
+      // conferma — un <p> non lo prende senza tabindex.
+      saved.setAttribute('tabindex', '-1');
       box.appendChild(saved);
     }
     if (state.notice !== '' && state.noticeKey === card.sourceKey) {
       const said = el(documentNode, 'p', 'bo-agent-done', state.notice);
       said.setAttribute('role', 'status');
+      said.setAttribute('tabindex', '-1');
       box.appendChild(said);
     }
 
@@ -1741,6 +1745,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       const top = Math.ceil((Number.isFinite(barHeight) ? barHeight : 0) + FIELD_SCROLL_GAP);
       note.setAttribute('style', `scroll-margin-top: ${top}px; scroll-margin-bottom: ${FIELD_SCROLL_GAP}px`);
       if (typeof note.scrollIntoView === 'function') note.scrollIntoView({ block: 'nearest' });
+      // backlog:26afd13657c5 (ritorno 2, supervisore 19/11): dopo Salva il
+      // fuoco va alla conferma — lo scroll da solo non basta a chi non vede.
+      if (typeof note.focus === 'function') note.focus({ preventScroll: true });
     } catch {
       // A note that cannot scroll is still painted: the line stays.
     }
@@ -2057,6 +2064,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.editSaved = { key: card.sourceKey, text: `${checked.body.name} aggiornato.` };
       if (await reload()) paint();
       else paint();
+      // backlog:26afd13657c5 (ritorno 2, supervisore 19/11): il pannello si
+      // è chiuso sopra la card e la pagina è restata scorsa — la conferma
+      // restava fuori schermo. La pagina scorre alla card salvata e il
+      // fuoco va alla conferma.
+      revealNotice();
     } catch (error) {
       form.busy = false;
       if (isDecisionUnavailable(error)) {
@@ -2441,6 +2453,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (state.notice !== '' && !noticeOnCard) {
       const done = el(documentNode, 'p', 'bo-agent-done', state.notice);
       done.setAttribute('role', 'status');
+      done.setAttribute('tabindex', '-1');
       page.appendChild(done);
     }
     if (state.unavailable.length > 0) {
