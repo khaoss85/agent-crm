@@ -330,6 +330,39 @@ export function shownOfferState(first, fromQuote, opportunities, pipelines) {
 }
 
 /**
+ * Backlog d4270d5efebe, review #1142: whether the quote-linked opportunity
+ * counts toward the Clienti list «Valore offerta», by the same rule the list
+ * uses (backlog:1adf95307b31, packages/core/src/pipeline-registry.js): a row
+ * filed under the composed opportunity pipeline reads through its stage type
+ * (open/renewal hold value), anything else through the canonical stage
+ * (won/lost close it). The scheda paints the linked value only when open, so
+ * a closed figure never reads as the list figure.
+ * @param {any} linkedOffer the profile opportunity row the quote was made for
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {boolean}
+ */
+export function isLinkedOfferOpen(linkedOffer, pipelines) {
+  if (!linkedOffer || typeof linkedOffer !== 'object') return false;
+  const key = typeof linkedOffer.pipelineStage === 'string' && linkedOffer.pipelineStage !== '' ? linkedOffer.pipelineStage : null;
+  const rowPipeline = typeof linkedOffer.pipelineKey === 'string' && linkedOffer.pipelineKey !== '' ? linkedOffer.pipelineKey : null;
+  const list = Array.isArray(pipelines) ? pipelines : [];
+  const composed = list.find((pipeline) => pipeline !== null && typeof pipeline === 'object'
+    && pipeline.module === 'opportunity' && Array.isArray(pipeline.stages)) ?? null;
+  if (key !== null && composed !== null && rowPipeline === composed.name) {
+    const stage = composed.stages.find((entry) => entry !== null && typeof entry === 'object' && entry.key === key) ?? null;
+    if (stage !== null) return stage.type === 'open' || stage.type === 'renewal';
+  }
+  const canonical = linkedOffer.stage;
+  return typeof canonical === 'string' && canonical !== 'won' && canonical !== 'lost'
+    && LINKED_OFFER_OPEN_STAGES.has(canonical);
+}
+
+// The canonical open stages the list falls back to outside any composed
+// pipeline (packages/core/src/schema.js OPPORTUNITY_STAGES minus the
+// won/lost closers) — the same fallback backlog:1adf95307b31 uses.
+const LINKED_OFFER_OPEN_STAGES = new Set(['discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation']);
+
+/**
  * Backlog 1e939a362c7c: the «Cambia stato» menu of the scheda offer line,
  * for every offer — a quote line acts on the opportunity it was made for.
  * An offer placed on a composed pipeline moves through that pipeline's
@@ -1139,6 +1172,25 @@ export function noteRefusalText(error) {
     return `La nota non è stata accettata: scrivi un testo semplice, da 1 a ${NOTE_MAX} caratteri.`;
   }
   return humanWriteError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
+}
+
+/**
+ * What a refused custom-field value says (backlog:ed03a20360d5, verifica Mac
+ * 20/11: «—» svuota, un 400 senza spiegazione no): a validation refusal
+ * reads the reason the server named — retrying the same value would meet
+ * the same refusal, so never «Riprova più tardi». Anything the server did
+ * not name keeps the write's own wording.
+ * @param {unknown} error
+ */
+export function fieldValueRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'VALIDATION_FAILED' || status === 400 || status === 422) {
+    const said = String(record.message ?? '').trim();
+    if (said !== '') return said;
+  }
+  return humanWriteError(error, { failed: 'Campo non salvato: il server non risponde, riprova tra poco.' });
 }
 
 /**
@@ -3938,7 +3990,7 @@ export function createCustomerCardView(deps) {
         closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
-        entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
+        entry.setError(fieldValueRefusalText(err));
         busy = false;
       }
     }));
@@ -4673,9 +4725,12 @@ export function createCustomerCardView(deps) {
         if (item?.entry === 'offer-created' || item?.entry === 'stage-moved') {
           // backlog:82235e46e3e9: an offer or a stage move in the
           // cronologia — a system line with its own mark, never a bubble.
+          // backlog:acd136b3cd5d: an author the reads cannot name paints
+          // no «da —» tail — the fact stays, the empty author does not
+          // (same rule as the offer page's historyLine).
           const when = timeParts(item?.occurredAt);
           const head = item.entry === 'offer-created' ? 'Offerta creata' : 'Cambio di stato';
-          const by = typeof item.who === 'string' && item.who !== '' ? ` · da ${item.who}` : '';
+          const by = typeof item.who === 'string' && item.who !== '' && item.who !== '—' ? ` · da ${item.who}` : '';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-event');
           const mark = el('span', 'bo-scheda-chan bo-tile-event', item.entry === 'offer-created' ? '€' : '→');
           mark.setAttribute('aria-hidden', 'true');
@@ -4882,7 +4937,12 @@ export function createCustomerCardView(deps) {
       }
       if (ordered.length > visible.length) {
         const rest = ordered.length - visible.length;
-        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        // backlog:acd136b3cd5d: «20 di 20» reads as if everything were
+        // shown while a page is still hidden — a remainder that fits one
+        // page names no counts, only the action.
+        const older = el('button', 'bo-scheda-older', rest <= TIMELINE_PAGE
+          ? 'Mostra precedenti'
+          : `Mostra precedenti · ${TIMELINE_PAGE} di ${rest}`);
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
@@ -5561,16 +5621,41 @@ export function createCustomerCardView(deps) {
     // offer page hero): never two bare figures that read as the same.
     const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
       fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
+    // backlog:d4270d5efebe: a quote line hid the offer value the Clienti list
+    // shows (the list sums open opportunities, the scheda showed only the
+    // quote total: 1 € vs 15 € on 19/11). Paint the linked opportunity's own
+    // value beside the quote total, with the same «valore dell’offerta»
+    // label the offer row uses — the list's words for the linked row's own
+    // figure. Shown only when it differs AND the linked row is open by the
+    // same rule the list uses (review #1142 P1, isLinkedOfferOpen): a
+    // won/lost/closed linked offer is out of the list total, so the scheda
+    // never paints it beside the quote as if it were the list figure. With
+    // several open offers the list sums them all while this line shows only
+    // the linked one (follow-up, disclosed in the PR).
+    const linkedOffer = fromQuote && typeof first?.opportunityId === 'string' && Array.isArray(opportunities)
+      ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+      : null;
+    const linkedDiffers = linkedOffer !== null
+      && (linkedOffer.amountCents !== first?.amountCents || linkedOffer.currency !== first?.currency);
+    const offerAmount = linkedDiffers && isLinkedOfferOpen(linkedOffer, pipelines)
+      && Number.isSafeInteger(linkedOffer?.amountCents) && linkedOffer.amountCents > 0
+      && typeof linkedOffer?.currency === 'string' && linkedOffer.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(linkedOffer.amountCents, linkedOffer.currency)) : null;
+    const offerAmountNote = offerAmount === null ? null : el('p', 'bo-scheda-offer-amount-note', 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
       if (amountNote) box.appendChild(amountNote);
+      if (offerAmount) box.appendChild(offerAmount);
+      if (offerAmountNote) box.appendChild(offerAmountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
       if (amountNote) link.appendChild(amountNote);
+      if (offerAmount) link.appendChild(offerAmount);
+      if (offerAmountNote) link.appendChild(offerAmountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -5912,15 +5997,19 @@ export function createCustomerCardView(deps) {
         const words = stageMoveLabels(pipelines, move);
         const who = auditActorLabel(entry, [owner, companyName], people);
         const when = italianDateTime(entry?.createdAt) ?? '—';
+        // backlog:acd136b3cd5d: an actor the reads cannot name paints no
+        // «da —» tail — the move stays, the empty author does not (same
+        // rule as the offer page's historyLine).
+        const by = who === '—' || who === '' ? '' : ` · da ${who}`;
         if (words === null) {
           // Review giro 1 (P2): the audit holds a move but no side has a
           // label (pipelines unavailable, unknown keys). Like the detail,
           // the row reads the generic Italian line — never a raw key, and
           // never a false «no moves» message for moves that exist.
           // Backlog 169cd4bc988c: one word for every move, like the offer page.
-          rows.push(`Cambio di stato · da ${who} · ${when}`);
+          rows.push(`Cambio di stato${by} · ${when}`);
         } else {
-          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+          rows.push(`da ${words.from} a ${words.to}${by} · ${when}`);
         }
         if (rows.length >= 5) break;
       }

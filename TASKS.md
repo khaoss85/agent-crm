@@ -251,3 +251,5 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 Execution: `docs/plans/traction-first-working-example.md`. Live publication receipts, external responses and dated follow-up are tracked in [issue #176](https://github.com/khaoss85/agent-crm/issues/176).
 
 - [ ] **MK1 recovery review:** opt-in funnel observation, complete-or-refused proposal and human approval implementation recovered with real HTTP/SDK and fault-injection evidence; final clean-clone verification and pre-merge review remain in `docs/plans/mk1-marketing-recovery.md`. No send, publish or spend path.
+
+- [ ] **Restyle: catalogo skill cliente (backlog:0e9f723da891, mano: mac).** Candidate UI excludes project-based coding skills from discovery, preserves existing activations for deactivation, and points an empty catalog to Agenti. See `docs/plans/restyle-catalogo-skill-cliente.md`; design approval, merge and production verification remain pending.

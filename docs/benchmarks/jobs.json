@@ -493,12 +493,15 @@
       "id": "JTBD-CS-01",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-integrity.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
+      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-tamper-a.test.js, tests/signed-terms-tamper-b.test.js, tests/signed-terms-linkage.test.js, tests/signed-terms-anchor.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
         "tests/contracts-review.test.js",
+        "tests/signed-terms-anchor.test.js",
         "tests/signed-terms-e2e.test.js",
-        "tests/signed-terms-integrity.test.js"
+        "tests/signed-terms-linkage.test.js",
+        "tests/signed-terms-tamper-a.test.js",
+        "tests/signed-terms-tamper-b.test.js"
       ],
       "title": "Activate a commercial contract from a signed Order"
     },

@@ -31,6 +31,7 @@ import {
   buildChannelInvite,
   oggiDateLine,
   renderOggi,
+  romeHour,
   romeDayKey,
   romeDayPhrase,
   romeDayKeyShift,
@@ -67,9 +68,26 @@ test('greeting follows the hour, in Italian', () => {
   assert.equal(greetingForHour(12), 'Buon pomeriggio');
   assert.equal(greetingForHour(15), 'Buon pomeriggio');
   assert.equal(greetingForHour(18), 'Buonasera');
-  assert.equal(greetingForHour(23), 'Buonasera');
-  assert.equal(greetingForHour(0), 'Buonasera');
-  assert.equal(greetingForHour(4), 'Buonasera');
+  assert.equal(greetingForHour(21), 'Buonasera');
+  // backlog:acd136b3cd5d: the night reads «Buonanotte» (22–5), never
+  // «Buonasera» at 4 in the morning.
+  assert.equal(greetingForHour(22), 'Buonanotte');
+  assert.equal(greetingForHour(23), 'Buonanotte');
+  assert.equal(greetingForHour(0), 'Buonanotte');
+  assert.equal(greetingForHour(4), 'Buonanotte');
+  assert.equal(greetingForHour(undefined), 'Buongiorno');
+});
+
+test('romeHour reads Rome, never the device clock (backlog:acd136b3cd5d)', () => {
+  // Winter (UTC+1): 23:30Z in London is already past midnight in Rome.
+  assert.equal(romeHour(new Date('2026-01-15T23:30:00.000Z')), 0);
+  assert.equal(greetingForHour(romeHour(new Date('2026-01-15T23:30:00.000Z'))), 'Buonanotte');
+  // Summer (UTC+2): 20:30Z is 22:30 in Rome — night, though the UTC clock
+  // still reads evening.
+  assert.equal(romeHour(new Date('2026-07-15T20:30:00.000Z')), 22);
+  assert.equal(greetingForHour(romeHour(new Date('2026-07-15T10:00:00.000Z'))), 'Buon pomeriggio');
+  assert.equal(romeHour('not-a-date'), null);
+  assert.equal(romeHour(null), null);
 });
 
 test('date line is the real date, in Italian', () => {

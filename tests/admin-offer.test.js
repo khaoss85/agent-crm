@@ -400,6 +400,41 @@ test('Modifica prefills from the record and Salva PATCHes the three facts', asyn
   assert.ok(mount.textContent.includes('Guido'), 'the re-rendered detail shows the saved referente');
 });
 
+test('26afd13657c5: Modifica → Salva aggiorna la scheda sul posto con «Dati salvati.» (ritorno 2)', async () => {
+  // Riproduce il NON PASSA del verificatore 19/11 (ritorno 2): dopo Salva
+  // la pagina restava su «Salvo…» e poi ricaricava tutto («Carico
+  // l’offerta…») senza nessuna conferma. Rosso senza la cura (rilettura +
+  // nessuna conferma), verde dopo.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ quotes: [], audit: [] });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const reads = () => client.calls.filter((call) => (call.method ?? 'GET') === 'GET' && call.path === '/api/opportunities/off1').length;
+  const readsBefore = reads();
+  assert.ok(readsBefore >= 1, 'la pagina ha letto l’offerta');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = '300.50';
+  form.__editInputs.expiry.value = '2026-12-01';
+  form.__editInputs.owner.value = 'guido';
+  await form.__save({ preventDefault() {} });
+
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 1, 'una PATCH su Salva');
+  assert.equal(reads(), readsBefore, 'nessuna rilettura dopo Salva: niente scheletro, niente salto in alto');
+  const box = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  const saved = box.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'offer-saved');
+  assert.ok(saved, 'la conferma sta vicino al campo');
+  assert.equal(saved.textContent, 'Dati salvati.');
+  assert.equal(saved.getAttribute('role'), 'status');
+  assert.equal(saved.__scrolledIntoView, true, 'la conferma entra in vista');
+  assert.equal(saved.__focused, true, 'il fuoco va alla conferma');
+  assert.ok(mount.textContent.includes('Guido'), 'il referente salvato si vede senza ricaricare');
+});
+
 test('the edit validates before writing and keeps the form on a refused save', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -468,6 +503,24 @@ test('a negative Valore says it cannot be negative, never «obbligatorio» (back
   assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH on a negative valore');
   assert.ok(form.__editError.textContent.includes('negativo'),
     `a negative valore names why: ${form.__editError.textContent}`);
+});
+
+test('a Valore above the ceiling is refused with the ceiling message, never sent (voce 05dac489)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ quotes: [], audit: [] });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = '999.999.999.999,00';
+  form.__editInputs.owner.value = 'guido';
+  await form.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH above the ceiling');
+  assert.ok(form.__editError.textContent.includes('1.000.000,00'),
+    `an over-ceiling valore names the ceiling: ${form.__editError.textContent}`);
 });
 
 test('the edit error keeps Salva and Annulla on their own row, the message outside it (backlog:18cdf78c)', async () => {
@@ -1158,7 +1211,7 @@ test('96c7b56001ba: opened from a scheda the way back is that scheda, through ev
   assert.equal(back().textContent, '← Giulia Verdi', 'named after the customer it goes back to');
   assert.equal(back().getAttribute('href'), '#/customer-card/contact/c1');
   assert.equal(parseModuleRoute(back().getAttribute('href')).view, 'customer-card', 'the link is a real route');
-  // Salva re-reads the page: the way back stays.
+  // Salva updates the page in place (26afd13657c5, no re-read): the way back stays.
   const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
   wrap.__edit();
   const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');

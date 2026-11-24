@@ -10,7 +10,7 @@ import {
   manualSteps,
   reportingSummary,
 } from '../apps/admin/public/admin-reporting.js';
-import { buildShellNav } from '../apps/admin/public/admin-shell.js';
+import { buildShellNav, createShellView } from '../apps/admin/public/admin-shell.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { runSuggestion, suggestionsFor } from '../apps/admin/public/admin-assistant.js';
 import { aiPlaceholder } from '../apps/admin/public/admin-shell.js';
@@ -406,4 +406,47 @@ test('sidebar lists Reporting and Nuovo modulo under Moduli personalizzati', () 
   assert.equal(byId['nuovo-modulo'].available, true);
   assert.equal(byId['nuovo-modulo'].group, 'custom');
   assert.ok(REPORTING_LIMIT >= 1, 'the read page stays bounded');
+});
+
+test('backlog:8e1092b95c8a repro: Nuovo modulo e Assistente senza parole tecniche a schermo', async () => {
+  // Ritorno del verificatore 20/11: il menu «+ Nuovo modulo» mostrava
+  // «il tuo agente di coding lo prepara separato dal resto» e la guida
+  // dell'Assistente parlava di «agente di coding». Rosso prima della cura.
+  const banned = ['manifest', 'bundle', 'kernel', 'createaccordoapp', 'record', 'coding', 'agente di coding', 'separat', 'llm', 'audit', 'nucleo', 'cartella', 'comand', 'prompt'];
+  const check = (text, where) => {
+    const lower = String(text ?? '').toLowerCase();
+    for (const word of banned) assert.ok(!lower.includes(word), `${where} mostra «${word}»: ${text}`);
+  };
+  // 1. Il menu «+ Nuovo modulo» nella barra laterale.
+  const shellSidebar = createMount();
+  createShellView({ doc: createFakeDocument(), sidebar: shellSidebar, topbar: createMount() });
+  const addMenu = shellSidebar.findAll('div').find((node) => (node.className ?? '').split(/\s+/).includes('bo-add-menu'));
+  assert.ok(addMenu, 'the add menu renders');
+  check(addMenu.textContent, 'il menu + Nuovo modulo');
+  // 2. La vista Nuovo modulo: solo ciò che si vede subito. I passi per chi
+  // sviluppa restano chiusi nel details: si controlla il sommario visibile,
+  // non i comandi nascosti.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createReportingView({
+    doc,
+    mount,
+    client: { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return { items: [] }; } },
+    navigate: () => {},
+    onAskAi: () => {},
+  });
+  view.renderNuovoModulo();
+  const form = mount.findAll('section').find((node) => (node.getAttribute('class') ?? '').includes('bo-modulo-form'));
+  assert.ok(form, 'the nuovo-modulo form renders');
+  check(form.textContent, 'la vista Nuovo modulo');
+  for (const input of form.findAll('input')) check(input.getAttribute('placeholder') ?? '', 'il segnaposto');
+  const summary = mount.findAll('summary').map((node) => node.textContent).join('\n');
+  check(summary, 'il sommario dei passi per chi sviluppa');
+  // 3. L'Assistente sulla schermata Nuovo modulo: suggerimento e risposta.
+  const suggestion = suggestionsFor('nuovo-modulo').find((entry) => entry.id === 'bo05:nuovo-modulo:crea-ai');
+  assert.ok(suggestion, 'the nuovo-modulo suggestion exists');
+  check(`${suggestion.title} ${suggestion.detail ?? ''}`, 'il suggerimento');
+  const answer = await runSuggestion({ request: async () => ({}) }, 'bo05:nuovo-modulo:crea-ai');
+  assert.ok(answer.lines.length > 0, 'the answer has lines');
+  for (const line of answer.lines) check(line, 'la risposta');
 });

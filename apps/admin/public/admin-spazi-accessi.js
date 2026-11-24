@@ -32,6 +32,9 @@
 // - flips: POST /api/space-permissions/set-permission, the operation that
 //   runs the package's own `set-permission` action (human-only, same codes),
 //   never a direct row write — every override row field is managed;
+// - gate: GET /api/assistant/status, the same verdict the Assistente panel
+//   and the composer read (backlog:b139d83617f3) — the master switch and the
+//   status say the same thing, so a ceiling-kept space never reads flippable;
 // - the backoffice tokens and rows of styles.css (bo-*): team and AI panels
 //   in a two-column row like prototype screen 08, single column under 700px.
 //
@@ -46,6 +49,7 @@ import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
+import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantGateOf } from './admin-assistant-gate.js';
 import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import {
@@ -360,6 +364,23 @@ export function masterEnabled(spaceId, overrideRows = []) {
 }
 
 /**
+ * The master verdict: the stored switch corrected by the gate
+ * (backlog:b139d83617f3). The owner ceiling locks whatever the stored
+ * switch says — with the gate off and code `LLM_SPACE_DISABLED` the
+ * space reads off and unflippable, with who can enable it (a flip would
+ * be refused up there, so nothing promises «riaccendi»). Anything else
+ * follows the stored switch, and a missing, empty or unreadable gate
+ * (standalone framework, failed read) changes nothing — the stored
+ * permission is the authority there. The gate never turns a switch on.
+ * @param {{storedOn?: unknown, gate?: {enabled: boolean, code: string|null}|null}} [input]
+ * @returns {{on: boolean, locked: boolean}}
+ */
+export function aiMasterVerdict({ storedOn = true, gate = null } = {}) {
+  const locked = gate !== null && gate.enabled === false && gate.code === 'LLM_SPACE_DISABLED';
+  return { on: storedOn === true && !locked, locked };
+}
+
+/**
  * backlog:2de01913d276 (verifica 17/11: 11 caricamenti di profilo e membri
  * in 60 s dopo un 429): one load reads once. Concurrent identical GETs in
  * the same load share one in-flight request — profile and members leave
@@ -456,6 +477,11 @@ export function createSpaziAccessiView(deps) {
     overrides: null,
     /** @type {string|null} why the switches are not shown */
     switchesUnavailable: null,
+    // backlog:b139d83617f3: the gate verdict behind the master switch
+    // ({enabled, code} or null when unread, failed or unshaped — the
+    // stored permission stays the authority then).
+    /** @type {{enabled: boolean, code: string|null}|null} */
+    gate: null,
     /** @type {Map<string, string>} card statistic by space id; a space with
      * an unknown count simply has no entry, never an invented row */
     stats: new Map(),
@@ -715,6 +741,7 @@ export function createSpaziAccessiView(deps) {
     state.membersUnavailable = null;
     state.overrides = null;
     state.switchesUnavailable = null;
+    state.gate = null;
     state.stats = new Map();
     state.spaceConns = new Map();
     // backlog:2de01913d276: the statistic follows the data, never the other
@@ -761,7 +788,11 @@ export function createSpaziAccessiView(deps) {
     const switchesRead = settle(Promise.resolve().then(() => readsClient.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
     )));
-    return { contextRead, membersRead, agentsRead, switchesRead };
+    // backlog:b139d83617f3: the gate verdict behind the master switch — one
+    // read per load, beside the data (the skeleton covers it: no switch
+    // flips before its value is known).
+    const gateRead = settle(Promise.resolve().then(() => readsClient.request(ASSISTANT_STATUS_PATH)));
+    return { contextRead, membersRead, agentsRead, switchesRead, gateRead };
   }
 
   /**
@@ -805,7 +836,7 @@ export function createSpaziAccessiView(deps) {
   /**
    * The data the page paints: role, team, agents and switches. The statistic
    * is not awaited here — it fills in with {@link loadStats}.
-   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any>, gateRead: Promise<any> }} reads
    */
   async function loadCore(reads) {
     const context = await reads.contextRead;
@@ -854,6 +885,12 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
+    // backlog:b139d83617f3: the verdict the master switch obeys. A refused
+    // read still carries the server's truth (a refusal with the ceiling
+    // code locks like a 200 with it); anything unreadable or unshaped is
+    // null and the stored permission stays the authority.
+    const gate = await reads.gateRead;
+    state.gate = gate.ok ? assistantGateOf(gate.value) : assistantGateOf(gate.error);
   }
 
   /**
@@ -1576,11 +1613,23 @@ export function createSpaziAccessiView(deps) {
     // is the panel's headline: with the master off the five stay visible
     // with their own honest values but disabled, because they decide
     // nothing until the master is back on.
-    const master = masterEnabled(space.id, state.overrides);
+    // backlog:b139d83617f3: the stored switch corrected by the gate — a
+    // ceiling-kept space reads off and locked, with who can enable it,
+    // never «finché non la riaccendi» (there is nothing to re-flip here).
+    // The locked line branches on the viewer role like the Assistente
+    // panel: the titolare is told where to turn it on, never to ask
+    // themself (review rev-agent-crm-1126-4389fec29d94 P1).
+    const verdict = aiMasterVerdict({ storedOn: masterEnabled(space.id, state.overrides), gate: state.gate });
+    const master = verdict.on;
+    const lockedNotice = state.myRole === 'owner'
+      ? ASSISTANT_SPACE_DISABLED_OWNER_NOTICE
+      : ASSISTANT_SPACE_DISABLED_NOTICE;
     section.appendChild(el(doc, 'p', {
       text: master
         ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
-        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
+        : verdict.locked
+          ? `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}. ${lockedNotice}`
+          : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
       cls: 'bo-muted',
     }));
     const switches = [
@@ -1612,12 +1661,19 @@ export function createSpaziAccessiView(deps) {
         toggle.setAttribute('aria-checked', 'false');
         toggle.setAttribute('data-paused', 'true');
         texts.appendChild(el(doc, 'div', {
-          text: entry.enabled ? 'In pausa: riparte acceso quando riaccendi l\u2019AI.' : 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.',
+          // backlog:b139d83617f3: under the ceiling lock nothing «riparte
+          // quando riaccendi» — flipping is refused up there, so every
+          // paused switch says only that it is paused.
+          text: verdict.locked || !entry.enabled
+            ? 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.'
+            : 'In pausa: riparte acceso quando riaccendi l\u2019AI.',
           cls: 'bo-spazi-paused',
         }));
       }
       toggle.setAttribute('data-on', entry.enabled && !paused ? 'true' : 'false');
-      toggle.disabled = state.busy || paused;
+      // backlog:b139d83617f3: the locked master is not flippable — the flip
+      // would be refused by the ceiling, so no confirm opens for it.
+      toggle.disabled = state.busy || paused || (verdict.locked && entry.master === true);
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.switchRefusal = null;
