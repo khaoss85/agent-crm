@@ -3670,9 +3670,40 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('span', undefined, value));
       box.appendChild(row);
     };
+    // backlog:06457e5c9717: an empty field is hidden or invites the add —
+    // never a bare «non disponibile». The edit path below opens the same
+    // Dettagli form, with the cursor in the email field.
+    const contact = profile?.identity?.contact ?? null;
+    const canEdit = editCtx && card?.subject?.resource === 'contact'
+      && contact && typeof contact.id === 'string' && contact.id !== '';
+    // Dan 06/11: Annulla puts this card back as it was — no reload of the
+    // whole scheda (it used to blank for seconds and jump to the top).
+    const restore = () => {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      details(box, card, profile, editCtx, profileError);
+    };
+    const openForm = (focusName) => {
+      // backlog:26afd13657c5: il form aperto non mostra la conferma
+      // del salvataggio di prima — niente riga vecchia sotto i campi.
+      detailsSavedKey = null;
+      renderDetailsForm(box, card, contact, editCtx, restore);
+      // backlog:fe9be5f0af4a: the cursor in the field, at the end.
+      focusAtEnd(box.querySelector(`input[name="${focusName}"]`));
+    };
     fact('Nome', card?.name ?? '—');
     if (shownCompanyName(card)) fact('Azienda', shownCompanyName(card));
-    fact('Email', card?.email ?? 'non disponibile');
+    if (typeof card?.email === 'string' && card.email.trim() !== '') {
+      fact('Email', card.email);
+    } else if (canEdit) {
+      const row = el('p', 'bo-scheda-fact');
+      row.appendChild(el('span', 'bo-scheda-fact-label', 'Email'));
+      const add = el('button', 'bo-campo-value is-empty', 'Aggiungi');
+      add.setAttribute('type', 'button');
+      add.setAttribute('aria-label', 'Aggiungi Email');
+      add.addEventListener('click', () => openForm('email'));
+      row.appendChild(add);
+      box.appendChild(row);
+    }
     // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
     // stay in the API response, never on screen.
     fact('Telefono', card?.phone?.available === true && card.phone.value
@@ -3703,7 +3734,6 @@ export function createCustomerCardView(deps) {
     }
     // Voce 714433c2: Modifica opens the in-place form below. Company
     // records have no update path yet, so a company scheda shows no button.
-    const contact = profile?.identity?.contact ?? null;
     // backlog:26afd13657c5: la conferma del salvataggio sta nei Dettagli,
     // sopra il bottone — vicina alla card salvata, non solo nel toast.
     if (detailsSavedKey !== null && editCtx
@@ -3712,27 +3742,13 @@ export function createCustomerCardView(deps) {
       saved.setAttribute('role', 'status');
       box.appendChild(saved);
     }
-    if (editCtx && card?.subject?.resource === 'contact'
-      && contact && typeof contact.id === 'string' && contact.id !== '') {
+    if (canEdit) {
       // backlog:4cfa30c164ca: a natural-width button like the other
       // secondary voices — never stretched full-width by the card column.
       const edit = el('button', 'bo-scheda-details-edit', 'Modifica');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', 'edit-details');
-      // Dan 06/11: Annulla puts this card back as it was — no reload of the
-      // whole scheda (it used to blank for seconds and jump to the top).
-      const restore = () => {
-        while (box.firstChild) box.removeChild(box.firstChild);
-        details(box, card, profile, editCtx, profileError);
-      };
-      edit.addEventListener('click', () => {
-        // backlog:26afd13657c5: il form aperto non mostra la conferma
-        // del salvataggio di prima — niente riga vecchia sotto i campi.
-        detailsSavedKey = null;
-        renderDetailsForm(box, card, contact, editCtx, restore);
-        // backlog:fe9be5f0af4a: the cursor in the first field, at the end.
-        focusAtEnd(box.querySelector('input[name="firstName"]'));
-      });
+      edit.addEventListener('click', () => openForm('firstName'));
       box.appendChild(edit);
       if (pendingDrafts && pendingDrafts.details) {
         const typed = pendingDrafts.details;
@@ -4661,23 +4677,22 @@ export function createCustomerCardView(deps) {
       const ordered = orderedRows();
       const visible = ordered.slice(0, timelineShown);
       if (ordered.length === 0) {
-        // Voce 59def6cb805d (C27): the exact empty state of the prototype,
-        // never a technical sentence.
+        // backlog:06457e5c9717: the empty state names no button that may not
+        // exist and no «qui sotto» — the note field is below, but the words
+        // must not point at it.
         if (channelFilter === 'note') {
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessuna nota qui'));
-          list.appendChild(el('p', 'bo-muted', 'Scrivi una nota qui sotto: resta nella cronologia del cliente.'));
+          list.appendChild(el('p', 'bo-muted', 'Usa il campo nota per aggiungerne una: resta nella cronologia del cliente.'));
           return;
         }
-        // backlog:82235e46e3e9: the field below writes a note, not a
-        // message: the empty state names the right tool for each.
         if (channelFilter === 'all') {
           if (movesPending) return;
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
-          list.appendChild(el('p', 'bo-muted', 'Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'));
+          list.appendChild(el('p', 'bo-muted', 'Le conversazioni e le note del cliente compariranno qui.'));
           return;
         }
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio su questo canale'));
-        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivigli con «WhatsApp» o «Email».'));
+        list.appendChild(el('p', 'bo-muted', 'Prova a scegliere un altro canale.'));
         return;
       }
       const todayKey = romeDayKey(Date.now());
@@ -5019,6 +5034,17 @@ export function createCustomerCardView(deps) {
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
       const noteError = el('small', 'field-error', '');
+      // backlog:06457e5c9717: the count near the limit — it shows while the
+      // last 100 characters are being written (or past it), and the too-long
+      // error clears as soon as the text is valid again.
+      const NOTE_COUNT_WARN_AT = NOTE_MAX - 100;
+      const noteCount = el('small', 'bo-scheda-note-count', '');
+      const paintNoteCount = () => {
+        const length = String(noteInput.value ?? '').trim().length;
+        noteCount.textContent = length >= NOTE_COUNT_WARN_AT ? `${length}/${NOTE_MAX} caratteri` : '';
+        if (length <= NOTE_MAX && noteError.textContent === NOTE_TOO_LONG) noteError.textContent = '';
+      };
+      noteInput.addEventListener('input', paintNoteCount);
       const addNote = () => uiBusy(noteButton, 'Salvo…', async () => {
         // Review #793 (P2): the guard is the view's, not this form's — a
         // repaint while the note is saving (the roster arriving) rebuilds
@@ -5073,6 +5099,8 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(noteInput);
       noteForm.appendChild(noteButton);
       noteForm.appendChild(noteError);
+      noteForm.appendChild(noteCount);
+      paintNoteCount();
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
       composerSlot.appendChild(noteForm);
@@ -5589,12 +5617,12 @@ export function createCustomerCardView(deps) {
     // capital — «Qualificazione», «Prova» — never the bare lower-case word.
     const offerStatus = upperFirst(shownOfferState(first, fromQuote, opportunities, pipelines));
     // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
+    // backlog:06457e5c9717: the badge always in the same place — the last
+    // thing on the line; an unknown state reads as a dash, never missing.
     const line = el('p', 'bo-scheda-offer');
     line.appendChild(el('span', 'bo-scheda-offer-name', name));
-    if (offerStatus) {
-      line.appendChild(el('span', 'bo-scheda-sep', ' · '));
-      line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
-    }
+    line.appendChild(el('span', 'bo-scheda-sep', ' · '));
+    line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus || '—'));
     // backlog:a2ea75f705fd: the offer line opens the offer page
     // (#/offerte/<opportunity id>) — stato, valore, preventivi e storia in
     // one place — for a quote row (its offer) and an offer row alike. Only
@@ -6761,13 +6789,29 @@ export function createCustomerCardView(deps) {
     if (loaded.cardError) {
       emitTitle(null);
       const panel = el('div', 'bo-scheda-error');
-      panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
+      // backlog:06457e5c9717: a 404 is not a temporary error — the customer
+      // is gone, so the panel names it and offers the way back to Clienti,
+      // never a retry that cannot succeed. The read still logs through
+      // humanReadError, like every other failure.
+      const goneText = humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
-      })));
-      // backlog:3a9bee845cc4: a rate limit failing the card read also leaves
-      // a way back — the same re-read the failed sections offer.
-      panel.appendChild(schedaRetryButton());
+        notComposed: 'Questo cliente non esiste più.',
+      });
+      if (isNotComposedFailure(loaded.cardError)) {
+        panel.appendChild(el('h3', undefined, 'Cliente non trovato'));
+        panel.appendChild(el('p', 'bo-muted', goneText));
+        const back = el('button', 'bo-scheda-back', '← Torna a Clienti');
+        back.setAttribute('type', 'button');
+        back.setAttribute('data-action', 'back-to-clienti');
+        back.addEventListener('click', () => navigate('#/customer-data'));
+        panel.appendChild(back);
+      } else {
+        panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
+        panel.appendChild(el('p', 'bo-muted', goneText));
+        // backlog:3a9bee845cc4: a rate limit failing the card read also leaves
+        // a way back — the same re-read the failed sections offer.
+        panel.appendChild(schedaRetryButton());
+      }
       // Review #612 round 3: a failed re-read of the scheda already shown
       // keeps its windows (a half-written Scrivi), filter, pages and scroll;
       // only a first read that fails starts from nothing.
