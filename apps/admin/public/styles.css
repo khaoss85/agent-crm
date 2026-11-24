@@ -3123,6 +3123,18 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 
 /* Verifica Mac 20/11: «Link riunione» nella finestra appuntamento solo con Luogo Online. */
 .bo-offer-field[hidden] { display: none; }
+/* Voce 91c92940274c: Archivia / Elimina / Ripristina nella testata della scheda contatto. */
+.bo-scheda-head-tools { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; max-width: 520px; }
+.bo-scheda-head-tools .ui-btn { min-height: 32px; padding: 4px 12px; font-size: 13px; }
+.bo-scheda-head-tools .bo-scheda-danger { color: var(--danger); }
+.bo-scheda-head-tools .bo-scheda-danger:hover { background: var(--danger-soft); }
+.bo-scheda-head-tools .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
+.bo-scheda-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 10px; background: var(--danger-soft); font-size: 13px; }
+.bo-scheda-confirm > span { flex: 1 1 220px; color: var(--ink); }
+.bo-scheda-confirm[hidden], .bo-scheda-tools-note[hidden], .bo-scheda-head-tools [hidden] { display: none; }
+.bo-scheda-tools-note { flex-basis: 100%; margin: 0; text-align: right; font-size: 13px; color: var(--danger); }
+.bo-scheda-archived-pill { padding: 2px 10px; border-radius: 999px; background: var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
+@media (max-width: 720px) { .bo-scheda-head { flex-wrap: wrap; } .bo-scheda-head-tools { margin-left: 0; max-width: none; justify-content: flex-start; } .bo-scheda-confirm, .bo-scheda-tools-note { justify-content: flex-start; text-align: left; } }
 /* Restyle e47da0d6655e: le offerte fuori da questa pipeline non sono più un link minuscolo — un richiamo con conteggio e valore aperto. */
 .pipeline-switch .pipeline-off-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; }
 .pipeline-switch .pipeline-off-toggle::after { content: "▾"; font-size: 10px; color: var(--dim); }
