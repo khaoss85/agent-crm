@@ -43,6 +43,13 @@ import {
   validateSubject,
 } from './appointments.js';
 import {
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  validateRecurrence,
+} from './recurrence.js';
+import {
   APPOINTMENT_REMINDER_SEND_ACTION,
   APPOINTMENT_REMINDER_SWEEP_HANDLER,
   APPOINTMENT_REMINDER_SWEEP_KIND,
@@ -93,6 +100,11 @@ export const APPOINTMENTS_DOMAIN = APPOINTMENTS_PACKAGE;
 export const APPOINTMENTS_RESOURCES = Object.freeze([APPOINTMENT_MODULE]);
 
 export {
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  validateRecurrence,
   APPOINTMENT_INITIAL,
   APPOINTMENT_STATES,
   APPOINTMENT_TERMINAL,
@@ -233,7 +245,21 @@ export function createAppointmentsPackage(options = {}) {
     // required on every member group) and never offered as free. Server
     // seam only: no caller/request input carries blocks, so nothing to
     // forge and nothing to omit. Old callers unchanged.
-    version: 5,
+    // 6 (backlog:9aa5c073): team visibility default/public/private —
+    // `read-team-week` takes a server-side-only `viewer`, private rows mask
+    // to slot-and-hold for anyone but the creator and the administrators.
+    // 7 (backlog:9aa5c073): the same rule on every other surface — the
+    // generic module reads mask, reschedule/cancel refuse 403, and the
+    // customer schedule masks — with `viewer` on the mutation operations.
+    // 8 (backlog:0f2ae629e09b, small scope): Google-Calendar-style series —
+    // `recurrence` (daily, weekly, monthly) on the booking request expands
+    // to one row per occurrence (series key and index, reminder on the head
+    // only), every occurrence conflict-checked before the first write;
+    // a series with a linked calendar is refused 400 before any write, and
+    // the public link books singles only. Yearly, weekdays and custom are
+    // follow-ups, refused naming `recurrence`.
+    // Additive: singles book exactly as before.
+    version: 8,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -284,6 +310,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { actorId, isAdmin }: a private booking reads full for its creator and the administrators, masked for anyone else. Never from the caller.' },
         ],
         create(runtime) {
           return (input) => flowFor(runtime).schedule.teamWeekFor(input);
@@ -365,6 +392,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
           { name: 'startsAt', type: 'string', required: true, hint: 'New slot start, ISO instant.' },
           { name: 'endsAt', type: 'string', required: true, hint: 'New slot end, ISO instant.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { isAdmin }: a private booking moves only for its creator and the administrators, refused 403 otherwise. Never from the caller.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
@@ -381,6 +409,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
           { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
           { name: 'reason', type: 'string', required: true, hint: 'Why the booking is cancelled, at most 300 characters.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { isAdmin }: a private booking cancels only for its creator and the administrators, refused 403 otherwise. Never from the caller.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).cancelAppointment(input);
@@ -435,8 +464,11 @@ export function createAppointmentsPackage(options = {}) {
           'The reminder send is the booking\'s own approved template to the booking\'s own recipient, and nothing else: no free text ever sends from this path.',
           'A failed automatic send leaves the follow-up open: the human still owes the reminder, and the jobs table shows why the try failed.',
         ],
+        recurrence: 'a series is one validated rule (daily, weekly, monthly) expanded to one row '
+          + 'per occurrence with the series key and index; each occurrence is conflict-checked before the first write, '
+          + 'only the head carries the reminder; a series with a linked calendar is refused, the public link books singles only',
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
-          'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
+          'free-text notifications or sends', 'package credits or payments', 'waitlists'],
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
       };
     },

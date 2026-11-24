@@ -1124,7 +1124,7 @@ export function createReportingView(deps) {
     card.appendChild(el(doc, 'h2', { text: 'Nuovo modulo personalizzato' }));
     card.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Diventa un bundle separato dal kernel: il tuo agente di coding lo genera nel progetto e lo puoi togliere quando vuoi.',
+      text: 'Raccontami cosa ti serve: ti guido con poche domande e alla fine vedi il modulo pronto, insieme agli altri.',
     }));
     const questions = [
       ['nome', 'Nome del modulo', 'Es. Magazzino campioni'],
@@ -1174,7 +1174,7 @@ export function createReportingView(deps) {
     mount.appendChild(card);
 
     const dev = el(doc, 'details', { class: 'panel bo-modulo-dev' });
-    dev.appendChild(el(doc, 'summary', { text: 'Per chi sviluppa: il manifest e i comandi' }));
+    dev.appendChild(el(doc, 'summary', { text: 'Per chi sviluppa: i passi tecnici' }));
     dev.appendChild(el(doc, 'p', {
       class: 'lede',
       text: 'Stesso formato dell\u2019agente (docs/MODULE_MANIFEST.md, docs/BUNDLES.md): scrivi il manifest ed esegui i suoi comandi.',

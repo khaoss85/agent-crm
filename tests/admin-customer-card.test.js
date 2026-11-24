@@ -5795,13 +5795,169 @@ test('backlog:1e07362849db: the scheda labels whose figure it shows when quote t
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       opportunities: {
         available: true, count: 1, countIsComplete: true, truncated: false,
-        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+        items: [{ id: 'o1', stage: 'proposta', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
       },
     },
   }));
   const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
   assert.ok(offerNote, 'the offer value paints labelled too');
   assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
+test('backlog:d4270d5efebe: a quote line also paints the linked offer value the Clienti list shows', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'proposal', status: 'open', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €', '1 €'], 'quote total first, then the linked offer value the list shows');
+  const notes = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note')
+    .map((node) => node.textContent);
+  assert.deepEqual(notes, ['preventivo in bozza', 'valore dell’offerta'], 'each figure carries its own label');
+});
+
+test('backlog:d4270d5efebe: an equal quote paints its figure once, never duplicated', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 100, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'proposal', status: 'proposal', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['1 €'], 'one figure when quote and offer agree');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a won linked offer paints once, never as the list figure', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'won', status: 'won', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'the won figure is out of the list total, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a lost linked offer paints once, never as the list figure', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'lost', status: 'lost', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'the lost figure is out of the list total, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a pipeline-closed linked offer paints once', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'o1', stage: 'won', status: 'won', name: 'Offerta prova',
+          pipelineKey: 'accordo-sales', pipelineStage: 'pagato', amountCents: 100, currency: 'EUR',
+        }],
+      },
+    },
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'a pagato linked offer is won, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a pipeline-open linked offer still paints beside the quote', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'o1', stage: 'proposal', status: 'proposal', name: 'Offerta prova',
+          pipelineKey: 'accordo-sales', pipelineStage: 'proposta', amountCents: 100, currency: 'EUR',
+        }],
+      },
+    },
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €', '1 €'], 'an open pipeline row keeps the linked figure');
 });
 
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
@@ -5821,6 +5977,19 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
   assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
+});
+
+// backlog:c51dca86dc66 verifier-back (ritorno 1, 18/11): the report read the
+// team member's name where the contact's belongs — the title named the user
+// holding the slot instead of the customer. Repro: red on the code before
+// the cure (member-only title), green after (contact named like Oggi).
+test('repro:c51dca86dc66: the next appointment title names the contact, not the member', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: 'Lia Marroni' } }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.ok(title.textContent.includes('per Lia Marroni'), `the contact reads in the title, got: ${title.textContent}`);
+  assert.ok(!title.textContent.endsWith('con Coach Guido'), 'the member name never stands where the contact belongs');
 });
 
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
@@ -7205,4 +7374,36 @@ test('a5fb07706bff verifier-back: la stessa casella con nome visualizzato unisce
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox with display name unions on gmail row');
   assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox with display name unions on email row');
+});
+
+// backlog:df364d3027e5: a future booking that was cancelled never reads as
+// fixed — no green «Appuntamento fissato» check for a slot that will not
+// happen; the cronologia keeps the «Appuntamento annullato» row instead.
+test('df364d3027e5: a future cancelled booking shows no fissato check, only the annullato row', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b9', status: 'cancelled', startsAt: '2099-11-20T10:00:00.000Z', endsAt: '2099-11-20T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-18T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 0, 'no green fissato check for a future slot that was cancelled');
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(cancelled.length, 1, 'the cancellation row stays');
+  assert.ok(cancelled[0].textContent.includes('Appuntamento annullato · Lezione di prova ·'), cancelled[0].textContent);
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'), 'no fixed row at all for the cancelled future');
 });

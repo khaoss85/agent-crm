@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { expandRecurrence, validateRecurrence } from './recurrence.js';
 import {
   ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -68,6 +69,15 @@ export const APPOINTMENT_TRANSITIONS = Object.freeze({
 });
 export const APPOINTMENT_TERMINAL = Object.freeze(['done', 'no-show', 'cancelled']);
 export const APPOINTMENT_INITIAL = 'booked';
+
+/**
+ * Team visibility (backlog:9aa5c073), like Google Calendar: `default` (the
+ * team's default, public), `public`, `private`. A private booking reads as
+ * «Occupato» for everyone but its creator and the administrators, and is
+ * exported to Google with visibility private.
+ */
+export const APPOINTMENT_VISIBILITY = Object.freeze(['default', 'public', 'private']);
+export const APPOINTMENT_VISIBILITY_DEFAULT = 'default';
 
 /** A cancelled booking explains itself; any other move carries no reason. */
 export const CANCELLED_STATE = 'cancelled';
@@ -265,6 +275,21 @@ function validateLocation(value) {
   return optionalSafeText(value, 'location', MAX_LOCATION);
 }
 
+/**
+ * Team visibility (backlog:9aa5c073): absent, null or '' reads as the team
+ * default (public); anything else must be one of APPOINTMENT_VISIBILITY.
+ * Never trimmed into another value: an unknown word is refused, not guessed.
+ *
+ * @param {unknown} value
+ */
+export function validateVisibility(value) {
+  if (value === undefined || value === null || value === '') return APPOINTMENT_VISIBILITY_DEFAULT;
+  if (typeof value !== 'string' || !APPOINTMENT_VISIBILITY.includes(value)) {
+    throw new ValidationError('visibility must be one of "default", "public" or "private"', { field: 'visibility' });
+  }
+  return value;
+}
+
 /** @param {unknown} value @param {string|null} location */
 function validateLocationUrl(value, location) {
   if (value === undefined || value === null || value === '') return null;
@@ -425,6 +450,10 @@ export function validateAppointmentRequest(request) {
     throw new ValidationError('remindAt must be before startsAt: a reminder at or after the slot reminds nobody', { field: 'remindAt' });
   }
   const sourceKey = validateSourceKey(value.sourceKey, 'sourceKey');
+  // A Google-Calendar-style series (backlog:0f2ae629e09b): null means «Non
+  // si ripete». Anything else is normalized here, so every booking path
+  // below (book, propose, confirm) expands the same validated rule.
+  const recurrence = validateRecurrence(value.recurrence ?? null);
   const location = validateLocation(value.location);
   const locationUrl = validateLocationUrl(value.locationUrl, location);
   const reminderChannel = validateReminderChannel(value.reminderChannel, remindAt);
@@ -436,6 +465,7 @@ export function validateAppointmentRequest(request) {
   }
   return {
     sourceKey,
+    recurrence,
     subject: validateSubject(value.subject),
     // The team member is an opaque team identity — the same convention as the
     // interactions package's teamAuthorId. No roster is read and none is
@@ -454,6 +484,7 @@ export function validateAppointmentRequest(request) {
     notes: optionalSafeText(value.notes, 'notes', MAX_NOTES),
     location,
     locationUrl,
+    visibility: validateVisibility(value.visibility),
     remindAt,
     reminderChannel,
     source: validateSource(value.source),
@@ -790,14 +821,124 @@ function bookingTransaction(appointments) {
  * identity: it is a display snapshot taken at creation and never refreshed.
  */
 function replayOrConflict(existing, submitted) {
+  // Rows booked before team visibility existed carry no value (null): they
+  // read as the team default, so a replayed identical claim does not 409
+  // against its own row (backlog:9aa5c073).
+  const effectiveValue = (field) => (field === 'visibility'
+    ? (existing.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT)
+    : (existing[field] ?? null));
   const conflictingFields = Object.keys(submitted)
-    .filter((field) => (existing[field] ?? null) !== (submitted[field] ?? null))
+    .filter((field) => effectiveValue(field) !== (submitted[field] ?? null))
     .sort();
   if (conflictingFields.length === 0) return existing;
   throw new AppError(
     `An appointment already exists for this source key with a different ${conflictingFields.join(' and ')}; `
       + 'it is not overwritten. Read the existing row, or use a new source key for a new booking.',
     { code: 'APPOINTMENTS_LOG_CONFLICT', status: 409, details: { conflictingFields, existingId: existing.id } },
+  );
+}
+
+/** Short Italian label of an occurrence slot for 409 messages the operator reads. */
+function seriesOccurrenceLabel(startsAt) {
+  try {
+    const words = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(startsAt));
+    return words;
+  } catch {
+    return String(startsAt);
+  }
+}
+
+/**
+ * The head instant owns the series: propose and book expand from it, so the
+ * first expanded slot must be that same instant. A rule that starts on
+ * another day would store a head the grid never expands and skip the head
+ * conflict check — refused naming `recurrence`, comparing instants in
+ * milliseconds, never strings.
+ */
+function assertSeriesHeadSlot(input, slots) {
+  if (!Array.isArray(slots) || slots.length === 0) return;
+  const headMs = Date.parse(slots[0].startsAt);
+  if (Number.isFinite(headMs) && headMs !== input.startMs) {
+    throw new ValidationError('il giorno di inizio non è tra i giorni della regola: la serie deve partire dalla data scelta', {
+      field: 'recurrence',
+    });
+  }
+}
+
+/**
+ * A rule that meets no day (a window the rule never lands on) expands to
+ * nothing: refused 400 naming `recurrence` on every path — propose and book
+ * share this gate — never drafted and never a 500. The draft of an empty
+ * series could never be booked, so failing it closed keeps propose and
+ * confirm answering the same refusal.
+ */
+function assertSeriesNonEmpty(slots) {
+  if (Array.isArray(slots) && slots.length === 0) {
+    throw new ValidationError('Questa ricorrenza non produce nessun appuntamento: controlla giorni e data di fine', {
+      field: 'recurrence',
+    });
+  }
+}
+
+/**
+ * First conflicting occurrence of a series against held rows (plus the
+ * series' own earlier slots, so a rule overlapping itself is refused naming
+ * the pair). Null when every occurrence is free.
+ */
+function seriesConflict(held, teamMemberId, slots, total) {
+  const seen = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const slot = slots[index];
+    const probe = { teamMemberId, startMs: slot.startMs, endMs: slot.endMs };
+    const conflict = findOverlap(probe, [...(held ?? []), ...seen]);
+    if (conflict) return { index, slot, conflict };
+    seen.push({
+      id: `series-occurrence-${index + 1}-of-${total}`,
+      status: 'booked',
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+    });
+  }
+  return null;
+}
+
+/** The 409 the operator's dialog shows: which occurrence is busy, and by what. */
+function seriesOverlapError(teamMemberId, hit, total) {
+  if (hit.conflict && hit.conflict.kind === OWNER_BLOCK_KIND) {
+    return new AppError(
+      `L'occorrenza ${hit.index + 1} di ${total} (${seriesOccurrenceLabel(hit.slot.startsAt)}) è occupata: `
+        + `il membro "${teamMemberId}" ha un impegno del titolare dalle ${hit.conflict.startsAt} alle ${hit.conflict.endsAt}. `
+        + 'Sposta la serie o scegli un altro membro, poi riprova.',
+      {
+        code: 'APPOINTMENTS_OVERLAP',
+        status: 409,
+        details: {
+          conflictingId: null,
+          status: null,
+          occurrenceIndex: hit.index,
+          occurrenceStartsAt: hit.slot.startsAt,
+          occurrenceCount: total,
+        },
+      },
+    );
+  }
+  return new AppError(
+    `L'occorrenza ${hit.index + 1} di ${total} (${seriesOccurrenceLabel(hit.slot.startsAt)}) è occupata: `
+      + `il membro "${teamMemberId}" ha già un appuntamento dalle ${hit.conflict.startsAt} alle ${hit.conflict.endsAt} `
+      + `(stato "${hit.conflict.status}"). Sposta la serie o annulla l'appuntamento che la occupa, poi riprova.`,
+    {
+      code: 'APPOINTMENTS_OVERLAP',
+      status: 409,
+      details: {
+        conflictingId: hit.conflict.id ?? null,
+        status: hit.conflict.status ?? null,
+        occurrenceIndex: hit.index,
+        occurrenceStartsAt: hit.slot.startsAt,
+        occurrenceCount: total,
+      },
+    },
   );
 }
 
@@ -972,6 +1113,187 @@ function reminderRequest(input, source) {
 }
 
 /**
+ * The stored row for one booking or one series occurrence: the same shape on
+ * every path, so a single and an occurrence compare identically and old rows
+ * (from before the series columns existed) read back as singles. `series` is
+ * null for a single booking, or `{ seriesKey, occurrenceIndex,
+ * recurrenceRule }` for an occurrence — the head's key is the claim's own
+ * source key, later occurrences derive `:r2`, `:r3`, … from it.
+ */
+function submittedBooking(input, source, reminderKey, series) {
+  return {
+    subjectResource: input.subject.resource,
+    subjectId: input.subject.id,
+    subjectOwner: input.subject.owner,
+    subjectOwnerPackage: input.subject.ownerPackage,
+    teamMemberId: input.teamMemberId,
+    serviceKey: input.serviceKey,
+    priceCents: input.priceCents,
+    currency: input.currency,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    notes: input.notes,
+    location: input.location,
+    locationUrl: input.locationUrl,
+    visibility: input.visibility,
+    // The reminder intent IS the booking's identity: the same source key with
+    // a different reminder (added, removed or moved) is a different claim
+    // behind the same key and is refused 409 rather than replayed into a
+    // booking whose reminder row says something else. The send target rides
+    // the same identity: a retry that moves the channel, the recipient or
+    // the template is a different claim, not a replay. Stored as given and
+    // validated — the adapter canonicalizes deterministically at send time,
+    // so a retry compares exactly what the first booking stored.
+    reminderSourceKey: reminderKey,
+    reminderDueAt: input.remindAt,
+    reminderSpaceId: input.reminderChannel?.spaceId ?? null,
+    reminderConnectionKey: input.reminderChannel?.connectionKey ?? null,
+    reminderTo: input.reminderChannel?.to ?? null,
+    reminderTemplateName: input.reminderChannel?.template.name ?? null,
+    reminderTemplateLanguage: input.reminderChannel?.template.language ?? null,
+    reminderTemplateVars: input.reminderChannel ? JSON.stringify(input.reminderChannel.template.variables) : null,
+    sourcePackage: source.package,
+    sourceAction: source.action,
+    seriesKey: series?.seriesKey ?? null,
+    occurrenceIndex: series?.occurrenceIndex ?? null,
+    recurrenceRule: series?.recurrenceRule ?? null,
+  };
+}
+
+/**
+ * Book a whole series (backlog:0f2ae629e09b): the validated rule expands to
+ * its occurrence slots, every slot is conflict-checked before the first
+ * write (one busy occurrence refuses the whole series with a 409 naming its
+ * date), then each occurrence is stored with the series key and its index.
+ * Only the head carries the reminder: one series, one reminder, on the first
+ * slot — per-occurrence reminders are a follow-up, never silent rows.
+ * Idempotent by derived source key: a retried series replays its stored
+ * occurrences and completes the ones a lost answer never stored.
+ */
+async function bookSeries(context, input) {
+  const names = resolvedNames(context.moduleNames);
+  const appointments = appointmentService({ modules: context.modules, names });
+  const who = requireActor(context.actor);
+  const source = bindSourcePackage(input.source, context.consumer);
+  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+  if (typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  if (input.remindAt !== null) requireBookingTransaction(appointments);
+  const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+  assertSeriesNonEmpty(slots);
+  assertSeriesHeadSlot(input, slots);
+  const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
+  const ruleJson = JSON.stringify(input.recurrence);
+  const headReminderKey = input.remindAt === null ? null : reminderSourceKey(keys[0]);
+  const inputFor = (index) => (index === 0
+    ? { ...input, sourceKey: keys[0] }
+    : {
+      ...input,
+      sourceKey: keys[index],
+      startsAt: slots[index].startsAt,
+      endsAt: slots[index].endsAt,
+      remindAt: null,
+      reminderChannel: null,
+    });
+  const submittedFor = (index) => submittedBooking(
+    inputFor(index),
+    source,
+    index === 0 ? headReminderKey : null,
+    { seriesKey: input.sourceKey, occurrenceIndex: index, recurrenceRule: ruleJson },
+  );
+  const runCritical = async () => {
+    // The series' own rows never block it: a retried series re-reads its
+    // committed occurrences below instead of 409ing on them.
+    const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+    const others = held.filter((row) => !row || row.seriesKey !== input.sourceKey);
+    // The single path refuses a slot on an owner hold through the composed
+    // calendar-sync handle; the series refuses every occurrence the same way,
+    // over the whole series window — never just the head slot.
+    const blocks = slots.length === 0 ? [] : await ownerBlocksFor(
+      context.calendarSync,
+      input.teamMemberId,
+      slots[0].startsAt,
+      slots[slots.length - 1].endsAt,
+    );
+    const heldWithBlocks = [...others, ...blocks];
+    const stored = [];
+    for (const key of keys) stored.push((await appointments.listWhere({ sourceKey: key }))[0] ?? null);
+    const missing = [];
+    for (let index = 0; index < slots.length; index += 1) {
+      const submitted = submittedFor(index);
+      if (stored[index]) {
+        replayOrConflict(stored[index], submitted);
+      } else {
+        missing.push({ index, slot: slots[index], submitted });
+      }
+    }
+    if (missing.length > 0) {
+      const hit = seriesConflict(
+        heldWithBlocks,
+        input.teamMemberId,
+        missing.map((entry) => ({ ...entry.slot, occurrenceIndex: entry.index })),
+        slots.length,
+      );
+      if (hit) {
+        const at = missing.find((entry) => entry.slot.startsAt === hit.slot.startsAt) ?? missing[0];
+        throw seriesOverlapError(input.teamMemberId, { index: at.index, slot: at.slot, conflict: hit.conflict }, slots.length);
+      }
+    }
+    if (input.reminderChannel !== null) {
+      await checkReminderSendable(context, { input });
+    }
+    const rows = [];
+    for (let index = 0; index < slots.length; index += 1) {
+      if (stored[index]) {
+        rows.push(stored[index]);
+        continue;
+      }
+      const submitted = submittedFor(index);
+      try {
+        rows.push(await appointments.createManaged({
+          sourceKey: keys[index],
+          ...submitted,
+          subjectLabel: input.subject.label,
+          status: APPOINTMENT_INITIAL,
+          bookedAt: now,
+          decidedAt: null,
+          cancelReason: null,
+          actorType: who.type,
+          actorId: who.id,
+        }, { actor: who }));
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await appointments.listWhere({ sourceKey: keys[index] }))[0];
+        if (!raced) throw error;
+        rows.push(replayOrConflict(raced, submitted));
+      }
+    }
+    let reminder = null;
+    if (input.remindAt !== null) {
+      reminder = await createReminder(context, { input: inputFor(0), source });
+    }
+    const replayed = missing.length === 0;
+    return { rows, reminder, replayed };
+  };
+  const runInTransaction = bookingTransaction(appointments);
+  const { rows, reminder, replayed } = await withMemberBooking(
+    input.teamMemberId,
+    runInTransaction ? () => runInTransaction(runCritical) : runCritical,
+  );
+  return Object.freeze({
+    appointment: rows[0],
+    occurrences: Object.freeze(rows),
+    occurrenceCount: rows.length,
+    seriesKey: input.sourceKey,
+    reminder,
+    replayed,
+  });
+}
+
+/**
  * Book one appointment: validate, refuse a slot the team member already holds,
  * store the row as `booked`, and — when the request names `remindAt` — open
  * exactly one work follow-up reminder inside the same transaction, due at the
@@ -993,6 +1315,9 @@ export async function bookAppointment(context, request) {
   // slot with nobody accountable for it, so a missing actor is refused.
   const who = requireActor(actor);
   const input = validateAppointmentRequest(request);
+  // A series books its occurrences, each conflict-checked, through the series
+  // path below — the single path underneath never sees a recurrence.
+  if (input.recurrence !== null) return bookSeries(context, input);
   const source = bindSourcePackage(input.source, context.consumer);
   const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
   // Derived before any read or write, so a key that cannot own a reminder
@@ -1014,39 +1339,9 @@ export async function bookAppointment(context, request) {
   // the booking and its follow-up must commit together.
   if (input.remindAt !== null) requireBookingTransaction(appointments);
 
-  const submitted = {
-    subjectResource: input.subject.resource,
-    subjectId: input.subject.id,
-    subjectOwner: input.subject.owner,
-    subjectOwnerPackage: input.subject.ownerPackage,
-    teamMemberId: input.teamMemberId,
-    serviceKey: input.serviceKey,
-    priceCents: input.priceCents,
-    currency: input.currency,
-    startsAt: input.startsAt,
-    endsAt: input.endsAt,
-    notes: input.notes,
-    location: input.location,
-    locationUrl: input.locationUrl,
-    // The reminder intent IS the booking's identity: the same source key with
-    // a different reminder (added, removed or moved) is a different claim
-    // behind the same key and is refused 409 rather than replayed into a
-    // booking whose reminder row says something else. The send target rides
-    // the same identity: a retry that moves the channel, the recipient or
-    // the template is a different claim, not a replay. Stored as given and
-    // validated — the adapter canonicalizes deterministically at send time,
-    // so a retry compares exactly what the first booking stored.
-    reminderSourceKey: reminderKey,
-    reminderDueAt: input.remindAt,
-    reminderSpaceId: input.reminderChannel?.spaceId ?? null,
-    reminderConnectionKey: input.reminderChannel?.connectionKey ?? null,
-    reminderTo: input.reminderChannel?.to ?? null,
-    reminderTemplateName: input.reminderChannel?.template.name ?? null,
-    reminderTemplateLanguage: input.reminderChannel?.template.language ?? null,
-    reminderTemplateVars: input.reminderChannel ? JSON.stringify(input.reminderChannel.template.variables) : null,
-    sourcePackage: source.package,
-    sourceAction: source.action,
-  };
+  // Singles and occurrences share one stored shape (backlog:0f2ae629e09b):
+  // for a single the series columns stay null, like old rows read back.
+  const submitted = submittedBooking(input, source, reminderKey, null);
 
   // The check-then-act below runs serialized per team member on every path:
   // the member chain above orders same-process bookings so the loser re-reads
@@ -1380,20 +1675,25 @@ export async function rescheduleAppointment(context, request) {
         return await appointments.get(rowId);
       } catch (error) {
         if (error instanceof NotFoundError) {
-          throw new NotFoundError(`no appointment with id "${rowId}"`);
+          throw appointmentNotFoundError(record);
         }
         throw error;
       }
     }
     const key = validateSourceKey(record.sourceKey, 'sourceKey');
     const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
-    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    if (!row) throw appointmentNotFoundError(record);
     return row;
   };
   // The member is known only after the first read; the critical section
   // re-reads inside the member chain, so the check and the write see the
   // winner of any race that committed between the two reads.
   const first = await lookup();
+  // A private booking moves only for its creator and the administrators
+  // (backlog:9aa5c073): visibility never changes after booking, so the
+  // first read already settles it — anyone else gets the same 404 as a
+  // missing row before any write, including a same-slot reschedule.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
@@ -1567,17 +1867,21 @@ export async function cancelAppointment(context, request) {
         return await appointments.get(rowId);
       } catch (error) {
         if (error instanceof NotFoundError) {
-          throw new NotFoundError(`no appointment with id "${rowId}"`);
+          throw appointmentNotFoundError(record);
         }
         throw error;
       }
     }
     const key = validateSourceKey(record.sourceKey, 'sourceKey');
     const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
-    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    if (!row) throw appointmentNotFoundError(record);
     return row;
   };
   const first = await lookup();
+  // A private booking cancels only for its creator and the administrators
+  // (backlog:9aa5c073): anyone else gets the same 404 as a missing row
+  // before any write, including an already-cancelled row.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
   let appointment = first;
   let cancelled = false;
   if (first.status !== CANCELLED_STATE) {
@@ -1675,7 +1979,7 @@ export async function readAppointment({ appointments }, id) {
  * @param {{appointments: any}} storage
  * @param {unknown} subject the ADR-030 envelope pointing at the host record
  */
-export async function readSchedule({ appointments }, subject) {
+export async function readSchedule({ appointments }, subject, viewer = null) {
   const envelope = validateSubject(subject);
   if (!appointments || typeof appointments.listWhere !== 'function') {
     throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
@@ -1691,7 +1995,11 @@ export async function readSchedule({ appointments }, subject) {
     || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
     || String(a.id ?? '').localeCompare(String(b.id ?? ''))
   ));
-  return Object.freeze(bySlot.map((row) => Object.freeze({
+  // Unlike the team-week grid, the per-customer schedule must not preserve a
+  // masked slot: joining it with team-week by member/time would identify the
+  // customer. Keep private rows only for their creator or an administrator.
+  const visible = bySlot.filter((row) => viewerSeesFull(viewer, row));
+  return Object.freeze(visible.map((row) => Object.freeze({
     id: row.id,
     status: row.status,
     startsAt: row.startsAt,
@@ -1762,11 +2070,17 @@ function projectTeamWeekRow(row) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    visibility: row.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT,
     // backlog:ece111d80305: the meeting place rides the week, so the
     // popover and the cronologia show the place the booking stored.
     location: row.location ?? null,
     locationUrl: row.locationUrl ?? null,
     sourceKey: row.sourceKey,
+    // Series paint (backlog:0f2ae629e09b): the grid shows every occurrence
+    // of a series. Old rows read back with nulls — singles, like before.
+    seriesKey: row.seriesKey ?? null,
+    occurrenceIndex: row.occurrenceIndex ?? null,
+    recurrenceRule: row.recurrenceRule ?? null,
     subject: Object.freeze({
       resource: row.subjectResource,
       id: row.subjectId,
@@ -1774,6 +2088,106 @@ function projectTeamWeekRow(row) {
       ownerPackage: row.subjectOwnerPackage ?? null,
     }),
   });
+}
+
+/**
+ * The effective team visibility of a stored row (backlog:9aa5c073): rows
+ * booked before visibility existed carry no value and read as the team
+ * default (public). A value outside the enum is a corrupt store entry and
+ * fails the read closed (400), like the booking and suggestion paths.
+ *
+ * @param {any} row
+ */
+function effectiveVisibility(row) {
+  const visibility = row.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT;
+  if (!APPOINTMENT_VISIBILITY.includes(visibility)) {
+    throw new ValidationError(`a stored appointment carries an unreadable visibility: refusing the week, never a guessed one`, {
+      field: 'visibility',
+    });
+  }
+  return visibility;
+}
+
+/**
+ * Whether the viewer reads the full row (backlog:9aa5c073): everyone reads
+ * default and public rows; a private row reads full only for its creator
+ * (the booking actor) and the administrators. Anyone else reads it as
+ * «Occupato» — never the customer, the service or the notes. Exported for
+ * the generic module and customer-hub reads, which enforce the same rule
+ * outside the team-week projection.
+ *
+ * @param {{actorId?: unknown, isAdmin?: unknown}|null|undefined} viewer
+ * @param {any} row
+ */
+export function viewerSeesFull(viewer, row) {
+  if (effectiveVisibility(row) !== 'private') return true;
+  if (viewer?.isAdmin === true) return true;
+  const watcher = typeof viewer?.actorId === 'string' ? viewer.actorId : '';
+  return watcher !== '' && row.actorId === watcher;
+}
+
+/**
+ * The masked projection of a private row (backlog:9aa5c073): the slot and
+ * the hold, nothing else. It stays inside `appointments` (never beside it
+ * in `busy`) so the grid paints it as «Occupato» and the overlap guards
+ * keep refusing over it: a masked row that left the list would free its
+ * slot for a double booking. No customer, no service, no notes, no price,
+ * no source key — the opaque id stays so the grid keys its block. Exported
+ * for the generic module's masked reads; customer-hub schedules omit private
+ * rows for viewers who may not see them.
+ *
+ * @param {any} row
+ */
+export function projectMaskedWeekRow(row) {
+  return Object.freeze({
+    id: row.id,
+    status: row.status,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    teamMemberId: row.teamMemberId,
+    visibility: 'private',
+    masked: true,
+  });
+}
+
+/**
+ * Refuse a mutation of someone else's private booking (backlog:9aa5c073):
+ * only its creator (the booking actor) and the administrators may move or
+ * cancel it. Everyone else gets the same not-found answer as a missing row,
+ * so the mutation cannot reveal that a private booking exists. The admin flag arrives server-side with the operation
+ * input, like the team-week viewer; the actor id is the authenticated
+ * caller, never a request field.
+ *
+ * @param {{actorId: string, isAdmin: boolean}} viewer
+ * @param {any} row
+ */
+export function refuseUnlessSeesFull(viewer, row, notFound = () => new NotFoundError('appointment not found')) {
+  if (viewerSeesFull(viewer, row)) return;
+  throw notFound();
+}
+
+function appointmentNotFoundError(record) {
+  if (record.id !== undefined && record.id !== null) {
+    return new NotFoundError(`no appointment with id "${safeText(record.id, 'id', MAX_ID)}"`);
+  }
+  return new NotFoundError(`no appointment with sourceKey "${validateSourceKey(record.sourceKey, 'sourceKey')}"`);
+}
+
+/**
+ * Normalize the server-side viewer for a mutation (backlog:9aa5c073): the
+ * actor id is the authenticated caller; the admin flag arrives with the
+ * operation input from the server (never from the caller). Absent, the
+ * call is unprivileged — a private row then appears not found, a public one passes.
+ *
+ * @param {unknown} actorId
+ * @param {unknown} viewer
+ */
+export function mutationViewer(actorId, viewer) {
+  const value = viewer && typeof viewer === 'object' && !Array.isArray(viewer) ? viewer : null;
+  return {
+    actorId: typeof actorId === 'string' ? actorId : '',
+    isAdmin: value?.isAdmin === true,
+  };
 }
 
 /**
@@ -1801,8 +2215,15 @@ function projectTeamWeekRow(row) {
  * The `busy` list is required on every member group (version 5): an empty
  * week reads `busy: []`, never an absent key.
  *
+ * A private booking (backlog:9aa5c073) reads full only for its creator and
+ * the administrators (`filter.viewer = { actorId, isAdmin }`, server-side
+ * only like the owner holds — never from the caller): anyone else reads a
+ * masked row inside `appointments` (slot and hold, «Occupato», never the
+ * customer, the service or the notes), a cancelled one not at all. Without
+ * a viewer the read is unprivileged and masks every private row.
+ *
  * @param {{appointments: any, calendarSync?: any}} storage
- * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter
+ * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, viewer?: unknown}} filter
  */
 export async function readTeamWeek({ appointments, calendarSync }, filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
@@ -1835,6 +2256,9 @@ export async function readTeamWeek({ appointments, calendarSync }, filter) {
     });
   }
   const groups = [];
+  const viewer = value.viewer !== undefined && value.viewer !== null
+    && typeof value.viewer === 'object' && !Array.isArray(value.viewer)
+    ? value.viewer : null;
   for (const teamMemberId of members) {
     const held = await appointments.listWhere({ teamMemberId });
     const overlapping = held.filter((row) => (
@@ -1845,16 +2269,24 @@ export async function readTeamWeek({ appointments, calendarSync }, filter) {
       || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
+    // Private rows the viewer may not read (backlog:9aa5c073): held ones
+    // project masked inside `appointments`, cancelled ones drop out — a
+    // cancelled slot is free, painting it would lie about the grid.
+    const projected = [];
+    for (const row of overlapping) {
+      if (viewerSeesFull(viewer, row)) projected.push(projectTeamWeekRow(row));
+      else if (row.status !== 'cancelled') projected.push(projectMaskedWeekRow(row));
+    }
     const busy = (await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
       .map((block) => projectBusyWeekRow(block))
-      .filter((projected) => projected !== null)
-      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso)
+      .filter((projectedBlock) => projectedBlock !== null)
+      .filter((projectedBlock) => projectedBlock.startsAt < to.iso && projectedBlock.endsAt > from.iso)
       .sort((a, b) => (
         a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt)
       ));
     groups.push(Object.freeze({
       teamMemberId,
-      appointments: Object.freeze(overlapping.map(projectTeamWeekRow)),
+      appointments: Object.freeze(projected),
       busy: Object.freeze(busy),
     }));
   }
@@ -2090,7 +2522,9 @@ export async function suggestSlots({ modules, moduleNames, calendarSync }, filte
 
 /**
  * The validated booking subset a `confirm-required` draft carries: everything
- * the confirm re-validates, minus the internal millisecond bounds.
+ * the confirm re-validates, minus the internal millisecond bounds. Visibility
+ * rides along (backlog:9aa5c073): a draft confirmed later books the
+ * visibility the operator chose, never a silent default.
  */
 function publicDraft(input) {
   return Object.freeze({
@@ -2103,8 +2537,10 @@ function publicDraft(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    recurrence: input.recurrence,
     location: input.location,
     locationUrl: input.locationUrl,
+    visibility: input.visibility,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
@@ -2143,9 +2579,10 @@ function bookingClaimKeyParts(input) {
     subject.resource, subject.id, subject.owner, subject.ownerPackage,
     input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
     input.startsAt, input.endsAt, input.notes,
-    input.location, input.locationUrl,
+    input.location, input.locationUrl, input.visibility,
     input.remindAt, input.reminderChannel,
     input.source.package, input.source.action,
+    JSON.stringify(input.recurrence),
   ]);
 }
 
@@ -2203,6 +2640,24 @@ export async function proposeBooking(context, request) {
     [...held, ...blocks]);
   if (conflict) {
     throw overlapRefusal(input.teamMemberId, conflict);
+  }
+  // A series proposal checks every occurrence, not just the head: Conferma
+  // books the whole series or nothing, so a busy later slot must stop the
+  // proposal with the same message the booking would answer.
+  if (input.recurrence !== null) {
+    const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+    assertSeriesNonEmpty(slots);
+    assertSeriesHeadSlot(input, slots);
+    // Like bookSeries: the proposal checks every occurrence against the
+    // owner holds over the whole series window, not just the head slot.
+    const seriesBlocks = slots.length === 0 ? [] : await ownerBlocksFor(
+      context.calendarSync,
+      input.teamMemberId,
+      slots[0].startsAt,
+      slots[slots.length - 1].endsAt,
+    );
+    const hit = seriesConflict([...held, ...seriesBlocks], input.teamMemberId, slots, slots.length);
+    if (hit) throw seriesOverlapError(input.teamMemberId, hit, slots.length);
   }
   const gate = requireFlowPermissionGate(context);
   // P1 12/11: the switch answers «may the agent book on its own». A person
@@ -2286,6 +2741,16 @@ export async function confirmBooking(context, request) {
     }
     calendarPush = calendarSync.pushAppointment.bind(calendarSync);
   }
+  // ARBITRATO 17/11 (backlog:0f2ae629e09b): con il calendario collegato la
+  // serie non si conferma — la spinta coprirebbe solo la testa e la griglia
+  // mentirebbe su Google. Rifiuto 400 prima di ogni scrittura; la
+  // sincronizzazione delle serie è una voce di seguito.
+  if (calendarPush !== null && input.recurrence !== null) {
+    throw new AppError(
+      'Con Google Calendar collegato le ricorrenze arrivano presto: conferma un appuntamento alla volta, senza ripetizione — niente è stato scritto',
+      { code: 'APPOINTMENTS_SERIES_CALENDAR_PENDING', status: 400, details: { field: 'recurrence' } },
+    );
+  }
   const gate = requireFlowPermissionGate(context);
   // P1 12/11 (production: every Conferma in a space with the AI off came
   // back «proposal» and no appointment existed anywhere): the switch
@@ -2315,24 +2780,50 @@ export async function confirmBooking(context, request) {
   const booked = await bookAppointment(context, request);
   const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments(context, names);
-  let appointment = booked.appointment;
-  if (appointment && appointment.status === 'booked') {
-    try {
-      appointment = await advanceAppointment(
-        { appointments, actor, now: context?.now },
-        appointment,
-        'confirmed',
-      );
-    } catch (error) {
-      // A concurrent confirm of the same source key may have advanced the
-      // row between the booking replay and this advance: re-read, and only a
-      // row that is still not confirmed keeps the refusal.
-      if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
-      const fresh = await readAppointment({ appointments }, appointment.id);
-      if (!fresh || fresh.status !== 'confirmed') throw error;
-      appointment = fresh;
+  // A series confirms every occurrence, never only its head: Conferma on a
+  // rule books N booked rows, and all N become confirmed — a mixed series
+  // would show half-booked in the grid and confuse the scoped paths.
+  const bookedRows = Array.isArray(booked.occurrences) && booked.occurrences.length > 0
+    ? booked.occurrences
+    : [booked.appointment];
+  // A series confirms every occurrence, never half of it: the advances run
+  // inside one storage transaction when one is available, so a storage
+  // failure or a concurrent terminal write mid-loop rolls back to
+  // all-booked instead of half-confirmed. Each advance still serializes on
+  // its own appointment chain, and joins this envelope instead of opening
+  // its own (bookingTransaction is null inside a caller transaction).
+  const runInTransaction = bookingTransaction(appointments);
+  const confirmAll = async () => {
+    const confirmedRows = [];
+    for (const row of bookedRows) {
+      if (!row || row.status !== 'booked') {
+        confirmedRows.push(row);
+        continue;
+      }
+      try {
+        confirmedRows.push(await advanceAppointment(
+          { appointments, actor, now: context?.now },
+          row,
+          'confirmed',
+        ));
+      } catch (error) {
+        // A concurrent confirm of the same source key may have advanced the
+        // row between the booking replay and this advance: re-read, and only a
+        // row that is still not confirmed keeps the refusal.
+        if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
+        const fresh = await readAppointment({ appointments }, row.id);
+        if (!fresh || fresh.status !== 'confirmed') throw error;
+        confirmedRows.push(fresh);
+      }
     }
-  }
+    return confirmedRows;
+  };
+  const confirmedRows = await withMemberBooking(
+    booked.appointment.teamMemberId ?? input.teamMemberId,
+    runInTransaction ? () => runInTransaction(confirmAll) : confirmAll,
+  );
+  const appointment = confirmedRows.find((row) => row && booked.appointment && row.id === booked.appointment.id)
+    ?? confirmedRows[0] ?? booked.appointment;
   // The calendar edge was validated above, before any row existed: the
   // push rides the idempotent path. A runtime push failure must not throw —
   // the confirmed row is already committed and the caller would observe a
@@ -2354,6 +2845,7 @@ export async function confirmBooking(context, request) {
   return Object.freeze({
     decision: 'booked',
     appointment,
+    occurrences: Object.freeze(confirmedRows),
     reminder: booked.reminder ?? null,
     push,
     pushError,
@@ -2409,6 +2901,17 @@ export async function bookFromLink(context, request) {
   }
   const spaceId = record.spaceId;
   const linkToken = validateBookingLinkToken(record.linkToken);
+  // The public link books ONE single appointment — a request naming a real
+  // recurrence is refused 400 before any read or write, so one public call
+  // can never fan out into a whole series behind the link's idempotency.
+  // The guard reads the NORMALIZED rule, so an explicit «Non si ripete»
+  // ({ kind: 'none' }) still books one appointment like no recurrence.
+  if (validateRecurrence(record.recurrence ?? null) !== null) {
+    throw new ValidationError(
+      'Il link pubblico prenota un solo appuntamento, senza ricorrenza: per una serie prenota una data alla volta dal calendario',
+      { field: 'recurrence' },
+    );
+  }
   // Canonicalize the slot before deriving the identity: validation normalizes
   // instants to UTC ISO, and the source key must derive from that canonical
   // form — never from the caller's spelling. Otherwise a valid spelling the
@@ -2755,8 +3258,8 @@ export function createAppointmentScheduleCapability({ moduleNames, calendarSync 
       const blocks = calendarSync ?? context?.calendarSync ?? null;
       return Object.freeze({
         capabilityContract: 1,
-        /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
-        scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
+        /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject @param {{actorId?: unknown, isAdmin?: unknown}|null|undefined} [viewer] */
+        scheduleFor: (subject, viewer = null) => readSchedule({ appointments: service }, subject, viewer),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter */
         teamWeekFor: (filter) => readTeamWeek({ appointments: service, calendarSync: blocks }, filter),
       });

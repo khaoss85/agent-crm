@@ -1097,8 +1097,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       if (!service) return [];
       try {
         const rows = typeof service.listWhere === 'function'
-          ? await service.listWhere({ channel: 'email' })
-          : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
+          ? await service.listWhere(query.spaceId ? { channel: 'email', spaceId: query.spaceId } : { channel: 'email' })
+          : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email' && (!query.spaceId || row?.spaceId === query.spaceId));
         return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
       } catch (error) {
         // Degraded, never silent (review Muse #821): the cause, never data.

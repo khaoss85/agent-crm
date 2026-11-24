@@ -968,9 +968,15 @@ test('menu badges reserve their room: the row keeps its height when the number l
   const empties = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('is-empty'));
   assert.equal(empties.length, 2);
   for (const node of empties) {
-    assert.equal(node.textContent, '0');
     assert.equal(node.getAttribute('aria-hidden'), 'true');
   }
+  // backlog:acd136b3cd5d: the Impostazioni placeholder carries no «0» text —
+  // the link's accessible name reads exactly «Impostazioni»; the Clienti
+  // pill keeps its own «0» placeholder contract.
+  const pillEmpty = sidebar.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-count is-empty');
+  const badgeEmpty = sidebar.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-badge is-empty');
+  assert.equal(pillEmpty.textContent, '0');
+  assert.equal(badgeEmpty.textContent, '');
   view.update({ clientCount: 12, clientCountExact: true, fixCount: 2 });
   assert.deepEqual(pillClasses(), ['bo-count']);
   assert.deepEqual(badgeClasses(), ['bo-badge']);

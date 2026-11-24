@@ -355,7 +355,7 @@ export {
 // worker's `runAction` resolves through the same registry. Published here so
 // a consumer never reaches into `packages/core/src/*` for it: the header
 // above names that coupling out of contract.
-export { buildMoveStageAction } from './src/pipeline-actions.js';
+export { buildAssignPipelineAction, buildMoveStageAction } from './src/pipeline-actions.js';
 
 // ---- shared closed/won rule (backlog:1adf95307b31) ----
 // The customer list and Reporting decide open/won/lost through these, so a

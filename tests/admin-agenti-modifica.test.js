@@ -252,6 +252,28 @@ test('26afd13657c5: dopo Salva la conferma sta sulla card modificata, non in cim
   assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-done')).length, 1);
 });
 
+test('26afd13657c5: dopo Salva la pagina scorre alla card e il fuoco va alla conferma (ritorno 2)', async () => {
+  // Riproduce il NON PASSA del verificatore 19/11 (ritorno 2): dopo Salva
+  // il form si chiudeva e la pagina restava scorsa in basso — la conferma
+  // restava fuori schermo, sopra. Rosso senza la cura (nessuno scroll,
+  // nessun fuoco), verde dopo.
+  const { doc, mount } = await focusedView();
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = 'Manona';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  const card = mount.findAll('article')
+    .find((node) => node.getAttribute('data-agent') === MANO.sourceKey);
+  assert.ok(card, 'la card modificata c’è ancora');
+  const saved = card.querySelector('.bo-agent-done');
+  assert.ok(saved, 'la conferma sta dentro la card');
+  assert.equal(saved.__scrolledIntoView, true, 'la pagina è scorsa alla conferma');
+  assert.equal(doc.activeElement, saved, 'il fuoco va alla conferma');
+});
+
 test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnare un campo', async () => {
   // Review #879 giro 2 P2: il rifiuto non eredita il marcatore di campo.
   const boom = Object.assign(new Error('down'), { status: 500 });

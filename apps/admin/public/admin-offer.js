@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -214,6 +214,12 @@ export function createOfferDetail(deps) {
   let shareOfferName = '';
   /** Record id with the edit form open. */
   let editing = false;
+  /**
+   * backlog:26afd13657c5 (ritorno 2): the offer whose inline edit just
+   * saved — its actions row keeps «Dati salvati.» by the field until
+   * Modifica opens again or another offer renders.
+   */
+  let offerSavedId = null;
 
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -464,6 +470,7 @@ export function createOfferDetail(deps) {
     if (entry !== undefined) origin = entry?.from ?? null;
     const token = ++renderToken;
     editing = false;
+    offerSavedId = null;
     shareOfferName = '';
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
@@ -759,19 +766,82 @@ export function createOfferDetail(deps) {
   }
 
   /** Edit form (or its opener) for the three commercial facts. */
+  /**
+   * Backlog 26afd13657c5 (ritorno 2): the facts strip and the hero amount
+   * show the saved values without a re-read — no skeleton, no jump to the
+   * top. Rows the save could add or drop (Referente, Chiusura prevista)
+   * are upserted in their board order; the stage never changes here.
+   */
+  function refreshOfferFacts(wrap, record, people) {
+    const actions = wrap?.parentNode ?? null;
+    const sheet = actions?.parentNode ?? null;
+    if (!sheet || typeof sheet.querySelector !== 'function') return;
+    const amount = sheet.querySelector('.bo-offer-amount');
+    if (amount) amount.textContent = money(record.valueCents, record.currency);
+    const close = italianDay(record.expectedCloseDate);
+    const amountNote = sheet.querySelector('.bo-offer-amount-note');
+    if (amountNote) amountNote.textContent = close !== null ? `chiusura prevista ${close}` : 'valore dell’offerta';
+    const facts = sheet.querySelector('.offer-facts');
+    if (!facts || !Array.isArray(facts.childNodes)) return;
+    const labelOf = (cell) => cell?.childNodes?.[0]?.textContent ?? null;
+    const valueOf = (label) => {
+      if (label === 'Referente') {
+        const named = personLabel(record.owner, people);
+        return typeof named === 'string' && named !== '' ? named : null;
+      }
+      if (label === 'Chiusura prevista') return close;
+      return undefined;
+    };
+    for (const label of ['Referente', 'Chiusura prevista']) {
+      const wanted = valueOf(label);
+      if (wanted === undefined) continue;
+      const cell = Array.from(facts.childNodes).find((node) => labelOf(node) === label) ?? null;
+      if (wanted !== null && cell && cell.childNodes[1]) {
+        cell.childNodes[1].textContent = wanted;
+      } else if (wanted === null && cell && typeof facts.removeChild === 'function') {
+        facts.removeChild(cell);
+      } else if (wanted !== null && !cell) {
+        const fresh = el('p', 'offer-fact');
+        fresh.appendChild(el('span', 'offer-fact-label', label));
+        fresh.appendChild(el('span', 'offer-fact-value', wanted));
+        const anchorLabel = label === 'Referente' ? 'Stato' : 'Creata il';
+        const anchor = Array.from(facts.childNodes).find((node) => labelOf(node) === anchorLabel) ?? null;
+        if (anchor) facts.insertBefore(fresh, anchor);
+        else facts.appendChild(fresh);
+      }
+    }
+  }
+
   function paintEdit(wrap, record, offerId, token, people = []) {
     while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
     const id = String(record.id);
     if (!editing) {
+      // backlog:26afd13657c5 (ritorno 2): la conferma del salvataggio sta
+      // vicino al campo salvato, non in un toast e non dopo un
+      // ricaricamento. Riaprire Modifica la toglie.
+      let saved = null;
+      if (offerSavedId !== null && offerSavedId === id) {
+        saved = el('small', 'offer-saved', 'Dati salvati.');
+        saved.setAttribute('role', 'status');
+        saved.setAttribute('tabindex', '-1');
+        wrap.appendChild(saved);
+      }
       const edit = el('button', 'offer-edit-open', 'Modifica');
       edit.setAttribute('type', 'button');
       const startEdit = () => {
         editing = true;
+        offerSavedId = null;
         paintEdit(wrap, record, offerId, token, people);
       };
       edit.addEventListener('click', startEdit);
       wrap.appendChild(edit);
       wrap.__edit = startEdit;
+      if (saved) {
+        // La pagina non si è mossa: la conferma entra in vista qui dov'è
+        // l'occhio, e il fuoco va lì.
+        if (typeof saved.scrollIntoView === 'function') saved.scrollIntoView({ block: 'nearest' });
+        if (typeof saved.focus === 'function') saved.focus({ preventScroll: true });
+      }
       return;
     }
 
@@ -826,6 +896,10 @@ export function createOfferDetail(deps) {
         failures.value = rawValue.startsWith('-')
           ? 'Il valore non può essere negativo, in euro (es. 250,00).'
           : 'Il valore è obbligatorio, in euro (es. 250,00).';
+      } else if (cents > MAX_OFFER_VALUE_CENTS) {
+        // voce 05dac489: the live 17/11 saved 999.999.999.999,00 € — over
+        // the ceiling the edit refuses before writing, the server too.
+        failures.value = 'Il valore non può superare 1.000.000,00 €.';
       }
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
@@ -840,8 +914,19 @@ export function createOfferDetail(deps) {
           `/api/opportunities/${encodeURIComponent(id)}`,
           { method: 'PATCH', body: JSON.stringify({ valueCents: cents, expectedCloseDate: expiry === '' ? null : expiry, owner }) },
         );
+        // Review #786: an answer that lands after the page changed
+        // (another offer opened) never repaints this page.
+        if (token !== renderToken) return;
+        // backlog:26afd13657c5 (ritorno 2, supervisore 19/11): Modifica →
+        // Valore → Salva restava su «Salvo…» e poi ricaricava tutta la
+        // pagina («Carico l’offerta…») senza nessuna conferma. La scheda si
+        // aggiorna sul posto — niente scheletro, niente salto in alto — e
+        // «Dati salvati.» resta vicino al campo, con il fuoco sopra.
+        Object.assign(record, { valueCents: cents, expectedCloseDate: expiry === '' ? null : expiry, owner });
         editing = false;
-        await renderOfferDetail(offerId);
+        offerSavedId = id;
+        paintEdit(wrap, record, offerId, token, people);
+        refreshOfferFacts(wrap, record, people);
       } catch (error) {
         busy = false;
         // backlog:18cdf78c: «Modifica → Salva» è una scrittura: il rifiuto
