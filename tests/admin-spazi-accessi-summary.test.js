@@ -8,8 +8,12 @@
  * open.
  *
  * What it must prove, red before the cure and green after:
- * - opening Spazi e accessi costs at most two GET reads (one aggregate plus
- *   the cached profile, silent on the second open);
+ * - opening Spazi e accessi costs one aggregate plus the gate single and
+ *   the cached profile (three GETs cold), and the second open asks nothing
+ *   for the profile again (aggregate plus gate only). The gate stays a
+ *   single beside the summary because the framework serves no assistant
+ *   status to aggregate (backlog:b139d83617f3 needs it on open) — the five
+ *   legacy singles it used to drag along never fly on the summary path;
  * - the shell profile reader asks /api/profile once per app start, however
  *   many screens open it;
  * - a failed profile read is never kept: the next open asks again (review
@@ -59,12 +63,16 @@ function stubClient({ calls = null } = {}) {
       if (calls && (options?.method ?? 'GET').toUpperCase() === 'GET') calls.push(path);
       if (path.startsWith('/api/spazi-accessi/summary')) return summary;
       if (path === '/api/profile') return { connections: { available: true, items: [] } };
+      // backlog:b139d83617f3: the gate the master switch obeys stays a
+      // single beside the summary — the framework serves no assistant
+      // status to aggregate, so the aggregate cannot carry it.
+      if (path === '/api/assistant/status') return { enabled: true };
       throw new Error(`unexpected single request ${path}`);
     },
   };
 }
 
-test('30f7ce51c87a: opening Spazi e accessi costs at most two GET reads', async () => {
+test('30f7ce51c87a: opening Spazi e accessi reads the aggregate, the gate and the kept profile', async () => {
   freshProfileCache();
   const calls = [];
   const doc = createFakeDocument();
@@ -81,10 +89,27 @@ test('30f7ce51c87a: opening Spazi e accessi costs at most two GET reads', async 
   });
   await view.render();
   await flush();
-  const distinct = [...new Set(calls)];
+  // One aggregate, the gate single the summary cannot carry, and the
+  // shell-kept profile — the five legacy singles stay silent. Anything
+  // else is the old 7-14-reads page wearing the summary as a hat.
+  const distinct = [...new Set(calls)].sort();
+  assert.deepEqual(
+    distinct,
+    ['/api/assistant/status', '/api/profile', `/api/spazi-accessi/summary?spaceId=${SPACE}`].sort(),
+    `one open reads the aggregate, the gate and the profile — never a legacy single, got: ${distinct.join(', ')}`,
+  );
+  // The second open rereads the aggregate and the gate, but the kept
+  // profile stays silent: /api/profile leaves once per app start.
+  await view.render();
+  await flush();
+  assert.equal(
+    calls.filter((path) => path === '/api/profile').length,
+    1,
+    `the second open asks nothing for the profile again: ${calls.join(', ')}`,
+  );
   assert.ok(
-    distinct.length <= 2,
-    `one open reads once or twice, not ${distinct.length}: ${distinct.join(', ')}`,
+    calls.every((path) => path === '/api/profile' || path === '/api/assistant/status' || path.startsWith('/api/spazi-accessi/summary')),
+    `the second open adds only the aggregate and the gate: ${[...new Set(calls)].join(', ')}`,
   );
 });
 

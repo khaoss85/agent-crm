@@ -1023,10 +1023,19 @@ export function createSpaziAccessiView(deps) {
       }
       return loadFixCount(readsClient, { spaceId: space });
     });
-    // backlog:b139d83617f3: the gate verdict stays a single read beside the
-    // summary, exactly like beginLegacyReads — the summary carries no gate
-    // section, and the skeleton covers it until it lands.
-    const gateRead = legacy().gateRead;
+    // backlog:b139d83617f3 + backlog:30f7ce51c87a: the gate verdict stays a
+    // single read beside the summary — the summary carries no gate section
+    // (the framework serves no assistant status to aggregate), and the
+    // skeleton covers it until it lands. It flies alone on purpose: routing
+    // it through legacy() fires the other four singles beside it, and one
+    // open costs seven reads instead of three (CI fast red on c78ef1e0).
+    // When the whole summary fails the legacy bundle below still fires its
+    // own gate read, but the per-load coalescing wrapper shares the one
+    // in-flight request instead of flying it twice.
+    const gateRead = Promise.resolve().then(() => readsClient.request(ASSISTANT_STATUS_PATH)).then(
+      (value) => ({ ok: true, value, error: null }),
+      (error) => ({ ok: false, value: null, error }),
+    );
     const reads = { contextRead, membersRead, agentsRead, switchesRead, gateRead };
     return { ...reads, fixRead };
   }

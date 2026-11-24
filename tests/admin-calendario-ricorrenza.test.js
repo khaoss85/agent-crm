@@ -8,11 +8,18 @@
  * scelta resta su «Non si ripete», disattivata, con la riga che dice
  * perché, e il form non manda mai una serie.
  */
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+
+// backlog:30f7ce51c87a: /api/profile is kept once per app start, but each
+// test paints with its own mocked answer, so the kept answer is dropped
+// before every test — otherwise one test's profile leaks into the next
+// (the Google-linked test read the earlier tests' link-less answer).
+beforeEach(() => { forgetCachedProfile(); });
 
 const CATALOG = {
   products: [
