@@ -143,7 +143,9 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   (`push` / `pushError` as data, like the confirm path). The same `scope`
   rule as the cancel path applies: only `single` moves a row; the wide
   scopes refuse 409; a Google-linked series refuses 409 before any write,
-  a local series shifts grid-only.
+  a local series shifts grid-only. A scoped call never names `calendar`:
+  with `scope` set the calendar edge refuses 400 naming `calendar` before
+  any read, so no scoped move can push to Google.
 - `cancelAppointment({ id | sourceKey, reason, spaceId?, calendar? })`
   (backlog `5346ab531538`) cancels a `booked`/`confirmed` booking — the
   governed write behind «Annulla appuntamento» in the calendar popover. It
@@ -160,7 +162,10 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   to Google refuses 409 `APPOINTMENTS_SERIES_SCOPE_GOOGLE` («Le serie di
   Google Calendar si modificano da Google, per ora») before the first grid
   write, and a scoped write never pushes to Google — local-only series
-  converge grid-only.
+  converge grid-only. A scoped call never names `calendar` (400 naming
+  `calendar` before any read), and without the composed calendar-sync link
+  probe a scoped call fails closed with `APPOINTMENTS_CALENDAR_UNAVAILABLE`
+  instead of assuming «unlinked»: scoped writes require the probe.
 
 `tests/appointments-booking-flow.test.js` proves the flow with fakes and no
 application boot, including the ten-racer link race. The backoffice UI

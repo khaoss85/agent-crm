@@ -346,11 +346,11 @@ test('reschedule: a scoped move without spaceId refuses before any lookup', asyn
   assert.equal(service.writes.length, 0);
 });
 
-test('reschedule: a scoped move from a foreign space refuses 404 and writes nothing', async () => {
+test('reschedule: a scoped move from a foreign space refuses like a missing row and writes nothing', async () => {
   const service = fakeAppointments(seriesRows());
   const calendarSync = fakeCalendarSync();
   const before = service.rows.map((row) => ({ ...row }));
-  await rejectsWith(
+  const foreign = await rejectsWith(
     rescheduleAppointment(
       contextFor(service, calendarSync),
       {
@@ -359,10 +359,26 @@ test('reschedule: a scoped move from a foreign space refuses 404 and writes noth
       },
     ),
     (caught) => {
-      assert.equal(caught.code, 'APPOINTMENTS_SERIES_SPACE_UNKNOWN');
+      assert.ok(caught instanceof NotFoundError, 'a foreign anchor reads as not found, never a space oracle');
+      assert.equal(caught.code, 'NOT_FOUND');
       assert.equal(caught.status, 404);
     },
   );
+  const missing = await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-missing', startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+        scope: 'single', spaceId: OTHER_SPACE,
+      },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof NotFoundError);
+    },
+  );
+  assert.equal(foreign.constructor, missing.constructor, 'same class as a missing row');
+  assert.equal(foreign.code, missing.code, 'same code as a missing row');
+  assert.equal(foreign.status, missing.status, 'same status as a missing row');
   assert.deepEqual(service.rows, before);
   assert.equal(service.writes.length, 0);
   assert.equal(calendarSync.calls.probe.length, 0, 'a foreign space never reaches the link probe');
@@ -425,37 +441,78 @@ test('cancel: a scoped cancel without spaceId refuses before any lookup', async 
   assert.equal(service.writes.length, 0);
 });
 
-test('cancel: single scope with a calendar cancels and pushes like the unscoped path', async () => {
-  const service = fakeAppointments(seriesRows());
-  const calendarSync = fakeCalendarSync();
-  const out = await cancelAppointment(
-    contextFor(service, calendarSync),
-    {
-      id: 'a-2', reason: 'Non serve piu', scope: 'single', spaceId: SPACE,
-      calendar: { calendarId: 'cal-1' },
-    },
-  );
-  assert.equal(out.cancelled, true);
-  assert.equal(out.occurrences.length, 1);
-  assert.equal(service.rows[1].status, 'cancelled');
-  assert.equal(service.rows[0].status, 'booked', 'siblings stay');
-  assert.equal(calendarSync.calls.push.length, 1, 'the named calendar still converges after the commit');
-});
-
-test('cancel: a scoped cancel from a foreign space refuses 404 and writes nothing', async () => {
+test('cancel: single scope with a calendar refuses naming calendar and pushes nothing', async () => {
   const service = fakeAppointments(seriesRows());
   const calendarSync = fakeCalendarSync();
   const before = service.rows.map((row) => ({ ...row }));
   await rejectsWith(
     cancelAppointment(
       contextFor(service, calendarSync),
+      {
+        id: 'a-2', reason: 'Non serve piu', scope: 'single', spaceId: SPACE,
+        calendar: { calendarId: 'cal-1' },
+      },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof ValidationError, 'a scoped write is grid-only: it never names a calendar');
+      assert.equal(caught.details?.field, 'calendar');
+    },
+  );
+  assert.deepEqual(service.rows, before, 'the grid is unchanged');
+  assert.equal(service.writes.length, 0, 'no grid write happens');
+  assert.equal(calendarSync.calls.push.length, 0, 'Google is never touched by a scoped write');
+  assert.equal(calendarSync.calls.probe.length, 0, 'no link is read for a refused calendar');
+});
+
+test('reschedule: single scope with a calendar refuses naming calendar and moves nothing', async () => {
+  const service = fakeAppointments(seriesRows());
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-2', startsAt: '2026-10-21T18:00:00.000Z', endsAt: '2026-10-21T19:00:00.000Z',
+        scope: 'single', spaceId: SPACE, calendar: { calendarId: 'cal-1' },
+      },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof ValidationError, 'a scoped write is grid-only: it never names a calendar');
+      assert.equal(caught.details?.field, 'calendar');
+    },
+  );
+  assert.deepEqual(service.rows, before, 'the grid is unchanged');
+  assert.equal(service.writes.length, 0, 'no grid write happens');
+  assert.equal(calendarSync.calls.push.length, 0, 'Google is never touched by a scoped write');
+});
+
+test('cancel: a scoped cancel from a foreign space refuses like a missing row and writes nothing', async () => {
+  const service = fakeAppointments(seriesRows());
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  const foreign = await rejectsWith(
+    cancelAppointment(
+      contextFor(service, calendarSync),
       { id: 'a-1', reason: 'Non serve piu', scope: 'single', spaceId: OTHER_SPACE },
     ),
     (caught) => {
-      assert.equal(caught.code, 'APPOINTMENTS_SERIES_SPACE_UNKNOWN');
+      assert.ok(caught instanceof NotFoundError, 'a foreign anchor reads as not found, never a space oracle');
+      assert.equal(caught.code, 'NOT_FOUND');
       assert.equal(caught.status, 404);
     },
   );
+  const missing = await rejectsWith(
+    cancelAppointment(
+      contextFor(service, calendarSync),
+      { id: 'a-missing', reason: 'Non serve piu', scope: 'single', spaceId: OTHER_SPACE },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof NotFoundError);
+    },
+  );
+  assert.equal(foreign.constructor, missing.constructor, 'same class as a missing row');
+  assert.equal(foreign.code, missing.code, 'same code as a missing row');
+  assert.equal(foreign.status, missing.status, 'same status as a missing row');
   assert.deepEqual(service.rows, before);
   assert.equal(service.writes.length, 0);
   assert.equal(calendarSync.calls.probe.length, 0, 'a foreign space never reaches the link probe');
@@ -489,6 +546,193 @@ test('cancel: single scope on a local row cancels like the unscoped path', async
   assert.equal(out.cancelled, true);
   assert.equal(out.occurrences.length, 1);
   assert.equal(service.rows[0].status, 'cancelled');
+});
+
+test('reschedule: a scoped move on a plain booking from a foreign space refuses like a missing row', async () => {
+  const service = fakeAppointments([occurrence(0, { seriesKey: undefined, occurrenceIndex: undefined, sourceKey: 'gym:single:9' })]);
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-1', startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+        scope: 'single', spaceId: OTHER_SPACE,
+      },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof NotFoundError, 'a null seriesKey never exempts the space gate');
+      assert.equal(caught.code, 'NOT_FOUND');
+      assert.equal(caught.status, 404);
+    },
+  );
+  assert.deepEqual(service.rows, before);
+  assert.equal(service.writes.length, 0);
+});
+
+test('cancel: a scoped cancel on a series row without attribution refuses like a missing row', async () => {
+  const service = fakeAppointments(seriesRows([{}, { spaceId: null }, {}]));
+  const calendarSync = fakeCalendarSync();
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    cancelAppointment(
+      contextFor(service, calendarSync),
+      { id: 'a-2', reason: 'Non serve piu', scope: 'single', spaceId: SPACE },
+    ),
+    (caught) => {
+      assert.ok(caught instanceof NotFoundError, 'unattributed rows refuse scoped writes');
+      assert.equal(caught.code, 'NOT_FOUND');
+      assert.equal(caught.status, 404);
+    },
+  );
+  assert.deepEqual(service.rows, before);
+  assert.equal(service.writes.length, 0);
+  assert.equal(calendarSync.calls.probe.length, 0, 'an unattributed anchor never reaches the link probe');
+});
+
+test('booking: joining another space’s seriesKey refuses and writes nothing', async () => {
+  const service = fakeAppointments(seriesRows());
+  const before = service.rows.map((row) => ({ ...row }));
+  await rejectsWith(
+    bookAppointment(
+      contextFor(service, null),
+      bookingRequest({ seriesKey: 'serie:1', occurrenceIndex: 9, spaceId: OTHER_SPACE, sourceKey: 'gym:booked:serie:9' }),
+    ),
+    (caught) => {
+      assert.ok(caught instanceof NotFoundError, 'a foreign series reads as missing on booking too');
+      assert.equal(caught.code, 'NOT_FOUND');
+      assert.equal(caught.status, 404);
+    },
+  );
+  assert.deepEqual(service.rows, before, 'no foreign sibling is persisted');
+});
+
+test('booking: joining the calling space’s seriesKey persists the sibling', async () => {
+  const service = fakeAppointments(seriesRows());
+  const booked = await bookAppointment(
+    contextFor(service, null),
+    bookingRequest({
+      seriesKey: 'serie:1', occurrenceIndex: 9, spaceId: SPACE, sourceKey: 'gym:booked:serie:9',
+      startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+    }),
+  );
+  assert.equal(booked.appointment.seriesKey, 'serie:1');
+  assert.equal(booked.appointment.spaceId, SPACE);
+});
+
+test('scope: without the link-probe handle a linked-or-not series fails closed before any write', async () => {
+  for (const op of ['reschedule', 'cancel']) {
+    const service = fakeAppointments(seriesRows());
+    const request = op === 'reschedule'
+      ? {
+        id: 'a-2', startsAt: '2026-10-21T18:00:00.000Z', endsAt: '2026-10-21T19:00:00.000Z',
+        scope: 'single', spaceId: SPACE,
+      }
+      : { id: 'a-2', reason: 'Non serve piu', scope: 'single', spaceId: SPACE };
+    const before = service.rows.map((row) => ({ ...row }));
+    await rejectsWith(
+      OP[op](service, null, request),
+      (caught) => {
+        assert.equal(caught.code, 'APPOINTMENTS_CALENDAR_UNAVAILABLE');
+        assert.equal(caught.status, 500);
+      },
+    );
+    assert.deepEqual(service.rows, before, `no grid write without the probe on ${op}`);
+    assert.equal(service.writes.length, 0, `no grid write without the probe on ${op}`);
+  }
+});
+
+test('scope: a recurrence-booked series supports scoped single on its own space', async () => {
+  const service = fakeAppointments();
+  const booked = await bookAppointment(
+    contextFor(service, null),
+    {
+      sourceKey: 'gym:real:serie',
+      subject: SUBJECT,
+      teamMemberId: 'coach-guido',
+      serviceKey: 'pt-single',
+      priceCents: 4000,
+      currency: 'EUR',
+      startsAt: '2026-10-20T17:00:00.000Z',
+      endsAt: '2026-10-20T18:00:00.000Z',
+      recurrence: { kind: 'weekly', count: 2 },
+      spaceId: SPACE,
+      source: { package: 'host', action: 'book' },
+    },
+  );
+  assert.equal(booked.occurrenceCount, 2);
+  for (const row of booked.occurrences) {
+    assert.equal(row.spaceId, SPACE, 'the real creation path attributes every row');
+  }
+  const calendarSync = fakeCalendarSync();
+  const head = booked.occurrences[0];
+  const out = await rescheduleAppointment(
+    contextFor(service, calendarSync),
+    {
+      id: head.id, startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+      scope: 'single', spaceId: SPACE,
+    },
+  );
+  assert.equal(out.moved, true);
+  assert.equal(out.occurrences.length, 1, 'only the named occurrence moves');
+  assert.equal(out.push, null, 'a scoped write never pushes');
+  assert.equal(calendarSync.calls.push.length, 0);
+});
+
+/**
+ * The probe runs inside the critical section (backlog:6acf0a73bfc3): every
+ * probe call happens after the last pre-write re-read, so a link that
+ * arrives between the first read and the commit is still seen before any
+ * grid change. The instrumented fakes below record the call order.
+ */
+function orderedFakes(seed) {
+  const order = [];
+  const service = fakeAppointments(seed);
+  const get = service.get.bind(service);
+  const applyManaged = service.applyManaged.bind(service);
+  service.get = async (...args) => { order.push('get'); return get(...args); };
+  service.applyManaged = async (...args) => { order.push('write'); return applyManaged(...args); };
+  const calendarSync = fakeCalendarSync();
+  const probe = calendarSync.seriesScopeLink.bind(calendarSync);
+  calendarSync.seriesScopeLink = async (...args) => { order.push('probe'); return probe(...args); };
+  return { order, service, calendarSync };
+}
+
+test('reschedule: the link probe runs after the last pre-write re-read', async () => {
+  const { order, service, calendarSync } = orderedFakes(seriesRows());
+  const out = await rescheduleAppointment(
+    contextFor(service, calendarSync),
+    {
+      id: 'a-2', startsAt: '2026-10-21T18:00:00.000Z', endsAt: '2026-10-21T19:00:00.000Z',
+      scope: 'single', spaceId: SPACE,
+    },
+  );
+  assert.equal(out.moved, true);
+  assert.ok(order.includes('probe'), 'the probe runs');
+  assert.ok(order.includes('write'), 'the write runs');
+  const gets = order.map((entry, index) => (entry === 'get' ? index : -1)).filter((index) => index >= 0);
+  const firstProbe = order.indexOf('probe');
+  const write = order.indexOf('write');
+  assert.ok(gets.length >= 2, `a re-read happens inside the critical section (order: ${order.join(',')})`);
+  assert.ok(gets[1] < firstProbe, `every probe runs after the critical re-read (order: ${order.join(',')})`);
+  assert.ok(firstProbe < write, `every probe runs before the write (order: ${order.join(',')})`);
+});
+
+test('cancel: the link probe runs after the last pre-write re-read', async () => {
+  const { order, service, calendarSync } = orderedFakes(seriesRows());
+  const out = await cancelAppointment(
+    contextFor(service, calendarSync),
+    { id: 'a-2', reason: 'Non serve piu', scope: 'single', spaceId: SPACE },
+  );
+  assert.equal(out.cancelled, true);
+  assert.ok(order.includes('probe'), 'the probe runs');
+  assert.ok(order.includes('write'), 'the write runs');
+  const gets = order.map((entry, index) => (entry === 'get' ? index : -1)).filter((index) => index >= 0);
+  const firstProbe = order.indexOf('probe');
+  const write = order.indexOf('write');
+  assert.ok(gets.length >= 2, `a re-read happens inside the envelope (order: ${order.join(',')})`);
+  assert.ok(gets[1] < firstProbe, `every probe runs after the envelope re-read (order: ${order.join(',')})`);
+  assert.ok(firstProbe < write, `every probe runs before the write (order: ${order.join(',')})`);
 });
 
 /**

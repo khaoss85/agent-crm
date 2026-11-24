@@ -217,15 +217,29 @@ test('una serie vuota (regola e finestra che non si incontrano) viene rifiutata 
   );
 });
 
+test('una serie senza spazio viene rifiutata prima di ogni scrittura', async () => {
+  const service = fakeAppointments();
+  await assert.rejects(
+    bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 } })),
+    (error) => {
+      assert.ok(error instanceof ValidationError);
+      assert.equal(error.details?.field, 'spaceId');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'nessuna occorrenza senza spazio che la possiede');
+});
+
 test('una serie settimanale crea le occorrenze, ognuna con la sua chiave di serie', async () => {
   const service = fakeAppointments();
-  const result = await bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const result = await bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 }, spaceId: SPACE }));
   assert.equal(result.occurrenceCount, 3);
   assert.equal(result.seriesKey, 'gym:series:1');
   assert.equal(service.rows.length, 3);
   assert.deepEqual(result.occurrences.map((row) => row.occurrenceIndex), [0, 1, 2]);
   for (const row of result.occurrences) {
     assert.equal(row.seriesKey, 'gym:series:1');
+    assert.equal(row.spaceId, SPACE, 'every recurrence-formed row carries the booking space');
     assert.ok(typeof row.recurrenceRule === 'string' && row.recurrenceRule.includes('"weekly"'));
   }
   assert.deepEqual(service.rows.map((row) => row.startsAt), [
@@ -237,7 +251,7 @@ test('una serie settimanale crea le occorrenze, ognuna con la sua chiave di seri
 
 test('le occorrenze della serie si vedono in griglia, ognuna con serie e indice', async () => {
   const service = fakeAppointments();
-  await bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 2 } }));
+  await bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 2 }, spaceId: SPACE }));
   const week = await readTeamWeek({ appointments: service }, {
     teamMemberIds: ['coach-guido'],
     from: '2026-11-16T00:00:00.000Z',
@@ -267,7 +281,7 @@ test('se una occorrenza è occupata il 409 nomina quale, e niente viene scritto'
   };
   const service = fakeAppointments([busy]);
   await assert.rejects(
-    bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 } })),
+    bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 }, spaceId: SPACE })),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
       assert.equal(error.status, 409);
@@ -296,7 +310,7 @@ test('un impegno del titolare su una occorrenza ferma tutta la serie', async () 
     },
   };
   await assert.rejects(
-    bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } })),
+    bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 }, spaceId: SPACE })),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
       assert.equal(error.details?.occurrenceIndex, 1);

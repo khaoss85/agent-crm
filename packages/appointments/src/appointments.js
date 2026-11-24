@@ -1246,6 +1246,18 @@ async function bookSeries(context, input) {
   const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
   assertSeriesNonEmpty(slots);
   assertSeriesHeadSlot(input, slots);
+  // Every occurrence stores the space that owns it (backlog:6acf0a73bfc3):
+  // a recurrence-formed series without attribution would read back with a
+  // null space and every later scoped write on it would refuse — the real
+  // creation path must prove the space up front, like the single path does
+  // through validateSeriesIdentity.
+  const seriesSpace = input.series?.spaceId ?? null;
+  if (!seriesSpace) {
+    throw new ValidationError(
+      'spaceId is required with a recurrence: every occurrence stores the space that owns it, so a later scoped write can prove it',
+      { field: 'spaceId' },
+    );
+  }
   const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
   const ruleJson = JSON.stringify(input.recurrence);
   const headReminderKey = input.remindAt === null ? null : reminderSourceKey(keys[0]);
@@ -1263,7 +1275,7 @@ async function bookSeries(context, input) {
     inputFor(index),
     source,
     index === 0 ? headReminderKey : null,
-    { seriesKey: input.sourceKey, occurrenceIndex: index, recurrenceRule: ruleJson },
+    { seriesKey: input.sourceKey, occurrenceIndex: index, recurrenceRule: ruleJson, spaceId: seriesSpace },
   );
   const runCritical = async () => {
     // The series' own rows never block it: a retried series re-reads its
@@ -1282,6 +1294,13 @@ async function bookSeries(context, input) {
     const heldWithBlocks = [...others, ...blocks];
     const stored = [];
     for (const key of keys) stored.push((await appointments.listWhere({ sourceKey: key }))[0] ?? null);
+    // A series key belongs to one space (backlog:6acf0a73bfc3): rows are
+    // caller-attributed, so a series booked under another space's key is
+    // refused before any write — never persisted as a foreign sibling.
+    const sameKey = await appointments.listWhere({ seriesKey: input.sourceKey });
+    if ((Array.isArray(sameKey) ? sameKey : []).some((row) => row && row.spaceId !== seriesSpace)) {
+      throw new NotFoundError('appointment series', input.sourceKey);
+    }
     const missing = [];
     for (let index = 0; index < slots.length; index += 1) {
       const submitted = submittedFor(index);
@@ -1416,6 +1435,16 @@ export async function bookAppointment(context, request) {
   // (A busy timeout past the winner's commit, or a Postgres serialization
   // abort, surfaces a retryable conflict whose retry re-reads the winner.)
   const runCritical = async () => {
+    // A series is joined only inside its own space (backlog:6acf0a73bfc3):
+    // rows are caller-attributed, so a booking that names another space's
+    // seriesKey is refused before any write — never persisted as a foreign
+    // sibling, and never an oracle: a foreign series reads as missing.
+    if (typeof input.series?.seriesKey === 'string' && input.series.seriesKey !== '') {
+      const siblings = await appointments.listWhere({ seriesKey: input.series.seriesKey });
+      if ((Array.isArray(siblings) ? siblings : []).some((row) => row && row.spaceId !== input.series.spaceId)) {
+        throw new NotFoundError('appointment series', input.series.seriesKey);
+      }
+    }
     const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
     if (existing) {
       // A stable shape on every path: the replay answers with the same keys the
@@ -1715,16 +1744,15 @@ function orderSeriesSiblings(rows) {
  * its own scope, even when the store no longer lists it.
  *
  * Space attribution (backlog:6acf0a73bfc3): the anchor proves its space —
- * a foreign space meets the same refusal on the anchor as on a missing row
- * (never a cross-space oracle), and series rows without attribution (older
- * than row-level space) refuse the same way.
+ * a foreign or unattributed anchor meets exactly the same not-found refusal
+ * as a missing row (same class, code and status — never a cross-space
+ * oracle). Singles prove it too: a null seriesKey is never an exemption,
+ * so a scoped write on a plain booking of another space refuses like a
+ * missing row instead of moving it.
  */
-async function seriesScopePlan(appointments, anchor, scope, spaceId = null) {
-  const owned = (row) => row && (row.seriesKey === null || row.seriesKey === undefined || row.seriesKey === '' || row.spaceId === spaceId);
-  if (spaceId !== null && !owned(anchor)) {
-    throw new AppError('this space holds no such series: scoped writes only cover series of the calling space', {
-      code: 'APPOINTMENTS_SERIES_SPACE_UNKNOWN', status: 404, details: { spaceId },
-    });
+async function seriesScopePlan(appointments, anchor, scope, spaceId = null, notFound = () => new NotFoundError('appointment', anchor?.id ?? anchor?.sourceKey ?? 'unknown')) {
+  if (spaceId !== null && anchor?.spaceId !== spaceId) {
+    throw notFound();
   }
   const key = typeof anchor?.seriesKey === 'string' && anchor.seriesKey !== '' ? anchor.seriesKey : null;
   if (key === null) {
@@ -1745,11 +1773,19 @@ async function seriesScopePlan(appointments, anchor, scope, spaceId = null) {
  * Google. The probe reads every sibling's source key (a series counts as
  * linked when any of them is — a link on a non-head sibling is never
  * missed): unlinked keys fall through to the grid-only path. Without the
- * composed `seriesScopeLink` handle the series stays grid-only, exactly as
- * on main without calendar-sync.
+ * composed `seriesScopeLink` handle a scoped write fails closed instead of
+ * assuming «unlinked»: silently skipping the probe would move the grid of
+ * a Google-linked series. Scoped writes therefore require the calendar-sync
+ * composition; legacy callers without `scope` are unaffected.
  */
 async function refuseLinkedSeriesScope(calendarSync, probeKeys, scope, spaceId) {
-  if (typeof calendarSync?.seriesScopeLink !== 'function') return;
+  if (typeof calendarSync?.seriesScopeLink !== 'function') {
+    throw new AppError(
+      'The scoped write needs the calendar-sync link probe, but the appointments package is composed without it: '
+      + 'a scoped series cannot prove it is unlinked, so nothing is written. Compose the seriesScopeLink handle.',
+      { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+    );
+  }
   const keys = [...new Set((Array.isArray(probeKeys) ? probeKeys : []).filter((key) => typeof key === 'string' && key !== ''))];
   for (const sourceKey of keys) {
     const probe = await calendarSync.seriesScopeLink(sourceKey, { spaceId });
@@ -1828,6 +1864,14 @@ export async function rescheduleAppointment(context, request) {
   if (scoped) {
     spaceId = requireSeriesScopeSpaceId(record, 'reschedule');
   }
+  // A scoped write is grid-only (backlog:6acf0a73bfc3): it never names a
+  // calendar, so no scoped move can push to Google behind the grid-only
+  // contract. A move that must converge Google runs unscoped.
+  if (scoped && record.calendar !== undefined && record.calendar !== null) {
+    throw new ValidationError('a scoped move is grid-only: it never names a calendar — move without a calendar, or move unscoped', {
+      field: 'calendar',
+    });
+  }
   // A named calendar is validated before any row is touched: a statically
   // preventable miscomposition fails here, never after a committed move the
   // caller received an error for — the same order the confirm path keeps.
@@ -1886,25 +1930,28 @@ export async function rescheduleAppointment(context, request) {
   // first read already settles it — anyone else gets the same 404 as a
   // missing row before any write, including a same-slot reschedule.
   refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
-  // An explicit scope resolves the series siblings and probes the Google
-  // link before the first write: a linked series refuses 409 here, the grid
-  // never changes. The probe covers every sibling's source key.
-  let scopePlan = null;
-  if (scoped) {
-    scopePlan = await seriesScopePlan(appointments, first, scope, spaceId);
-    await refuseLinkedSeriesScope(
-      context?.calendarSync ?? null,
-      scopePlan.siblings.map((row) => row?.sourceKey),
-      scope,
-      spaceId,
-    );
-  }
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
   const runInTransaction = bookingTransaction(appointments);
   const critical = async () => {
     const current = await lookup();
+    // An explicit scope resolves the series siblings and probes the Google
+    // link INSIDE the critical section, on the re-read row (backlog:6acf0a73bfc3):
+    // a link that arrives between the first read and this write still
+    // refuses 409 before any grid change — no TOCTOU gap. The probe covers
+    // every sibling's source key, and the space gate answers exactly like a
+    // missing row. This keeps the old precedence: a linked series refuses
+    // before the terminal-state check below, as it did before the move.
+    if (scoped) {
+      const scopePlan = await seriesScopePlan(appointments, current, scope, spaceId, () => appointmentNotFoundError(record));
+      await refuseLinkedSeriesScope(
+        context?.calendarSync ?? null,
+        scopePlan.siblings.map((row) => row?.sourceKey),
+        scope,
+        spaceId,
+      );
+    }
     if (APPOINTMENT_TERMINAL.includes(current.status)) {
       throw new AppError(
         `An appointment in state "${current.status}" cannot be rescheduled; it is terminal and moves nowhere`,
@@ -2062,6 +2109,14 @@ export async function cancelAppointment(context, request) {
   if (scoped) {
     spaceId = requireSeriesScopeSpaceId(record, 'cancel');
   }
+  // A scoped write is grid-only (backlog:6acf0a73bfc3): it never names a
+  // calendar, so no scoped cancel can push to Google behind the grid-only
+  // contract. A cancel that must converge Google runs unscoped.
+  if (scoped && record.calendar !== undefined && record.calendar !== null) {
+    throw new ValidationError('a scoped cancel is grid-only: it never names a calendar — cancel without a calendar, or cancel unscoped', {
+      field: 'calendar',
+    });
+  }
   const calendarSync = context?.calendarSync ?? null;
   let calendarId = null;
   let calendarPush = null;
@@ -2109,25 +2164,55 @@ export async function cancelAppointment(context, request) {
   // (backlog:9aa5c073): anyone else gets the same 404 as a missing row
   // before any write, including an already-cancelled row.
   refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first, () => appointmentNotFoundError(record));
-  // An explicit scope resolves the series siblings and probes the Google
-  // link before the first write: a linked series refuses 409 here, the grid
-  // never changes. The probe covers every sibling's source key, so a link
-  // on a non-head sibling is never missed and one occurrence can never
-  // cancel the whole Google series behind the grid.
-  let scopePlan = null;
-  if (scoped) {
-    scopePlan = await seriesScopePlan(appointments, first, scope, spaceId);
-    await refuseLinkedSeriesScope(
-      context?.calendarSync ?? null,
-      scopePlan.siblings.map((row) => row?.sourceKey),
-      scope,
-      spaceId,
-    );
-  }
   let appointment = first;
   let cancelled = false;
   let occurrences = null;
-  if (first.status !== CANCELLED_STATE) {
+  if (scoped) {
+    // An explicit scope resolves the series siblings and probes the Google
+    // link INSIDE one envelope with the write (backlog:6acf0a73bfc3): the
+    // plan re-reads the row and re-probes every sibling's source key there,
+    // so a link that arrives between the first read and the commit still
+    // refuses 409 before any grid change — no TOCTOU gap. A linked series
+    // refuses before the first grid write, the grid never changes, and one
+    // occurrence can never cancel the whole Google series behind the grid.
+    // advanceAppointment joins this envelope instead of opening its own
+    // (bookingTransaction is null inside a caller transaction).
+    const runInTransaction = bookingTransaction(appointments);
+    const runScoped = async () => {
+      const current = await lookup();
+      const scopePlan = await seriesScopePlan(appointments, current, scope, spaceId, () => appointmentNotFoundError(record));
+      await refuseLinkedSeriesScope(
+        context?.calendarSync ?? null,
+        scopePlan.siblings.map((row) => row?.sourceKey),
+        scope,
+        spaceId,
+      );
+      if (current.status !== CANCELLED_STATE) {
+        try {
+          appointment = await advanceAppointment(
+            { appointments, actor: who, now: context.now },
+            current,
+            CANCELLED_STATE,
+            reason,
+          );
+          cancelled = true;
+        } catch (error) {
+          // Another cancellation won the race between the read and the write:
+          // its row is the answer, never a 409 on the operator's own intent.
+          if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
+            throw error;
+          }
+          appointment = await lookup();
+        }
+      }
+    };
+    if (runInTransaction) {
+      await runInTransaction(runScoped);
+    } else {
+      await runScoped();
+    }
+    occurrences = [appointment];
+  } else if (first.status !== CANCELLED_STATE) {
     try {
       appointment = await advanceAppointment(
         { appointments, actor: who, now: context.now },
@@ -2144,9 +2229,6 @@ export async function cancelAppointment(context, request) {
       }
       appointment = await lookup();
     }
-  }
-  if (scoped && scope === 'single') {
-    occurrences = [appointment];
   }
   // The push rides the idempotent path on a replay too: a first attempt
   // whose push failed converges Google on the retry.
