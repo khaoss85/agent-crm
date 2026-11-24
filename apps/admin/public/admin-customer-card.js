@@ -4725,9 +4725,12 @@ export function createCustomerCardView(deps) {
         if (item?.entry === 'offer-created' || item?.entry === 'stage-moved') {
           // backlog:82235e46e3e9: an offer or a stage move in the
           // cronologia — a system line with its own mark, never a bubble.
+          // backlog:acd136b3cd5d: an author the reads cannot name paints
+          // no «da —» tail — the fact stays, the empty author does not
+          // (same rule as the offer page's historyLine).
           const when = timeParts(item?.occurredAt);
           const head = item.entry === 'offer-created' ? 'Offerta creata' : 'Cambio di stato';
-          const by = typeof item.who === 'string' && item.who !== '' ? ` · da ${item.who}` : '';
+          const by = typeof item.who === 'string' && item.who !== '' && item.who !== '—' ? ` · da ${item.who}` : '';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-event');
           const mark = el('span', 'bo-scheda-chan bo-tile-event', item.entry === 'offer-created' ? '€' : '→');
           mark.setAttribute('aria-hidden', 'true');
@@ -4934,7 +4937,12 @@ export function createCustomerCardView(deps) {
       }
       if (ordered.length > visible.length) {
         const rest = ordered.length - visible.length;
-        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        // backlog:acd136b3cd5d: «20 di 20» reads as if everything were
+        // shown while a page is still hidden — a remainder that fits one
+        // page names no counts, only the action.
+        const older = el('button', 'bo-scheda-older', rest <= TIMELINE_PAGE
+          ? 'Mostra precedenti'
+          : `Mostra precedenti · ${TIMELINE_PAGE} di ${rest}`);
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
@@ -5989,15 +5997,19 @@ export function createCustomerCardView(deps) {
         const words = stageMoveLabels(pipelines, move);
         const who = auditActorLabel(entry, [owner, companyName], people);
         const when = italianDateTime(entry?.createdAt) ?? '—';
+        // backlog:acd136b3cd5d: an actor the reads cannot name paints no
+        // «da —» tail — the move stays, the empty author does not (same
+        // rule as the offer page's historyLine).
+        const by = who === '—' || who === '' ? '' : ` · da ${who}`;
         if (words === null) {
           // Review giro 1 (P2): the audit holds a move but no side has a
           // label (pipelines unavailable, unknown keys). Like the detail,
           // the row reads the generic Italian line — never a raw key, and
           // never a false «no moves» message for moves that exist.
           // Backlog 169cd4bc988c: one word for every move, like the offer page.
-          rows.push(`Cambio di stato · da ${who} · ${when}`);
+          rows.push(`Cambio di stato${by} · ${when}`);
         } else {
-          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+          rows.push(`da ${words.from} a ${words.to}${by} · ${when}`);
         }
         if (rows.length >= 5) break;
       }

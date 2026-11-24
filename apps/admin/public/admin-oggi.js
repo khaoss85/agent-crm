@@ -65,13 +65,16 @@ export function isSpaceMount(adminBase) {
 
 /**
  * Time-aware Italian greeting for the given hour of day (0-23).
+ * backlog:acd136b3cd5d: the night reads «Buonanotte» (22–5), never
+ * «Buonasera» at 4 in the morning.
  * @param {unknown} hour
  */
 export function greetingForHour(hour) {
   if (typeof hour !== 'number' || !Number.isFinite(hour)) return 'Buongiorno';
   if (hour >= 5 && hour < 12) return 'Buongiorno';
   if (hour >= 12 && hour < 18) return 'Buon pomeriggio';
-  return 'Buonasera';
+  if (hour >= 18 && hour < 22) return 'Buonasera';
+  return 'Buonanotte';
 }
 
 /**
@@ -140,6 +143,26 @@ export function romeDayKey(value) {
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: OGGI_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
     }).format(instant);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rome hour of day of an instant (0-23), null when unparsable.
+ * backlog:acd136b3cd5d: the greeting reads Rome, never the device clock —
+ * a laptop abroad at 20:00 local still greets a Roman midnight correctly.
+ * @param {unknown} value
+ */
+export function romeHour(value) {
+  const instant = toInstant(value);
+  if (!instant) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('it-IT', {
+      timeZone: OGGI_TIME_ZONE, hour: 'numeric', hourCycle: 'h23',
+    }).formatToParts(instant);
+    const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? NaN);
+    return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : null;
   } catch {
     return null;
   }
@@ -2683,7 +2706,10 @@ export function renderOggi({
   const page = el(doc, 'div', 'bo-oggi');
   mount.appendChild(page);
   const person = nonEmptyText(userName) ?? (typeof spaceName === 'string' && spaceName !== '' ? spaceName : 'il tuo spazio');
-  const hour = now instanceof Date ? now.getHours() : NaN;
+  // backlog:acd136b3cd5d: Rome hour, never the device clock (an invalid
+  // instant keeps the old neutral fallback through greetingForHour).
+  const rome = now instanceof Date ? romeHour(now) : null;
+  const hour = rome === null ? (now instanceof Date ? now.getHours() : NaN) : rome;
 
   page.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
   // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
