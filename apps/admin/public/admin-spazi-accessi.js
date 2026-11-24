@@ -1023,7 +1023,11 @@ export function createSpaziAccessiView(deps) {
       }
       return loadFixCount(readsClient, { spaceId: space });
     });
-    const reads = { contextRead, membersRead, agentsRead, switchesRead };
+    // backlog:b139d83617f3: the gate verdict stays a single read beside the
+    // summary, exactly like beginLegacyReads — the summary carries no gate
+    // section, and the skeleton covers it until it lands.
+    const gateRead = legacy().gateRead;
+    const reads = { contextRead, membersRead, agentsRead, switchesRead, gateRead };
     return { ...reads, fixRead };
   }
 
