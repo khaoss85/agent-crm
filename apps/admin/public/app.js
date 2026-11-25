@@ -969,6 +969,10 @@ const reportingView = createReportingView({
   mount: mountGate.owned(['reporting', 'nuovo-modulo']),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // backlog:766e9cf9469e: the shell's active space, read late — the AI
+  // summary request carries the space the model spends on, like every other
+  // space-scoped view.
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   onAskAi: (screenId, description) => {
     if (assistantPanel) void assistantPanel.open(screenId, description);
     else toast('Apri la barra AI (⌘K) e descrivi il modulo che vuoi creare.');

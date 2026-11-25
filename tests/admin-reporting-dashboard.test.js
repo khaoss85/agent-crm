@@ -16,6 +16,8 @@ import {
   FORECAST_LEGEND,
   channelsSummary,
   channelWeekTotals,
+  isAiSummaryLines,
+  summaryPath,
   REPORTING_CODE_FILES,
   REPORTING_CODE_LEDE,
   REPORTING_CURRENCY,
@@ -113,13 +115,22 @@ function harness(options = {}) {
   const copies = options.copies ?? null;
   const logLines = options.logLines ?? [];
   const dashboard = options.dashboard ?? MODEL;
+  // backlog:766e9cf9469e: the AI summary answer for /api/reporting/summary —
+  // by default the AI is off ({ lines: null }), so the header keeps the
+  // computed fallback like production with the AI disabled.
+  const summary = options.summary ?? { lines: null, reason: 'ai-disabled' };
   const view = createReportingView({
     doc,
     mount,
+    ...(options.spaceId === undefined ? {} : { spaceId: options.spaceId }),
     client: {
       request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         requests.push(path);
+        if (path.includes('/api/reporting/summary')) {
+          if (summary instanceof Error) throw summary;
+          return summary;
+        }
         if (path.includes('/api/reporting/dashboard')) {
           if (dashboard instanceof Error) throw dashboard;
           return dashboard;
@@ -726,11 +737,13 @@ test('c3e66b36ddb7: every number comes from the declared analytics registry, rea
   }
   // …and the screen reads numbers from nowhere else: the dashboard route
   // (registry) and the operator's own report rows, never another query.
+  // backlog:766e9cf9469e: the summary route rewrites the same dashboard
+  // numbers through the model — a read-only rewrite, never new numbers.
   const { view, requests } = harness();
   await view.renderReporting();
   const sources = new Set(requests.map((path) => path.split('?')[0]));
   // The team roster only names the people (famiglia F5): it carries no number.
-  assert.deepEqual([...sources].sort(), ['/api/modules/reporting/records', '/api/reporting/dashboard', '/api/spine/memberships']);
+  assert.deepEqual([...sources].sort(), ['/api/modules/reporting/records', '/api/reporting/dashboard', '/api/reporting/summary', '/api/spine/memberships']);
 });
 
 test('c3e66b36ddb7: filters sit beside the title — one active period, Tutti and the person sigle', async () => {
@@ -929,4 +942,116 @@ test('review Muse #1108: il conteggio segue il valore — «· 1 in altre valute
   await view.renderReporting();
   const spans = mount.findAll('span').map((node) => node.textContent);
   assert.ok(spans.includes('6 preventivi aperti · 1 in altre valute'), spans.join(' | '));
+});
+
+/**
+ * backlog:766e9cf9469e: the two lines at the top of the Reporting screen,
+ * written by the AI from the period's own numbers. The header first paints
+ * the computed fallback of 526e1bf4bd28, then replaces it only with an
+ * answer of exactly two lines; with the AI off, failing or empty the
+ * fallback stays and the header never shows an error.
+ */
+
+const summaryHostOf = (mount) => mount.findAll('div')
+  .find((node) => node.getAttribute('class') === 'bo-rep-summary');
+
+const summaryLinesOf = (mount) => (summaryHostOf(mount)?.childNodes ?? [])
+  .map((node) => node.textContent);
+
+test('766e9cf9469e: summaryPath pins the periodo/persona recalculation contract', () => {
+  assert.equal(summaryPath({ period: '2026-10', owner: null }), '/api/reporting/summary?period=2026-10');
+  assert.equal(
+    summaryPath({ period: '2026-10', owner: 'maria rossi' }),
+    '/api/reporting/summary?period=2026-10&owner=maria+rossi',
+  );
+  assert.equal(
+    summaryPath({ period: '2026-10', owner: null, spaceId: 'presti' }),
+    '/api/reporting/summary?period=2026-10&spaceId=presti',
+    'the space rides the request so the model spends on the active space',
+  );
+});
+
+test('766e9cf9469e: the summary request carries the shell active space', async () => {
+  const { view, requests } = harness({ spaceId: () => 'presti' });
+  await view.renderReporting();
+  await tick();
+  const summaryRequests = requests.filter((path) => path.includes('/api/reporting/summary'));
+  assert.equal(summaryRequests.length, 1);
+  assert.match(summaryRequests[0], /spaceId=presti/);
+});
+
+test('766e9cf9469e: only exactly two non-empty lines may replace the fallback', () => {
+  assert.equal(isAiSummaryLines(['Prima riga con 28 clienti.', 'Seconda riga con 5 contro 9.']), true);
+  assert.equal(isAiSummaryLines(null), false, 'AI off: the fallback stays');
+  assert.equal(isAiSummaryLines({ lines: ['a', 'b'] }), false, 'a wrapped payload never replaces');
+  assert.equal(isAiSummaryLines(['Solo una riga.']), false);
+  assert.equal(isAiSummaryLines(['  ', 'Seconda riga.']), false, 'a blank line never paints');
+  assert.equal(isAiSummaryLines(['a', 'b', 'c']), false);
+  assert.equal(isAiSummaryLines('due righe'), false, 'an error page never paints');
+});
+
+test('766e9cf9469e: with the AI on the header shows its two lines on the period', async () => {
+  const ai = ['Il periodo ha portato 28 nuovi clienti, soprattutto da Instagram.', 'Ultima settimana 5 contro 9 di quella prima, in calo.'];
+  const { mount, view, requests } = harness({ summary: { lines: ai, reason: 'ai' } });
+  await view.renderReporting();
+  await tick();
+  assert.deepEqual(summaryLinesOf(mount), ai, 'the AI lines replace the computed fallback');
+  const summaryRequests = requests.filter((path) => path.includes('/api/reporting/summary'));
+  assert.equal(summaryRequests.length, 1);
+  assert.match(summaryRequests[0], /period=20\d\d-\d\d/);
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.doesNotMatch(text, /nuovi clienti in 4 settimane/, 'the fallback lines are replaced, not doubled');
+});
+
+test('766e9cf9469e: with the AI off, failing or empty the computed fallback stays with no error', async () => {
+  for (const [name, summary] of [
+    ['off', { lines: null, reason: 'ai-disabled' }],
+    ['empty period', { lines: null, reason: 'empty' }],
+    ['unparseable', { lines: null, reason: 'unparseable' }],
+    ['network failure', new Error('boom')],
+  ]) {
+    const { mount, view } = harness({ summary });
+    await view.renderReporting();
+    await tick();
+    const lines = summaryLinesOf(mount);
+    assert.ok(lines.includes('28 nuovi clienti in 4 settimane, soprattutto da Instagram.'),
+      `${name}: the computed fallback stays`);
+    const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+    assert.doesNotMatch(text, /non disponibile|riprova|errore/i, `${name}: no error text in the header`);
+  }
+});
+
+test('766e9cf9469e: periodo/persona change refetches the two lines', async () => {
+  const first = ['Prima risposta con 28 clienti.', 'Confronto con 5 contro 9.'];
+  const second = ['Seconda risposta con 7 clienti.', 'Confronto con 3 contro 4.'];
+  const answers = [first, second];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const requests = [];
+  const view = createReportingView({
+    doc,
+    mount,
+    client: {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
+        requests.push(path);
+        if (path.includes('/api/reporting/summary')) return { lines: answers.shift() ?? first, reason: 'ai' };
+        if (path.includes('/api/reporting/dashboard')) return MODEL;
+        return { items: BUNDLE_ROWS };
+      },
+    },
+    navigate: () => {},
+    log: () => {},
+  });
+  await view.renderReporting();
+  await tick();
+  assert.deepEqual(summaryLinesOf(mount), first);
+  const people = mount.findAll('button').find((node) => node.getAttribute('data-owner') === 'bob');
+  assert.ok(people, 'the persona filter renders');
+  people.dispatch('click', {});
+  await tick(10);
+  const summaryRequests = requests.filter((path) => path.includes('/api/reporting/summary'));
+  assert.equal(summaryRequests.length, 2, 'a persona change refetches the lines');
+  assert.match(summaryRequests[1], /owner=bob/);
+  assert.deepEqual(summaryLinesOf(mount), second, 'the header shows the new period lines');
 });
