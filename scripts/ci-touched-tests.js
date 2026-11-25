@@ -66,6 +66,17 @@
  *   for missing coverage: the warned fallback is decided on the
  *   mapped selection alone, before the guards join it.
  *
+ * - the admin module browser tests join conditionally, on top of a mapped
+ *   or fallback selection (see `withAdminModuleBrowserTests`): whenever the
+ *   diff touches `apps/admin/public/admin-<module>.js`, the gate also runs
+ *   the existing `tests/admin-<module>*-browser.test.js` files, when any
+ *   exist. Browser proofs drive the served page in a real Chromium instead
+ *   of importing the screen, so the import mapping above never selects
+ *   them — #1141 changed `admin-agenti.js` green-alone while breaking
+ *   `tests/admin-agenti-form-browser.test.js`, which runs only in the full
+ *   suite (backlog:f286f7af). A diff touching no admin module adds no
+ *   browser test, so the fast time of other PRs is unchanged.
+ *
  * Two budgets bound the step so a big PR cannot wedge it (CI run
  * 39044361164: 100 selected files, the run outlived its bound and the step
  * failed red on a change that needed the gate most):
@@ -981,6 +992,51 @@ export function withPackageDeclarationFreezeTests(
 }
 
 /**
+ * The admin module browser tests: `tests/admin-<module>*-browser.test.js`
+ * files proving a served backoffice screen in a real Chromium. They drive
+ * the page (`scripts/bo-shots.js`) instead of relatively importing the
+ * screen, so the import mapping above never selects them — and #1141
+ * changed `apps/admin/public/admin-agenti.js` green-alone while breaking
+ * `tests/admin-agenti-form-browser.test.js`, which runs only in the full
+ * suite (backlog:f286f7af).
+ *
+ * They join conditionally, on top of a mapped or fallback selection:
+ * whenever the diff touches `apps/admin/public/admin-<module>.js`, every
+ * existing `tests/admin-<module>*-browser.test.js` runs too. A module with
+ * no browser test adds nothing, and a diff touching no admin module
+ * returns the selection unchanged — a docs-only PR never pays for them.
+ * An empty diff stays empty, and duplicates collapse: a browser test the
+ * mapping already selected runs once. Pure: unit-tested, including both
+ * acceptance directions.
+ */
+export function withAdminModuleBrowserTests(
+  /** @type {string[]} */ selectedTests,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {string[]} */ changedFiles,
+) {
+  if (changedFiles.length === 0) return [...selectedTests].sort();
+  const modules = new Set();
+  for (const file of changedFiles) {
+    const normalized = normalize(file).replace(/\\/g, '/');
+    const match = /^apps\/admin\/public\/(admin-[A-Za-z0-9-]+)\.js$/.exec(normalized);
+    if (match) modules.add(match[1]);
+  }
+  if (modules.size === 0) return [...selectedTests].sort();
+  const matched = new Set();
+  for (const testPath of testContents.keys()) {
+    if (!/-browser\.test\.[cm]?js$/.test(testPath)) continue;
+    for (const module of modules) {
+      if (testPath.startsWith(`tests/${module}-`)) {
+        matched.add(testPath);
+        break;
+      }
+    }
+  }
+  if (matched.size === 0) return [...selectedTests].sort();
+  return [...new Set([...selectedTests, ...matched])].sort();
+}
+
+/**
  * The characterization staleness suites: each `tests/characterization/*-baseline.json`
  * freezes the behaviour of the source files its `source` map digests, and the
  * paired `*-characterization.test.js` fails red when an asserted observed
@@ -1802,21 +1858,25 @@ async function main() {
   let preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
   const applyAlwaysRunGuards = (tests) => {
     try {
-      return withCharacterizationTests(
-        withPackageDeclarationFreezeTests(
-          withKernelBoundaryTests(
-            withRepoWideGuards(tests, contents, allChanged),
+      return withAdminModuleBrowserTests(
+        withCharacterizationTests(
+          withPackageDeclarationFreezeTests(
+            withKernelBoundaryTests(
+              withRepoWideGuards(tests, contents, allChanged),
+              contents,
+              allChanged,
+            ),
             contents,
             allChanged,
           ),
           contents,
           allChanged,
+          loadCharacterizationDigests(root),
+          CHARACTERIZATION_SUITES,
+          added,
         ),
         contents,
         allChanged,
-        loadCharacterizationDigests(root),
-        CHARACTERIZATION_SUITES,
-        added,
       );
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
@@ -1889,6 +1949,12 @@ async function main() {
     ? []
     : plan.tests.filter(
       (test) => !preGuardTests.includes(test) && PACKAGE_DECLARATION_FREEZE_TESTS.includes(test),
+    );
+  const addedAdminBrowser = plan.kind === 'refuse'
+    ? []
+    : plan.tests.filter(
+      (test) => !preGuardTests.includes(test)
+        && /-browser\.test\.[cm]?js$/.test(test),
     );
 
   // Selected tests outside the core suite, after the guards joined: a
@@ -1972,6 +2038,11 @@ async function main() {
   if (addedDeclaration.length > 0) {
     process.stdout.write(
       `ci-touched-tests: plus ${addedDeclaration.length} declaration freeze test(s): ${addedDeclaration.join(', ')}.\n`,
+    );
+  }
+  if (addedAdminBrowser.length > 0) {
+    process.stdout.write(
+      `ci-touched-tests: plus ${addedAdminBrowser.length} admin module browser test(s): ${addedAdminBrowser.join(', ')}.\n`,
     );
   }
 

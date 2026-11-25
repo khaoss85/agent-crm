@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -9,6 +9,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
+import { mergeHandoffIntoDraft } from './admin-composer-handoff.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
@@ -623,6 +624,16 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
     || /** @type {any} */ (error).status === 503);
 
 export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog c61b882bbf2a (prova del Mac 18/11 sul live: la scheda restò sui
+ * riquadri scheletro oltre 60 s senza nessun messaggio mentre lo spazio si
+ * riavviava): oltre questa soglia con il profilo ancora in volo la scheda
+ * mostra un messaggio in italiano con un nuovo tentativo, al posto degli
+ * scheletri muti del profilo. Il messaggio sparisce quando i dati arrivano
+ * (la pittura finale non lo conosce). DECISION (to be confirmed): 10 s —
+ * oltre il budget della prima ondata (3 s) ma molto prima del minuto muto.
+ */
+export const PROFILE_SLOW_MS = 10 * 1000;
 /**
  * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
  * spins without end — a run that answers nothing within the timeout refuses
@@ -1342,6 +1353,16 @@ export function createCustomerCardView(deps) {
       const timer = setTimeout(resolve, ms);
       if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
     });
+  // Backlog c61b882bbf2a: the slow-profile clock — its own seam like the
+  // first-wave budget above, so tests fire it without real time and the
+  // load backstop never sits among the screen's user-facing `wait` pauses.
+  // Unref'd where the host allows it, so an idle process never waits on it.
+  const profileSlowWait = typeof deps.profileSlowWait === 'function'
+    ? deps.profileSlowWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -1363,6 +1384,11 @@ export function createCustomerCardView(deps) {
    * @type {{ remember: (resource: unknown, id: unknown, name: unknown) => void, get: (resource: unknown, id: unknown) => string | null } | null}
    */
   const knownNames = deps.knownNames && typeof deps.knownNames.get === 'function' ? deps.knownNames : null;
+  // backlog:ab7c38cbcca5: the offer message handed over by the offer page.
+  const composerHandoff = deps.composerHandoff && typeof deps.composerHandoff.take === 'function'
+    ? deps.composerHandoff : null;
+  /** The «Scrivi» opener of the shown scheda, set when its Azioni rapide paint. @type {null | ((card: any, navCtx: any, preferChannel?: string | null) => void)} */
+  let composerOpener = null;
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -1843,6 +1869,16 @@ export function createCustomerCardView(deps) {
   }
 
 
+  /**
+   * Review Muse #1107 (P2): the archive / restore / delete write in flight,
+   * per contact, held by the view — every repaint (paintPartial,
+   * buildAndShow) builds new buttons, so the guard cannot live on a node.
+   * While a write flies all three actions paint disabled and a second
+   * click sends nothing.
+   * @type {Map<string, { action: string, key: string }>}
+   */
+  const contactWrites = new Map();
+
   function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
@@ -1896,7 +1932,182 @@ export function createCustomerCardView(deps) {
     else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
+    if (resource === 'contact' && typeof id === 'string' && id !== '') head.appendChild(contactTools(card, id));
     panel.appendChild(head);
+  }
+
+  /**
+   * Voce 91c92940274c (Dan 19/11: «sui contatti non c'è la possibilità di
+   * archiviare/cancellare quelli che non voglio»). Two quiet buttons in the
+   * scheda head, never a menu to hunt for:
+   * - «Archivia» is one click: the contact leaves lists and counts (it is
+   *   found again under «Archiviati»), the toast keeps «Annulla» to bring
+   *   it back, and the screen goes back to Clienti;
+   * - «Elimina» is final, so it asks on the spot (never a native dialog)
+   *   and says what stays: the audit trace. A contact with offers can only
+   *   be archived: the server says so (409) and the strip offers Archivia.
+   * An archived contact opened again shows a strip with «Ripristina».
+   * @param {any} card @param {string} id
+   */
+  function contactTools(card, id) {
+    const tools = el('div', 'bo-scheda-head-tools');
+    const path = `/api/contacts/${encodeURIComponent(id)}`;
+    const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo contatto';
+    const button = (label, action, cls = 'ui-btn ui-btn-secondary') => {
+      const node = el('button', cls, label);
+      node.setAttribute('type', 'button');
+      node.setAttribute('data-action', action);
+      return node;
+    };
+    const say = el('p', 'bo-scheda-tools-note');
+    // aria-live, not role=status: the scheda keeps one status line per
+    // section, read by position; this note speaks only after a refusal.
+    say.setAttribute('aria-live', 'polite');
+    say.setAttribute('hidden', '');
+    const tell = (text) => {
+      say.textContent = text;
+      if (text === '') say.setAttribute('hidden', '');
+      else say.removeAttribute('hidden');
+    };
+    const refusal = (error, failed, action) => {
+      // Only the named service verdict selects special wording. A bare
+      // 409/503 keeps its actual cause and the shared failure handling.
+      const code = String(error?.code ?? error?.body?.error?.code ?? '');
+      if (code === 'CONTACT_HAS_OPPORTUNITIES') {
+        logWriteFailure(error);
+        return 'Questo contatto ha offerte collegate: si può archiviare, non eliminare.';
+      }
+      if (code === 'CONTACT_SERVICE_UNAVAILABLE') {
+        logWriteFailure(error);
+        const subject = { archive: 'Archiviazione non ancora attiva', restore: 'Ripristino non ancora attivo', delete: 'Eliminazione non ancora attiva' }[action];
+        return `${subject} su questo rilascio: riprova dopo l’aggiornamento.`;
+      }
+      return humanWriteError(error, { failed });
+    };
+    /** @type {any[]} */
+    const actionNodes = [];
+    const busy = (node, on) => {
+      for (const each of actionNodes) {
+        if (on) each.setAttribute('disabled', '');
+        else each.removeAttribute('disabled');
+      }
+      if (on) node.setAttribute('aria-busy', 'true');
+      else node.removeAttribute('aria-busy');
+    };
+    /**
+     * One write at a time per contact, across repaints.
+     * @param {string} action @param {(key: string) => Promise<any>} send
+     */
+    const write = async (action, send) => {
+      // A write already in flight for this contact (from this paint or an
+      // earlier one): never a second request.
+      if (contactWrites.has(id)) return { skipped: true };
+      const entry = { action, key: submissions.issueKey() };
+      contactWrites.set(id, entry);
+      try {
+        await send(entry.key);
+        return { ok: true };
+      } catch (error) {
+        return { error };
+      } finally {
+        if (contactWrites.get(id) === entry) contactWrites.delete(id);
+      }
+    };
+    const restore = (key) => client.request(`${path}/restore`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) });
+    const archivedAt = typeof card?.archivedAt === 'string' && card.archivedAt !== '' ? card.archivedAt : null;
+    if (archivedAt !== null) {
+      tools.setAttribute('data-archived', 'true');
+      tools.appendChild(el('span', 'bo-scheda-archived-pill', 'Archiviato'));
+      const back = button('Ripristina', 'contact-restore', 'ui-btn ui-btn-primary');
+      actionNodes.push(back);
+      back.addEventListener('click', async () => {
+        busy(back, true);
+        const result = await write('restore', restore);
+        if (result.skipped) return;
+        if (result.error) {
+          busy(back, false);
+          tell(refusal(result.error, 'Contatto non ripristinato. Riprova più tardi.', 'restore'));
+          return;
+        }
+        toast('Contatto ripristinato');
+        await renderCard('contact', id);
+      });
+      tools.appendChild(back);
+      if (contactWrites.has(id)) busy(back, true);
+      tools.appendChild(say);
+      return tools;
+    }
+    const archive = button('Archivia', 'contact-archive');
+    archive.setAttribute('title', 'Toglilo da liste e conteggi: lo ritrovi in «Archiviati»');
+    const drop = button('Elimina', 'contact-delete', 'ui-btn ui-btn-secondary bo-scheda-danger');
+    drop.setAttribute('title', 'Eliminalo per sempre');
+    const doArchive = async () => {
+      busy(archive, true);
+      tell('');
+      const result = await write('archive', (key) => client.request(`${path}/archive`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
+        busy(archive, false);
+        tell(refusal(result.error, 'Contatto non archiviato. Riprova più tardi.', 'archive'));
+        return;
+      }
+      toast(`${name} archiviato`, false, {
+        action: {
+          label: 'Annulla',
+          run: async () => {
+            const undo = await write('restore', restore);
+            if (undo.skipped) return;
+            if (undo.error) {
+              toast(refusal(undo.error, 'Contatto non ripristinato: lo trovi in «Archiviati».', 'restore'), true);
+              return;
+            }
+            toast('Contatto ripristinato');
+            navigate(`#/customer-card/contact/${encodeURIComponent(id)}`);
+          },
+        },
+      });
+      navigate('#/customer-data');
+    };
+    archive.addEventListener('click', doArchive);
+    const confirmRow = el('div', 'bo-scheda-confirm');
+    confirmRow.setAttribute('hidden', '');
+    confirmRow.setAttribute('data-confirm', 'contact-delete');
+    confirmRow.appendChild(el('span', undefined, `Eliminare ${name} per sempre? Spariscono scheda e dati; resta solo la traccia di chi l’ha fatto.`));
+    const sure = button('Elimina per sempre', 'contact-delete-confirm', 'ui-btn ui-btn-danger');
+    const keep = button('Annulla', 'contact-delete-cancel');
+    confirmRow.appendChild(sure);
+    confirmRow.appendChild(keep);
+    drop.addEventListener('click', () => {
+      tell('');
+      confirmRow.removeAttribute('hidden');
+      drop.setAttribute('hidden', '');
+    });
+    keep.addEventListener('click', () => {
+      confirmRow.setAttribute('hidden', '');
+      drop.removeAttribute('hidden');
+    });
+    sure.addEventListener('click', async () => {
+      busy(sure, true);
+      const result = await write('delete', (key) => client.request(path, { method: 'DELETE', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
+        busy(sure, false);
+        confirmRow.setAttribute('hidden', '');
+        drop.removeAttribute('hidden');
+        tell(refusal(result.error, 'Contatto non eliminato. Riprova più tardi.', 'delete'));
+        return;
+      }
+      toast(`${name} eliminato`);
+      navigate('#/customer-data');
+    });
+    actionNodes.push(archive, drop, sure);
+    tools.appendChild(archive);
+    tools.appendChild(drop);
+    tools.appendChild(confirmRow);
+    tools.appendChild(say);
+    // A write still in flight from an earlier paint keeps every action off.
+    if (contactWrites.has(id)) busy(archive, true);
+    return tools;
   }
 
   /**
@@ -2041,6 +2252,9 @@ export function createCustomerCardView(deps) {
   }
 
   function quickActions(box, card, navCtx, extra = {}) {
+    // backlog:ab7c38cbcca5: the composer opener lives in this scope; the
+    // handed-over offer message (openHandedMessage) opens it from here.
+    composerOpener = openComposer;
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     const phone = card?.phone?.available === true
@@ -2342,7 +2556,20 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify(callBody),
         });
         toast('Chiamata registrata');
+        // Voce 600964e2d14e: dopo una chiamata dall'azione rapida «Chiama»
+        // la scheda propone «Detta nota vocale» per quella chiamata — il
+        // pannello Chiama si chiude e la rilettura riapre il dettato, vuoto,
+        // con il cursore dentro. Solo la finestra della chiamata si chiude
+        // (uno «Scrivi» aperto resta dov'è); retainedDrafts è il canale
+        // disegnato per portare le bozze nella pittura dopo la rilettura —
+        // paint lo consuma una volta sola e la digitazione vera vince sopra.
+        // Senza chiamata registrata dal CRM (tel: di ripiego) non c'è nessun
+        // gancio: il dettato resta l'opzione già visibile nella scheda.
+        const open = mount.querySelector('div[data-call="open"]');
+        if (open && open.parentNode) open.parentNode.removeChild(open);
+        retainedDrafts = { ...(retainedDrafts ?? {}), voice: { open: true, text: '' } };
         await renderCard(navCtx.resource, navCtx.id);
+        focusAtEnd(mount.querySelector('[name="voiceNoteText"]'));
       } catch (error) {
         err.textContent = humanReadError(error, { failed: 'Chiamata non registrata. Riprova più tardi.' });
       } finally {
@@ -6500,7 +6727,9 @@ export function createCustomerCardView(deps) {
     }
     appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
-      box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
+      // backlog:f2e52f14: il singolare conta — «+ 1 appuntamenti successivi» è sbagliato.
+      const rest = upcoming.length - 1;
+      box.appendChild(el('p', 'bo-muted', rest === 1 ? '+ 1 appuntamento successivo' : `+ ${rest} appuntamenti successivi`));
     }
   }
 
@@ -6725,10 +6954,17 @@ export function createCustomerCardView(deps) {
     // A partial paint is a courtesy: if it ever throws, the scheda waits for
     // the full answer like before instead of failing the read.
     let partials = firstVisit;
+    // Backlog c61b882bbf2a: the slow-profile watch — the last partial paint,
+    // so the threshold repaint says the same data with the notice added.
+    let lastPartial = null;
+    let lastPending = PART_NAMES_PENDING();
+    let profileSlow = false;
     const partialPaint = (partial, pending) => {
+      lastPartial = partial;
+      lastPending = pending;
       if (!partials || renderToken !== cardRenderToken || pending.size === 0) return;
       try {
-        paintPartial(key, resource, id, partial, pending);
+        paintPartial(key, resource, id, partial, pending, profileSlow);
       } catch (error) {
         // Review Muse #835 (P2): the cause reaches on-call — name, code and
         // the space only, never a value — so a stalled progressive load is
@@ -6751,6 +6987,22 @@ export function createCustomerCardView(deps) {
       if (known !== null) emitTitle(known);
     }
     partialPaint(null, PART_NAMES_PENDING());
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, repaint the same partial with the notice — a newer render or
+    // a landed profile makes this a noop, so the notice never outlives the
+    // wait. Only a first visit shows skeletons, so only it watches. Like
+    // every courtesy paint, a hostile clock never fails the read.
+    if (firstVisit) {
+      try {
+        void profileSlowWait(PROFILE_SLOW_MS).then(() => {
+          if (renderToken !== cardRenderToken || !lastPending.has('profile')) return;
+          profileSlow = true;
+          partialPaint(lastPartial, lastPending);
+        }, () => {});
+      } catch {
+        // No notice: the full answer still lands like before.
+      }
+    }
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
     } catch (error) {
@@ -7371,8 +7623,9 @@ export function createCustomerCardView(deps) {
    * @param {string} key @param {string} resource @param {string} id
    * @param {any} partial what has landed, or null for nothing yet
    * @param {Set<string> | null} pending the reads still in flight, null for all
+   * @param {boolean} [profileSlow] the profile read passed its threshold
    */
-  function paintPartial(key, resource, id, partial, pending) {
+  function paintPartial(key, resource, id, partial, pending, profileSlow = false) {
     const waiting = pending ?? PART_NAMES_PENDING();
     if (partial?.cardError) return;
     if (partial?.card) {
@@ -7386,6 +7639,7 @@ export function createCustomerCardView(deps) {
         reloadEnrichment: enrichmentReloader(key, resource, id),
         pipelines: partial?.pipelines ?? [],
         pending: waiting,
+        profileSlow,
       });
     } finally {
       pendingDrafts = null;
@@ -7476,6 +7730,7 @@ export function createCustomerCardView(deps) {
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
     services = null,
     pending = null,
+    profileSlow = false,
   }) {
     // backlog:0d68c387: the listino names behind the booked service keys —
     // the booking menu's list, or an empty map (slug words) while it loads.
@@ -7537,15 +7792,39 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     const skeleton = (col, cls, title) => section(col, cls, skeletonSection, title);
-    if (waits('card', 'profile', 'timeline')) skeleton(left, '', 'Azioni rapide');
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, the profile-gated skeletons would sit mute (live 18/11: oltre
+    // 60 s). One notice speaks for all of them — in Italian, with a retry
+    // that re-reads the scheda — and the other skeletons stay off, so no
+    // mute grey box waits on the profile. Sections gated on other reads
+    // keep their own skeletons: they are not the profile's wait.
+    const slowProfile = profileSlow === true && waits('profile');
+    let slowNoticeShown = false;
+    /** @param {any} col */
+    const profileSlowNotice = (col) => section(col, 'bo-scheda-card-profile-slow', (box) => {
+      box.setAttribute('aria-busy', 'true');
+      box.setAttribute('data-loading', 'true');
+      box.appendChild(el('h4', undefined, 'Profilo'));
+      box.appendChild(el('p', 'bo-muted', 'Il caricamento del profilo sta impiegando più del previsto.'));
+      box.appendChild(schedaRetryButton());
+      return true;
+    });
+    // The first profile-gated skeleton becomes the notice; the rest stay
+    // off while it speaks, and everything repaints from the data the moment
+    // it lands (the settled paint never sets profileSlow).
+    const skeletonOrNotice = (col, cls, title) => {
+      if (!slowProfile) { skeleton(col, cls, title); return; }
+      if (!slowNoticeShown) { slowNoticeShown = true; profileSlowNotice(col); }
+    };
+    if (waits('card', 'profile', 'timeline')) skeletonOrNotice(left, '', 'Azioni rapide');
     else {
       section(left, '', quickActions, card, {
         resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
       }, { numbers: schedaNumbers(card, profile, timeline) });
     }
-    if (waits('profile', 'timeline')) skeleton(left, '', 'Identità collegate');
+    if (waits('profile', 'timeline')) skeletonOrNotice(left, '', 'Identità collegate');
     else section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
-    if (waits('card', 'profile')) skeleton(left, '', 'Dettagli');
+    if (waits('card', 'profile')) skeletonOrNotice(left, '', 'Dettagli');
     else section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
     // section, never the scheda — like enrichment above.
@@ -7580,7 +7859,7 @@ export function createCustomerCardView(deps) {
     // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
     // prototype has not got.
     if (waits('calls', 'timeline', 'profile')) {
-      skeleton(right, 'bo-scheda-ai', '✦ Recap');
+      skeletonOrNotice(right, 'bo-scheda-ai', '✦ Recap');
     } else {
       section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
         card, calls, callsError, timeline, timelineError, profile, profileError,
@@ -7626,6 +7905,34 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     show(panel, key, [left, right]);
+    // backlog:ab7c38cbcca5: «Scrivi a <cliente>» on the offer page — once the
+    // scheda can write (card and channels read), the message waiting for
+    // THIS customer in THIS space opens in the composer, ready for Invia.
+    if (!waits('card', 'profile', 'timeline')) {
+      openHandedMessage(card, { resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null }, key);
+    }
+  }
+
+  /**
+   * backlog:ab7c38cbcca5: takes the offer message handed to the customer on
+   * screen (one-shot, keyed by space and customer in the store) into the
+   * composer draft of the same space and customer, then opens the composer.
+   * A draft already typed keeps its text, the message goes after it.
+   * @param {any} card @param {{ resource: string, id: string, contactCompanyId?: string | null }} navCtx @param {string} key
+   */
+  function openHandedMessage(card, navCtx, key) {
+    if (composerHandoff === null || composerOpener === null || key !== shownKey) return;
+    const spaceId = activeSpaceId();
+    if (spaceId === null) return;
+    const handed = composerHandoff.take(navCtx.resource, navCtx.id);
+    if (handed === null) return;
+    const draftKey = `${spaceId}:${navCtx.resource}:${navCtx.id}`;
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '', aiBefore: null };
+    draft.text = mergeHandoffIntoDraft(draft.text, handed.text);
+    // The email subject only fills an empty one: a typed subject stays.
+    if ((draft.subject ?? '') === '' && handed.subject !== '') draft.subject = handed.subject;
+    composerDrafts.set(draftKey, draft);
+    composerOpener(card, navCtx);
   }
 
   /**

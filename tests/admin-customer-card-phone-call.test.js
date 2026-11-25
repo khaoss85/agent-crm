@@ -417,6 +417,61 @@ test('105563eea902: with a linked voice the operator declares the outcome and th
     'the save either toasts or re-reads the card');
 });
 
+test('600964e2d14e: dopo «Chiama» la scheda propone «Detta nota vocale» per quella chiamata', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const mount = await renderCard(client);
+  assert.equal(
+    button(mount, 'dictate-note')?.getAttribute('aria-expanded'), 'false',
+    'the dictation panel starts closed',
+  );
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  const save = button(mount, 'log-call');
+  assert.ok(save, 'the outcome form is offered with a linked voice');
+  mount.findAll('select')[0].value = 'completed';
+  mount.findAll('input')[0].value = '62';
+  await save.listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/calls').length, 1,
+    'the call is logged once');
+  assert.equal(
+    mount.findAll('div').find((node) => node.getAttribute('data-call') === 'open') ?? null, null,
+    'the Chiama panel closes once the call is logged',
+  );
+  const dictate = button(mount, 'dictate-note');
+  assert.ok(dictate, '«Detta nota vocale» stays on the scheda');
+  assert.equal(dictate.getAttribute('aria-expanded'), 'true', 'the dictation panel opens after the logged call');
+  const transcript = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'voiceNoteText');
+  assert.ok(transcript, 'the dictation field is ready for the operator’s words');
+  assert.equal(transcript.value, '', 'the new dictation starts empty: no words are invented');
+});
+
+test('600964e2d14e: cliente senza numero: dopo il salvataggio e la chiamata la scheda propone «Detta nota vocale»', async () => {
+  const client = stubClient({ connectors: [VOICE] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '333 123 4567';
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/phone').length, 1,
+    'the number is saved first');
+  const save = button(mount, 'log-call');
+  assert.ok(save, 'the usual Chiama flow starts on the re-read card');
+  mount.findAll('select')[0].value = 'completed';
+  mount.findAll('input')[0].value = '45';
+  await save.listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/calls').length, 1,
+    'the call on the saved number is logged');
+  assert.equal(button(mount, 'dictate-note')?.getAttribute('aria-expanded'), 'true',
+    'the dictation panel opens after the call, like with a held number');
+  assert.ok(
+    mount.findAll('textarea').some((node) => node.getAttribute('name') === 'voiceNoteText'),
+    'the dictation field is on screen',
+  );
+});
+
 test('105563eea902: a voice entry without a connectionKey is not callable: tel: fallback, no form', async () => {
   const client = stubClient({
     card: CARD_WITH_PHONE,
