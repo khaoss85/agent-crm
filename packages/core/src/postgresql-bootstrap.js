@@ -31,6 +31,7 @@ const CONTROL_BINDING_TABLE = 'spine_tenant_bindings';
 const DEFAULT_ACQUISITION_MS = 2_000;
 const DEFAULT_QUERY_MS = 5_000;
 const DESTROYED = new WeakSet();
+const ERROR_GUARDED = new WeakSet();
 
 /**
  * @param {string} code
@@ -157,6 +158,22 @@ function releaseClient(client) {
 }
 
 /**
+ * A checked-out pg client whose socket dies reports the same termination
+ * error twice: once to the in-flight query and once to the client itself.
+ * The pool detaches its idle listener at checkout, so without a listener of
+ * our own the client emission throws uncaught (backlog:983526c730b1: the
+ * 25/11 full failed this way inside the writer-lease renewal). Guard once
+ * per client, like the storage layer does on its checkouts; destroying is
+ * idempotent and releasing a destroyed client is a no-op.
+ * @param {any} client
+ */
+function guardCheckout(client) {
+  if (!client || typeof client.on !== 'function' || ERROR_GUARDED.has(client)) return;
+  ERROR_GUARDED.add(client);
+  client.on('error', () => destroyClient(client));
+}
+
+/**
  * @param {any} client
  * @param {string} sql
  * @param {unknown[]} [params]
@@ -183,7 +200,9 @@ async function connectBounded(pool, acquisitionDeadlineMs = DEFAULT_ACQUISITION_
     () => {},
   );
   try {
-    return await withDeadline(pending, acquisitionDeadlineMs, 'acquisition');
+    const client = await withDeadline(pending, acquisitionDeadlineMs, 'acquisition');
+    guardCheckout(client);
+    return client;
   } catch (error) {
     timedOut = true;
     if (error instanceof AppError) throw error;
@@ -965,6 +984,13 @@ export async function bootstrapPostgresqlApplication(options) {
           observeReadiness(describeWriterHealth(leaseState.holder, options.now, leaseState.closed));
         } catch (error) {
           await rollbackQuietly(client);
+          // The server already dropped this connection: handing it back to
+          // the pool would fail the next checkout the same way until the
+          // lease expires under a healthy server. The storage layer destroys
+          // on these two codes.
+          if (error instanceof AppError && (error.code === 'STORAGE_UNAVAILABLE' || error.code === 'STORAGE_TIMEOUT')) {
+            destroyClient(client);
+          }
           throw error;
         } finally {
           releaseClient(client);

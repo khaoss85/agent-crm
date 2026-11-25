@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import {
   bootstrapPlane,
   bootstrapPostgresqlApplication,
@@ -289,4 +290,92 @@ test('a failed composition ends every pool, including one whose storage was neve
   );
   assert.ok(ended.includes('control'), `the control pool is ended, saw [${ended.join(', ')}]`);
   assert.ok(ended.includes('data'), `the data pool is ended even though no data storage was created, saw [${ended.join(', ')}]`);
+});
+
+// backlog:983526c730b1: the 25/11 full on 7523ea5c failed in
+// tests/writer-lease-renewal-postgresql.test.js:64 with the raw driver error
+// `Connection terminated unexpectedly`. node-postgres reports a dead socket
+// twice: once to the in-flight query and once to the checked-out client
+// itself, and the pool detaches its idle listener at checkout. The renewal
+// path mapped the query rejection (retrying) but held the client with no
+// 'error' listener, so the client emission threw uncaught. This drives the
+// whole renewal path with a scripted pool whose control client emits exactly
+// like a terminated pg backend, and fails until the checkout is guarded and
+// the dead client is destroyed instead of released.
+test('a backend terminated mid-renewal reports retrying, recovers and raises nothing unhandled', async (t) => {
+  const controlEvents = new EventEmitter();
+  let terminateNextRenewal = false;
+  const controlClient = Object.assign(controlEvents, {
+    query: async (sql) => {
+      const text = String(sql);
+      if (terminateNextRenewal && text.startsWith('UPDATE') && text.includes('spine_writer_leases')) {
+        terminateNextRenewal = false;
+        // pg@8.23.0 emits this codeless error for a dropped socket.
+        const error = new Error('Connection terminated unexpectedly');
+        // Like a dead socket, pg reports to the query and to the client.
+        process.nextTick(() => controlEvents.emit('error', error));
+        throw error;
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release: () => {},
+  });
+  const scripted = (client) => ({ connect: async () => client, end: async () => {}, on: () => {} });
+  const app = await bootstrapPostgresqlApplication({
+    control: { host: 'db.test', port: 5432, database: 'accordo_control', user: 'u', password: 'p' },
+    data: { host: 'db.test', port: 5432, database: 'accordo', user: 'u', password: 'p' },
+    tenantId: 'acme',
+    identityVerifier: createTestVerifier({ tenantId: 'acme' }),
+    leaseTtlMs: 1000,
+    createPool: async (endpoint) => scripted(endpoint.database === 'accordo_control' ? controlClient : okClient()),
+  });
+  const renewer = app.leaseRenewer;
+  assert.ok(renewer, 'the composed application exposes its renewer');
+  const unhandled = [];
+  const onUnhandled = (reason) => { unhandled.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  process.on('uncaughtException', onUnhandled);
+  t.after(() => {
+    process.off('unhandledRejection', onUnhandled);
+    process.off('uncaughtException', onUnhandled);
+  });
+  t.after(() => renewer.stop());
+  const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  renewer.start();
+  const steadyDeadline = Date.now() + 10_000;
+  while (renewer.status().renewals < 1) {
+    if (Date.now() >= steadyDeadline) {
+      assert.fail(`the renewer never renewed, saw ${JSON.stringify(renewer.status())}`);
+    }
+    await sleep(20);
+  }
+  const renewalsBeforeKill = renewer.status().renewals;
+  terminateNextRenewal = true;
+  let retryingCode = null;
+  const retryDeadline = Date.now() + 10_000;
+  for (;;) {
+    const status = renewer.status();
+    if (status.lastOutcome === 'retrying') { retryingCode = status.lastErrorCode; break; }
+    if (status.lastOutcome === 'surrendered') assert.fail('a dropped connection must retry, never surrender');
+    if (Date.now() >= retryDeadline) {
+      assert.fail(`no retrying renewal after the backend died, saw ${JSON.stringify(status)}`);
+    }
+    await sleep(10);
+  }
+  assert.equal(retryingCode, 'STORAGE_UNAVAILABLE');
+  const recoverDeadline = Date.now() + 10_000;
+  for (;;) {
+    const status = renewer.status();
+    if (status.lastOutcome === 'renewed' && status.renewals > renewalsBeforeKill) break;
+    if (status.lastOutcome === 'surrendered') assert.fail('the renewer surrendered instead of recovering');
+    if (Date.now() >= recoverDeadline) {
+      assert.fail(`the renewer never recovered, saw ${JSON.stringify(status)}`);
+    }
+    await sleep(20);
+  }
+  await renewer.stop();
+  assert.deepEqual(
+    unhandled.map((error) => String(error && error.message ? error.message : error)),
+    [],
+  );
 });
