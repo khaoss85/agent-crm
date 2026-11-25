@@ -413,8 +413,6 @@ test('il link pubblico prenota un solo appuntamento: una serie dal link viene ri
   );
   assert.equal(service.rows.length, 1, 'la serie dal link non scrive niente');
 });
-<<<<<<< HEAD
-=======
 
 test('annullare chiede solo questo / successivi / tutti e fa esattamente quello (backlog:573a1e85942f)', async () => {
   const service = fakeAppointments();
@@ -900,12 +898,14 @@ test('annullare «tutti» con la seconda scrittura che fallisce non lascia nient
   );
 });
 
-test('i days sulle regole non settimanali vengono rifiutati, mai ignorati (backlog:573a1e85942f)', () => {
+test('i days vengono rifiutati su ogni regola, mai ignorati (backlog:573a1e85942f)', () => {
+  // La main ha stretto lo scope (solo daily/weekly/monthly) e rifiuta i
+  // days su tutte le regole modellate: niente viene validato e poi
+  // ignorato dall'espansione.
   for (const rule of [
     { kind: 'daily', interval: 1, count: 3, days: [1] },
+    { kind: 'weekly', interval: 1, count: 3, days: [2] },
     { kind: 'monthly', interval: 1, count: 3, days: [2] },
-    { kind: 'yearly', interval: 1, count: 2, days: [3] },
-    { kind: 'custom', unit: 'month', interval: 1, count: 3, days: [2] },
   ]) {
     assert.throws(
       () => validateRecurrence(rule),
@@ -913,12 +913,4 @@ test('i days sulle regole non settimanali vengono rifiutati, mai ignorati (backl
       `days su ${rule.kind} rifiutato`,
     );
   }
-  // La settimanale personalizzata resta l'unica che legge i days.
-  assert.deepEqual(
-    validateRecurrence({ kind: 'custom', unit: 'week', interval: 1, days: [2], count: 3 }),
-    { kind: 'custom', interval: 1, days: [2], unit: 'week', count: 3, until: null },
-  );
 });
-
-
->>>>>>> 0a600385 (573a1e85942f WIP: scope modifica/annullo serie sul server + test)

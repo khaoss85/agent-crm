@@ -6,7 +6,10 @@
  * <giorno>», «Ogni mese il <n>° <giorno>» calcolate dalla data scelta;
  * Conferma manda la regola nella claim. Con Google Calendar collegato la
  * scelta resta su «Non si ripete», disattivata, con la riga che dice
- * perché, e il form non manda mai una serie.
+ * perché, e il form non manda mai una serie. Annullare o spostare
+ * un'occorrenza di serie chiede lo scope (backlog:573a1e85942f,
+ * tests/admin-calendario-scope.test.js); la riga singola non chiede
+ * nessuno scope e non lo manda.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
