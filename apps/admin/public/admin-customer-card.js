@@ -6208,9 +6208,16 @@ export function createCustomerCardView(deps) {
         } catch (error) {
           // backlog:dffa472d6baa (1): the same shown-scheda guard as the
           // success branch — an error landing after a navigation writes
-          // nothing, not even on the detached line, and stays silent.
-          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) return;
-          sayShare(humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' }), true);
+          // nothing, not even on the detached line. humanWriteError logs
+          // the cause first (review #1158 P1: the guarded return must not
+          // swallow it), then the failure surfaces globally through the
+          // toast, like the success branch does — never silently.
+          const failure = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
+            toast(failure, true);
+            return;
+          }
+          sayShare(failure, true);
         }
       });
       shareButton.addEventListener('click', () => { void shareSend(); });

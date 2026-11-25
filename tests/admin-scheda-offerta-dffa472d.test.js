@@ -163,7 +163,13 @@ test('dffa472d6baa (1): a preparation error after a scheda change writes nothing
   const newLine = shareLineOf(newWrap);
   assert.ok(!String(newLine?.textContent ?? '').includes('Link non creato'),
     'nothing of A failure on the new scheda, as in the success branch');
-  assert.deepEqual(toasts, [], 'no toast leaks the old scheda failure onto the new one');
+  // Review #1158 P1: the failure after a navigation never writes on a line,
+  // but it must not stay silent either — like the success branch, it
+  // surfaces globally through the toast (humanWriteError also logs the
+  // cause to the console before the guarded return).
+  assert.equal(toasts.length, 1, 'the failure surfaces once, globally (red before the cure: silent return)');
+  assert.ok(String(toasts[0] ?? '').toLowerCase().includes('riprova'),
+    'the global toast carries the failure text, like the on-line error does');
 });
 
 test('dffa472d6baa (2b): open composer keeps typed text and takes the message after it', async () => {
