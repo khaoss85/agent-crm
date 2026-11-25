@@ -835,12 +835,32 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   }
   // Voce 91c92940274c: la vista «Archiviati» legge solo gli archiviati
   // (mai gli eliminati); le altre viste non li vedono mai.
+  // backlog:4eec2e48 (B2, 25/11: la linguetta «Archiviati 0» con due
+  // contatti archiviati): le linguette si contano sulle righe della
+  // scansione, che fuori dalla vista «Archiviati» escludeva gli archiviati
+  // — il conteggio leggeva sempre 0. La scansione li include sempre
+  // (seconda lettura limitata, mai gli eliminati); il filtro di riga li
+  // tiene fuori dalle altre viste e pagine come prima.
   const wantArchived = query.view?.filters?.archiviati === true;
-  let contacts = wantArchived
-    ? await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true })
-    : await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  const activeContacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  const archivedContacts = await contactsSvc.list({
+    limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true,
+  });
+  // Le due letture chiedono predicati disgiunti (stesso tetto), ma un
+  // servizio che ignorasse archivedOnly tornerebbe le stesse righe due
+  // volte: l'unione deduplica per id (vince l'attivo) così le linguette
+  // non contano mai un contatto due volte.
+  const seenContactIds = new Set();
+  let contacts = [...activeContacts, ...archivedContacts].filter((contact) => {
+    const id = contact?.id;
+    if (typeof id !== 'string' || id === '' || seenContactIds.has(id)) return false;
+    seenContactIds.add(id);
+    return true;
+  });
   let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
-  const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
+  const complete = activeContacts.length < CUSTOMER_SCAN_LIMIT
+    && archivedContacts.length < CUSTOMER_SCAN_LIMIT
+    && companies.length < CUSTOMER_SCAN_LIMIT;
   // backlog:d128847d21fc: the scan holds the newest records only, so a
   // search over a truncated scan could never find an older customer — a
   // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
