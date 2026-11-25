@@ -908,12 +908,17 @@ export function createQuoteView(deps) {
       const policies = (commercialBlock(schema)?.discountPolicies ?? [])
         .filter((policy) => typeof policy?.name === 'string' && policy.name !== '' && Number.isSafeInteger(policy?.version));
       const policySelect = el('select');
+      // backlog:89166bcf2a84: the default is the newest published rule
+      // version, never the first of the list — with v1 and v2 of the same
+      // rule the send starts from v2, like existing quotes do.
+      let latestPolicy = null;
       for (const policy of policies) {
         const option = el('option', undefined, `${policy.label ?? policy.name} (v${policy.version})`);
         option.setAttribute('value', `${policy.name}@${policy.version}`);
         policySelect.appendChild(option);
-        if (policySelect.value === undefined || policySelect.value === '') policySelect.value = `${policy.name}@${policy.version}`;
+        if (latestPolicy === null || policy.version > latestPolicy.version) latestPolicy = policy;
       }
+      if (latestPolicy !== null) policySelect.value = `${latestPolicy.name}@${latestPolicy.version}`;
       const submitButton = el('button', undefined, 'Invia');
       busy.push(submitButton);
       submitButton.addEventListener('click', () => uiBusy(submitButton, 'Invio…', () => withBusy(() => {
