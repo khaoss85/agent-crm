@@ -6169,10 +6169,11 @@ export function createCustomerCardView(deps) {
             return;
           }
           const message = offerShareMessage({ offerName: name, url: staged.url, expiresAt: staged.expiresAt }) ?? staged.url;
+          const offerSubject = typeof name === 'string' && name.trim() !== '' ? `Offerta «${name.trim()}»` : '';
           if (pressKey !== null) {
             const draft = composerDrafts.get(pressKey) ?? { text: '', subject: '', aiBefore: null };
             draft.text = message;
-            if ((draft.subject ?? '') === '' && typeof name === 'string' && name.trim() !== '') draft.subject = `Offerta «${name.trim()}»`;
+            if ((draft.subject ?? '') === '' && offerSubject !== '') draft.subject = offerSubject;
             composerDrafts.set(pressKey, draft);
           }
           // The live composer belongs to whoever is on screen now: only
@@ -6188,8 +6189,15 @@ export function createCustomerCardView(deps) {
           // backlog:19adbbb982ef: one press, one place to send — the composer
           // opens with the message (or takes it, when already open).
           const area = mount.querySelector('.bo-scheda-composer-text');
-          if (area) area.value = message;
-          else {
+          if (area) {
+            area.value = message;
+            // Review Muse #1157 (P1): the open composer shows the subject too —
+            // the draft keeps what the fields show, so a subject held only in
+            // the draft was wiped by the first keystroke. An empty subject
+            // field takes the offer subject; a typed one stays.
+            const subjectField = mount.querySelector('.bo-scheda-composer-subject');
+            if (subjectField && String(subjectField.value ?? '') === '' && offerSubject !== '') subjectField.value = offerSubject;
+          } else {
             const shownCard = lastShown !== null && lastShown.key === shownKey ? (lastShown.loaded?.card ?? null) : null;
             if (composerOpener !== null && shownCard !== null) composerOpener(shownCard, offerCtx);
           }

@@ -168,3 +168,29 @@ test('19adbbb982ef: back on the scheda the ready link shows as the pill, never a
   assert.equal(statusLines(wrap).length, 1);
   assert.equal(statusLines(wrap)[0].textContent, 'Link già pronto, da inviare: il messaggio è nel composer.');
 });
+
+test('19adbbb982ef (review Muse #1157 P1): with the composer already open the subject shows and survives typing', async () => {
+  const { mount } = await openScheda();
+  // Email first: the composer is open, empty, before «Invia offerta».
+  byAction(mount, 'compose-email').dispatch('click');
+  await flush();
+  const panel = composer(mount);
+  assert.ok(panel, 'the composer is open before the press');
+  byAction(shareWrap(mount), 'scheda-share-link').dispatch('click');
+  await flush();
+  const field = (root) => root.findAll('input').find((node) => classes(node).includes('bo-scheda-composer-subject'));
+  assert.equal(field(composer(mount))?.value, 'Offerta «Cucina per Giulia»',
+    'the open composer shows the offer subject (red before the cure: empty field)');
+  // The operator types: the draft keeps what the fields show.
+  const area = composer(mount).findAll('textarea')[0];
+  area.value = `${area.value} A presto!`;
+  area.dispatch('input');
+  await flush();
+  byAction(composer(mount), 'composer-close').dispatch('click');
+  await flush();
+  byAction(mount, 'compose-email').dispatch('click');
+  await flush();
+  assert.equal(field(composer(mount))?.value, 'Offerta «Cucina per Giulia»',
+    'the subject survives the first keystroke and a reopen (red before the cure: wiped)');
+  assert.ok(String(composer(mount).findAll('textarea')[0]?.value ?? '').endsWith('A presto!'), 'the typed text stays');
+});
