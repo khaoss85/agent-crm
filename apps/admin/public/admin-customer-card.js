@@ -6172,7 +6172,9 @@ export function createCustomerCardView(deps) {
           const offerSubject = typeof name === 'string' && name.trim() !== '' ? `Offerta «${name.trim()}»` : '';
           if (pressKey !== null) {
             const draft = composerDrafts.get(pressKey) ?? { text: '', subject: '', aiBefore: null };
-            draft.text = message;
+            // backlog:dffa472d6baa (2): merge, never replace — typed text
+            // stays first and the message lands after it, once.
+            draft.text = mergeHandoffIntoDraft(draft.text, message);
             if ((draft.subject ?? '') === '' && offerSubject !== '') draft.subject = offerSubject;
             composerDrafts.set(pressKey, draft);
           }
@@ -6190,7 +6192,9 @@ export function createCustomerCardView(deps) {
           // opens with the message (or takes it, when already open).
           const area = mount.querySelector('.bo-scheda-composer-text');
           if (area) {
-            area.value = message;
+            // backlog:dffa472d6baa (2): the open composer merges too — what
+            // the operator typed stays on screen, the message lands after it.
+            area.value = mergeHandoffIntoDraft(area.value, message);
             // Review Muse #1157 (P1): the open composer shows the subject too —
             // the draft keeps what the fields show, so a subject held only in
             // the draft was wiped by the first keystroke. An empty subject
@@ -6202,7 +6206,18 @@ export function createCustomerCardView(deps) {
             if (composerOpener !== null && shownCard !== null) composerOpener(shownCard, offerCtx);
           }
         } catch (error) {
-          sayShare(humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' }), true);
+          // backlog:dffa472d6baa (1): the same shown-scheda guard as the
+          // success branch — an error landing after a navigation writes
+          // nothing, not even on the detached line. humanWriteError logs
+          // the cause first (review #1158 P1: the guarded return must not
+          // swallow it), then the failure surfaces globally through the
+          // toast, like the success branch does — never silently.
+          const failure = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
+            toast(failure, true);
+            return;
+          }
+          sayShare(failure, true);
         }
       });
       shareButton.addEventListener('click', () => { void shareSend(); });
