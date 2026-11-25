@@ -9,6 +9,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
+import { mergeHandoffIntoDraft } from './admin-composer-handoff.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
@@ -1383,6 +1384,11 @@ export function createCustomerCardView(deps) {
    * @type {{ remember: (resource: unknown, id: unknown, name: unknown) => void, get: (resource: unknown, id: unknown) => string | null } | null}
    */
   const knownNames = deps.knownNames && typeof deps.knownNames.get === 'function' ? deps.knownNames : null;
+  // backlog:ab7c38cbcca5: the offer message handed over by the offer page.
+  const composerHandoff = deps.composerHandoff && typeof deps.composerHandoff.take === 'function'
+    ? deps.composerHandoff : null;
+  /** The «Scrivi» opener of the shown scheda, set when its Azioni rapide paint. @type {null | ((card: any, navCtx: any, preferChannel?: string | null) => void)} */
+  let composerOpener = null;
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -2246,6 +2252,9 @@ export function createCustomerCardView(deps) {
   }
 
   function quickActions(box, card, navCtx, extra = {}) {
+    // backlog:ab7c38cbcca5: the composer opener lives in this scope; the
+    // handed-over offer message (openHandedMessage) opens it from here.
+    composerOpener = openComposer;
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     const phone = card?.phone?.available === true
@@ -7896,6 +7905,34 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     show(panel, key, [left, right]);
+    // backlog:ab7c38cbcca5: «Scrivi a <cliente>» on the offer page — once the
+    // scheda can write (card and channels read), the message waiting for
+    // THIS customer in THIS space opens in the composer, ready for Invia.
+    if (!waits('card', 'profile', 'timeline')) {
+      openHandedMessage(card, { resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null }, key);
+    }
+  }
+
+  /**
+   * backlog:ab7c38cbcca5: takes the offer message handed to the customer on
+   * screen (one-shot, keyed by space and customer in the store) into the
+   * composer draft of the same space and customer, then opens the composer.
+   * A draft already typed keeps its text, the message goes after it.
+   * @param {any} card @param {{ resource: string, id: string, contactCompanyId?: string | null }} navCtx @param {string} key
+   */
+  function openHandedMessage(card, navCtx, key) {
+    if (composerHandoff === null || composerOpener === null || key !== shownKey) return;
+    const spaceId = activeSpaceId();
+    if (spaceId === null) return;
+    const handed = composerHandoff.take(navCtx.resource, navCtx.id);
+    if (handed === null) return;
+    const draftKey = `${spaceId}:${navCtx.resource}:${navCtx.id}`;
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '', aiBefore: null };
+    draft.text = mergeHandoffIntoDraft(draft.text, handed.text);
+    // The email subject only fills an empty one: a typed subject stays.
+    if ((draft.subject ?? '') === '' && handed.subject !== '') draft.subject = handed.subject;
+    composerDrafts.set(draftKey, draft);
+    composerOpener(card, navCtx);
   }
 
   /**

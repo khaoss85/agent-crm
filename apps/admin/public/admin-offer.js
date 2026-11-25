@@ -166,6 +166,27 @@ export function backLink(schema, record, from) {
 }
 
 /**
+ * backlog:ab7c38cbcca5: the customer an offer's message can be handed to —
+ * the linked contact or company with its scheda, or null when the offer
+ * has no customer with a scheda (then «Scrivi a» never shows).
+ * @param {any} record
+ * @returns {{ resource: string, id: string, name: string, href: string } | null}
+ */
+export function offerComposeTarget(record) {
+  const customer = offerCustomer(record);
+  const parts = customer?.href ? /^#\/customer-card\/([a-z][a-z0-9-]*)\/([^/]+)$/.exec(customer.href) : null;
+  if (customer === null || parts === null) return null;
+  let id;
+  try {
+    id = decodeURIComponent(parts[2]);
+  } catch {
+    return null;
+  }
+  if (id === '') return null;
+  return { resource: parts[1], id, name: customer.name, href: customer.href };
+}
+
+/**
  * backlog:f2d39e473e3a: the breadcrumb of the offer page names the customer
  * and the offer — «Offerta / Giulia Verdi / Cucina per Giulia» — never the
  * bare «Offerta». Missing parts are left out.
@@ -187,6 +208,9 @@ export function createOfferDetail(deps) {
   const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
+  // backlog:ab7c38cbcca5: the offer message handed to the scheda composer.
+  const composerHandoff = deps.composerHandoff && typeof deps.composerHandoff.stage === 'function'
+    ? deps.composerHandoff : null;
   const spaceOrigin = typeof deps.origin === 'string' && deps.origin !== ''
     ? deps.origin
     : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
@@ -212,6 +236,8 @@ export function createOfferDetail(deps) {
   const shareLinks = new Map();
   /** The offer name the share message uses; set when the record lands. */
   let shareOfferName = '';
+  /** backlog:ab7c38cbcca5: the customer the ready message can be handed to; set with the name. @type {ReturnType<typeof offerComposeTarget>} */
+  let shareTarget = null;
   /** Record id with the edit form open. */
   let editing = false;
   /**
@@ -472,6 +498,7 @@ export function createOfferDetail(deps) {
     editing = false;
     offerSavedId = null;
     shareOfferName = '';
+    shareTarget = null;
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
     // the facts, the quotes and the history as grey bars — never a lone
@@ -520,6 +547,7 @@ export function createOfferDetail(deps) {
         onTitle(offerCrumb(record));
         rememberCustomer(record);
         shareOfferName = typeof record.name === 'string' ? record.name : '';
+        shareTarget = offerComposeTarget(record);
       }
       // Review Muse #887 giro 2: the schema is decoration — a rejected
       // `/api/schema` read leaves the page unnamed (neutral columns, no
@@ -1257,6 +1285,27 @@ export function createOfferDetail(deps) {
     button.setAttribute('type', 'button');
     button.setAttribute('data-action', 'offer-share-link');
     actions.appendChild(button);
+    // backlog:ab7c38cbcca5: with the message ready, one press opens the
+    // customer's scheda with the message already in its composer. Only for
+    // an offer whose customer has a scheda; the send stays the operator's
+    // Invia in the composer.
+    const target = composerHandoff !== null ? shareTarget : null;
+    /** @type {any} */
+    let compose = null;
+    if (target !== null) {
+      compose = el('button', 'secondary offer-share-compose', `Scrivi a ${target.name}`);
+      compose.setAttribute('type', 'button');
+      compose.setAttribute('data-action', 'offer-share-compose');
+      compose.setAttribute('title', `Apri la scheda di ${target.name} con il messaggio già nel composer`);
+      compose.setAttribute('hidden', 'hidden');
+      compose.addEventListener('click', () => {
+        if (readyMessage === null || composerHandoff === null) return;
+        const subject = shareOfferName.trim() !== '' ? `Offerta «${shareOfferName.trim()}»` : 'La tua offerta';
+        if (!composerHandoff.stage(target.resource, target.id, readyMessage, subject)) return;
+        navigate(target.href);
+      });
+      actions.appendChild(compose);
+    }
     const ready = el('div', 'offer-share-ready');
     ready.setAttribute('hidden', 'hidden');
     /** @type {any} */
@@ -1303,6 +1352,7 @@ export function createOfferDetail(deps) {
       readyMessage = null;
       readyNotice = '';
       ready.setAttribute('hidden', 'hidden');
+      compose?.setAttribute('hidden', 'hidden');
     };
     /** @param {string} url @param {string | null} expiresAt */
     const showLink = (url, expiresAt) => {
@@ -1336,6 +1386,7 @@ export function createOfferDetail(deps) {
       ready.appendChild(readyBody);
       ready.removeAttribute('hidden');
       readyMessage = message;
+      compose?.removeAttribute('hidden');
     };
     /**
      * Review Muse #905 (P1): the mint state reads here, outside the
@@ -1344,9 +1395,10 @@ export function createOfferDetail(deps) {
      * @param {string} lead @param {boolean} copied
      */
     const sayReady = (lead, copied) => {
+      const via = compose !== null && target !== null ? `«Scrivi a ${target.name}»` : null;
       readyNotice = `${lead} ${copied
-        ? 'Messaggio copiato: incollalo nella chat con il cliente.'
-        : 'Copia il link qui sopra e mandalo dal composer della scheda.'}`;
+        ? (via !== null ? `Messaggio copiato: incollalo in chat, oppure mandalo da qui con ${via}.` : 'Messaggio copiato: incollalo nella chat con il cliente.')
+        : (via !== null ? `Mandalo con ${via}, oppure copia il link qui sopra.` : 'Copia il link qui sopra e mandalo dal composer della scheda.')}`;
       say(readyNotice);
     };
     const send = async () => {
