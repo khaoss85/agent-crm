@@ -38,9 +38,11 @@ import { messagePreview } from './admin-message-preview.js';
 // MEM_ACC_REUSE: gli interruttori veri stanno nella schermata Spazi e
 // accessi (stesse etichette, stesse funzioni di effettivo) — mai un doppione.
 import { SPAZI_AI_MASTER, effectiveSwitches, masterEnabled } from './admin-spazi-accessi.js';
-
-/** Probe path for the future assistant backend (status + free-question ask). */
-export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
+// backlog:b139d83617f3: the gate contract lives in admin-assistant-gate.js
+// (the switch imports it from there — importing it from this module would
+// close an import cycle). Re-exported here for the existing importers.
+import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantStatusCode } from './admin-assistant-gate.js';
+export { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantStatusCode };
 
 /**
  * The only free-question contract: questions POST exactly here. The probe and
@@ -59,9 +61,6 @@ const ASSISTANT_ASK_PATH = '/api/assistant/ask';
  * a684ecf5: il messaggio da spento non si contraddice).
  */
 export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
-export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: chiedi al titolare di attivarlo per questo spazio.';
-/** backlog:1968c3320cd3: the titolare is told where to turn it on, never to ask themself. */
-export const ASSISTANT_SPACE_DISABLED_OWNER_NOTICE = 'Assistente non attivo in questo spazio: puoi accenderlo da Spazi e accessi.';
 export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
@@ -144,7 +143,7 @@ export const SUGGESTION_CATALOG = Object.freeze({
     { id: 'bo04:reporting:call', title: 'Chi ha gestito più call questo mese?', detail: 'Chiamate registrate per operatore ed esito.' },
   ]),
   'nuovo-modulo': Object.freeze([
-    { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, scheda del modulo, comandi veri.' },
+    { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, scheda del modulo, prova vera.' },
   ]),
   // Voce d525f4aa48b2: the customer card's own proposals behind
   // «✦ Chiedi all'AI» in Dettagli. The card opens the panel with the
@@ -1062,10 +1061,10 @@ async function answerLeadSito(client) {
 function answerNuovoAi() {
   const answer = emptyAnswer('bo05:nuovo-modulo:crea-ai', 'Come creo un modulo con l’AI?');
   answer.lines.push('1. Descrivi il modulo nella schermata Nuovo modulo (nome, campi, tipi).');
-  answer.lines.push('2. L’agente di coding scrive la scheda del modulo partendo dalla descrizione.');
-  answer.lines.push('3. L’agente esegue il comando di creazione: file veri nella cartella del modulo, mai nel nucleo.');
+  answer.lines.push('2. Preparo la scheda del modulo partendo dalla tua descrizione.');
+  answer.lines.push('3. Creo il modulo per te, senza che tu debba scrivere niente.');
   answer.lines.push('4. Il modulo viene provato davvero: si apre e mostra dati veri, altrimenti non esiste.');
-  answer.lines.push('5. La registrazione lo aggiunge all’elenco; l’app lo mostra insieme agli altri moduli.');
+  answer.lines.push('5. Lo aggiungo all’elenco: l’app lo mostra insieme agli altri moduli.');
   answer.actions.push({ id: 'bo05:apri-nuovo-modulo', label: 'Apri: Nuovo modulo', kind: 'navigate', href: '#/nuovo-modulo', customerFacing: false });
   answer.actions.push({ id: 'bo05:apri-reporting', label: 'Apri: Reporting', kind: 'navigate', href: '#/reporting', customerFacing: false });
   return answer;
@@ -1577,23 +1576,6 @@ export async function runSuggestion(client, suggestionId, customer = null, space
 }
 
 /**
- * The gate code an /api/assistant/status answer (or its rejection) carries,
- * or null. One reader for every surface that asks «is the AI off here?»
- * (the Assistente panel, the composer «Scrivi al cliente»), over both
- * shapes in use: `{ freeQuestions, code | reason }` and the pilot bridge's
- * `{ spaceId, enabled, reason }` (accordo-arvo-pilot
- * src/shared/bo-assistant.js, mapGateObserved). Reads `code`, `reason`
- * and `errorCode`, mirroring packages/llm error codes.
- * @param {unknown} status
- * @returns {string|null}
- */
-export function assistantStatusCode(status) {
-  if (status === null || typeof status !== 'object') return null;
-  const code = /** @type {any} */ (status).code ?? /** @type {any} */ (status).reason ?? /** @type {any} */ (status).errorCode;
-  return typeof code === 'string' && code !== '' ? code : null;
-}
-
-/**
  * Which dry-run notice tells the truth about a non-live status: the key
  * sentence only for a really missing key, the off-in-this-space sentence
  * for a disabled space, the suggest-only line for anything else (absent
@@ -1861,7 +1843,7 @@ export async function runAssistantAction(client, action, options = {}) {
  * @param {string} className
  * @param {string} [text]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * backlog:a1f2db873cf3 (production 07/11): the open panel never covers the
@@ -1991,7 +1973,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   const state = {
     /**
      * backlog:33782ba68747: the «@Agente …» request in flight, or null.
-     * @type {null | { typed: string, status: string, agent?: any, instruction?: string, rest?: string, agents?: Array<any>, message?: string, busy?: boolean, once?: boolean, space?: string | null }}
+     * @type {null | { typed: string, status: string, agent?: any, instruction?: string, rest?: string, agents?: Array<any>, message?: string, error?: string, busy?: boolean, once?: boolean, space?: string | null }}
      */
     mention: null,
     open: false,
@@ -2409,12 +2391,20 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       if (!found || !found.agent) {
         const word = found?.typedName ?? '';
         state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
+      } else if (found.instruction === '') {
+        // backlog:02d29866d395 (review P3): a bare «@Pausato» with no
+        // instruction asks what to do — «Riprendi» must not flip the status
+        // as a side effect of a mention that assigns nothing.
+        state.mention = { typed, status: 'empty', agent: found.agent, space };
+      } else if (found.agent.status === 'paused') {
+        // backlog:02d29866d395: a paused agent takes no incarico — never an
+        // «Affida» post bound to sit idle (the sweep only runs active
+        // agents). The card says why and offers «Riprendi» instead.
+        state.mention = { typed, status: 'paused', agent: found.agent, instruction: found.instruction, space };
       } else if (Number.isInteger(found.agent.spendingCapCents)) {
         // backlog:1f7cb20d3c30: a capped agent needs the cost of one run,
         // which this bar does not ask — never a post bound to refuse.
         state.mention = { typed, status: 'capped', agent: found.agent, space };
-      } else if (found.instruction === '') {
-        state.mention = { typed, status: 'empty', agent: found.agent, space };
       } else {
         state.mention = { typed, status: 'confirm', agent: found.agent, instruction: found.instruction, space };
       }
@@ -2431,6 +2421,18 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (readSpace() !== mention.space) {
       await startMention(mention.typed);
       return;
+    }
+    // backlog:02d29866d395 (review P1): mention.agent is the snapshot from
+    // the resolve — an agent paused after the card opened would still take
+    // the POST. Read fresh before writing; a card replaced meanwhile wins.
+    const fresh = await loadSpaceAgents(client, mention.space);
+    if (state.mention !== mention) return;
+    if (fresh !== null) {
+      const row = fresh.find((entry) => entry?.sourceKey === mention.agent.sourceKey);
+      if (!row || row.status === 'paused') {
+        await startMention(mention.typed);
+        return;
+      }
     }
     mention.busy = true;
     mention.once = once;
@@ -2456,6 +2458,36 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } finally {
       mention.busy = false;
       render();
+    }
+  }
+
+  /** «Riprendi» a paused mention: resume through set-agent-status (the same
+   * call the Agenti card uses), then read the agent again so the typed
+   * instruction lands on «Affida» — «Riprendi» alone never assigns. */
+  async function resumeMentioned() {
+    const mention = state.mention;
+    if (!mention || mention.busy || !mention.agent || !mention.space) return;
+    // Review #661 P2: the space may have changed since the card resolved.
+    // Never post to the space left behind: resolve again in the active one.
+    if (readSpace() !== mention.space) {
+      await startMention(mention.typed);
+      return;
+    }
+    mention.busy = true;
+    mention.error = '';
+    render();
+    try {
+      await bound().request('/api/agents/set-status', {
+        method: 'POST',
+        body: { spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, status: 'active' },
+        idempotencyKey: issueAdminKey(),
+      });
+      await startMention(mention.typed);
+    } catch {
+      // The agent stays paused and says so: «Affida» never appears.
+      mention.busy = false;
+      mention.error = `Non riesco a riattivare ${mention.agent.name} adesso: riprova tra poco.`;
+      if (state.mention === mention) render();
     }
   }
 
@@ -2508,6 +2540,31 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         say(AGENT_CAP_USE_CARD_NOTE);
         box.appendChild(agentsLink());
         break;
+      case 'paused': {
+        say(`${mention.agent.name} è in pausa: riattivalo per dargli un incarico.`);
+        if (typeof mention.error === 'string' && mention.error !== '') {
+          box.appendChild(el(doc, 'p', 'bo-assistant-error', mention.error));
+        }
+        const pausedActions = el(doc, 'div', 'bo-assistant-actions');
+        const resume = el(doc, 'button', 'bo-assistant-confirm', mention.busy === true ? 'Riprendo…' : 'Riprendi');
+        resume.setAttribute('type', 'button');
+        resume.setAttribute('data-action', 'agent-resume');
+        resume.disabled = mention.busy === true;
+        resume.addEventListener('click', () => {
+          // The shared wait (admin-cta-busy guard): «Riprendo…» from the
+          // press; the repaint keeps it from mention.busy.
+          const release = uiHold(resume, 'Riprendo…');
+          void resumeMentioned().finally(() => release());
+        });
+        pausedActions.appendChild(resume);
+        const pausedCancel = el(doc, 'button', 'bo-assistant-cancel', 'Annulla');
+        pausedCancel.setAttribute('type', 'button');
+        pausedCancel.disabled = mention.busy === true;
+        pausedCancel.addEventListener('click', () => { state.mention = null; render(); });
+        pausedActions.appendChild(pausedCancel);
+        box.appendChild(pausedActions);
+        break;
+      }
       case 'empty':
         say(`Cosa deve fare ${mention.agent.name}? Scrivi «@${mention.agent.name}» e l’incarico nella barra in alto.`);
         break;

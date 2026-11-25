@@ -949,6 +949,38 @@ test('d77f434ba40c: with past bookings only the vista names the program, with a 
   await Promise.resolve();
 });
 
+// backlog:f2e52f14: the recap counts right — «+ 1 appuntamento successivo»,
+// not «+ 1 appuntamenti successivi».
+test('f2e52f14: the recap vista counts the remaining appointments with the right singular', async () => {
+  const upcoming = (count) => ({
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count,
+      truncated: false,
+      items: Array.from({ length: count }, (_, index) => ({
+        id: `next-${index}`, status: 'booked',
+        startsAt: `2099-11-${12 + index}T10:00:00.000Z`, endsAt: `2099-11-${12 + index}T10:45:00.000Z`,
+        serviceKey: 'pt-single', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+      })),
+    },
+  });
+  const openVista = async (count) => {
+    const mount = await renderCard(stubClient({ timeline: upcoming(count) }));
+    const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+    assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+    vista.dispatch('click');
+    const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+    assert.ok(recap, 'the recap body paints the vista');
+    return recap.textContent;
+  };
+  const two = await openVista(2);
+  assert.ok(two.includes('+ 1 appuntamento successivo'), `one left reads singular: ${two}`);
+  assert.ok(!two.includes('successivi'), `no plural with one left: ${two}`);
+  const three = await openVista(3);
+  assert.ok(three.includes('+ 2 appuntamenti successivi'), `two left read plural: ${three}`);
+});
+
 // backlog:d77f434ba40c, review Codex #1057 (P2): with a channel filter
 // active the «Vedi in cronologia» link resets to Tutti first — otherwise
 // the destination still hides the past bookings the vista advertises.
@@ -5789,13 +5821,169 @@ test('backlog:1e07362849db: the scheda labels whose figure it shows when quote t
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
       opportunities: {
         available: true, count: 1, countIsComplete: true, truncated: false,
-        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+        items: [{ id: 'o1', stage: 'proposta', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
       },
     },
   }));
   const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
   assert.ok(offerNote, 'the offer value paints labelled too');
   assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
+test('backlog:d4270d5efebe: a quote line also paints the linked offer value the Clienti list shows', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'proposal', status: 'open', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €', '1 €'], 'quote total first, then the linked offer value the list shows');
+  const notes = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note')
+    .map((node) => node.textContent);
+  assert.deepEqual(notes, ['preventivo in bozza', 'valore dell’offerta'], 'each figure carries its own label');
+});
+
+test('backlog:d4270d5efebe: an equal quote paints its figure once, never duplicated', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 100, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'proposal', status: 'proposal', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['1 €'], 'one figure when quote and offer agree');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a won linked offer paints once, never as the list figure', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'won', status: 'won', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'the won figure is out of the list total, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a lost linked offer paints once, never as the list figure', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', stage: 'lost', status: 'lost', name: 'Offerta prova', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'the lost figure is out of the list total, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a pipeline-closed linked offer paints once', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'sent', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'o1', stage: 'won', status: 'won', name: 'Offerta prova',
+          pipelineKey: 'accordo-sales', pipelineStage: 'pagato', amountCents: 100, currency: 'EUR',
+        }],
+      },
+    },
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €'], 'a pagato linked offer is won, so the scheda paints only the quote');
+});
+
+test('backlog:d4270d5efebe review #1142 P1: a pipeline-open linked offer still paints beside the quote', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo prova',
+          opportunityId: 'o1', opportunityName: 'Offerta prova',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'o1', stage: 'proposal', status: 'proposal', name: 'Offerta prova',
+          pipelineKey: 'accordo-sales', pipelineStage: 'proposta', amountCents: 100, currency: 'EUR',
+        }],
+      },
+    },
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+  }));
+  const amounts = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount')
+    .map((node) => node.textContent);
+  assert.deepEqual(amounts, ['15 €', '1 €'], 'an open pipeline row keeps the linked figure');
 });
 
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {

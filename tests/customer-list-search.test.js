@@ -550,7 +550,7 @@ test('f6b9d189: searchMatchFields names the fields a text match sits on', () => 
   }, {});
   assert.deepEqual(hits([ada07], 'pizzeria 07'), ['Ada 07'], 'the mixed needle lists the row by its visible words');
   assert.deepEqual(searchMatchFields(ada07, 'pizzeria 07'), ['name', 'company'], 'the digit word blames the name it visibly sits in');
-  assert.deepEqual(searchMatchFields(ada07, '07'), [], 'a pure-digit needle never blames the shown name');
+  assert.deepEqual(searchMatchFields(ada07, '07'), ['name'], 'below the floor digits read as words (backlog:f6b9d189 owner 20/11: «40» finds «Prova verifica 40 NoteInvio»)');
 });
 
 test('f6b9d189: the list response carries searchMatch on every item', async () => {

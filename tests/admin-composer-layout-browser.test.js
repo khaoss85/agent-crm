@@ -9,7 +9,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,8 +62,23 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 await createCustomerCardView({ doc: document, mount: document.getElementById('view-module'), client, spaceId: 'presti', role: () => 'owner' }).renderCard('contact', 'c1');
 document.querySelector('[data-action="compose-email"]').click();
 let panel = null;
-for (let i = 0; i < 100 && !(panel = document.querySelector('[data-composer="open"]'))?.querySelector('.bo-composer-ai[data-off="true"]'); i += 1) await wait(20);
-await wait(200);
+for (let i = 0; i < 200 && !(panel = document.querySelector('[data-composer="open"]'))?.querySelector('.bo-composer-ai[data-off="true"]'); i += 1) await wait(20);
+// Attesa sul layout stabile, non su un tempo fisso (flaky nella full
+// sotto carico): i font cambiano le altezze, così si campiona la
+// geometria con timeout — mai con requestAnimationFrame, che non scatta
+// in --dump-dom — finché resta ferma per 6 campioni di fila.
+await Promise.race([document.fonts.ready.catch(() => {}), wait(2000)]);
+for (let i = 0; i < 40 && (!document.querySelector('.bo-composer-head') || !document.querySelector('.bo-composer-reply-on') || !document.querySelector('.bo-composer-body')); i += 1) await wait(50);
+let lastKey = '';
+for (let i = 0, stable = 0; i < 40 && stable < 6; i += 1) {
+  await wait(50);
+  const headBox = document.querySelector('.bo-composer-head')?.getBoundingClientRect();
+  const labelBox = document.querySelector('.bo-composer-reply-on')?.getBoundingClientRect();
+  const bodyBox = document.querySelector('.bo-composer-body');
+  const key = [Math.round(headBox?.bottom ?? -1), Math.round(labelBox?.top ?? -1), Math.round(labelBox?.height ?? -1), bodyBox ? bodyBox.scrollTop : -1].join('|');
+  if (key === lastKey) stable += 1;
+  else { stable = 0; lastKey = key; }
+}
 const head = document.querySelector('.bo-composer-head').getBoundingClientRect();
 const label = document.querySelector('.bo-composer-reply-on').getBoundingClientRect();
 const body = document.querySelector('.bo-composer-body');
@@ -102,16 +118,22 @@ function serve() {
 
 function dumpDom({ binary, flags }, url, width, height) {
   return new Promise((resolve, reject) => {
+    // Viewport e stato propri per ogni altezza: profilo temporaneo a parte,
+    // così niente stato condiviso tra i due casi né con altri test dello
+    // stesso pezzo, e scala fissa per misure in px stabili.
+    const profile = mkdtempSync(join(tmpdir(), 'composer-layout-'));
     const child = spawn(binary, [
       '--headless', ...flags, '--dump-dom',
-      `--window-size=${width},${height}`, '--virtual-time-budget=8000', '--hide-scrollbars',
-      '--disable-background-networking', url,
+      `--user-data-dir=${profile}`,
+      `--window-size=${width},${height}`, '--force-device-scale-factor=1',
+      '--virtual-time-budget=20000', '--hide-scrollbars',
+      '--disable-background-networking', '--disable-extensions', url,
     ]);
     let out = '';
     child.stdout.on('data', (chunk) => { out += chunk; });
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('chromium timed out')); }, 120000);
-    child.on('error', reject);
-    child.on('close', () => { clearTimeout(timer); resolve(out); });
+    child.on('error', (error) => { clearTimeout(timer); rmSync(profile, { recursive: true, force: true }); reject(error); });
+    child.on('close', () => { clearTimeout(timer); rmSync(profile, { recursive: true, force: true }); resolve(out); });
   });
 }
 

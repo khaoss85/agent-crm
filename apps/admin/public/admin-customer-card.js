@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -330,6 +330,39 @@ export function shownOfferState(first, fromQuote, opportunities, pipelines) {
 }
 
 /**
+ * Backlog d4270d5efebe, review #1142: whether the quote-linked opportunity
+ * counts toward the Clienti list «Valore offerta», by the same rule the list
+ * uses (backlog:1adf95307b31, packages/core/src/pipeline-registry.js): a row
+ * filed under the composed opportunity pipeline reads through its stage type
+ * (open/renewal hold value), anything else through the canonical stage
+ * (won/lost close it). The scheda paints the linked value only when open, so
+ * a closed figure never reads as the list figure.
+ * @param {any} linkedOffer the profile opportunity row the quote was made for
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {boolean}
+ */
+export function isLinkedOfferOpen(linkedOffer, pipelines) {
+  if (!linkedOffer || typeof linkedOffer !== 'object') return false;
+  const key = typeof linkedOffer.pipelineStage === 'string' && linkedOffer.pipelineStage !== '' ? linkedOffer.pipelineStage : null;
+  const rowPipeline = typeof linkedOffer.pipelineKey === 'string' && linkedOffer.pipelineKey !== '' ? linkedOffer.pipelineKey : null;
+  const list = Array.isArray(pipelines) ? pipelines : [];
+  const composed = list.find((pipeline) => pipeline !== null && typeof pipeline === 'object'
+    && pipeline.module === 'opportunity' && Array.isArray(pipeline.stages)) ?? null;
+  if (key !== null && composed !== null && rowPipeline === composed.name) {
+    const stage = composed.stages.find((entry) => entry !== null && typeof entry === 'object' && entry.key === key) ?? null;
+    if (stage !== null) return stage.type === 'open' || stage.type === 'renewal';
+  }
+  const canonical = linkedOffer.stage;
+  return typeof canonical === 'string' && canonical !== 'won' && canonical !== 'lost'
+    && LINKED_OFFER_OPEN_STAGES.has(canonical);
+}
+
+// The canonical open stages the list falls back to outside any composed
+// pipeline (packages/core/src/schema.js OPPORTUNITY_STAGES minus the
+// won/lost closers) — the same fallback backlog:1adf95307b31 uses.
+const LINKED_OFFER_OPEN_STAGES = new Set(['discovery', 'qualification', 'proposal', 'approval_pending', 'negotiation']);
+
+/**
  * Backlog 1e939a362c7c: the «Cambia stato» menu of the scheda offer line,
  * for every offer — a quote line acts on the opportunity it was made for.
  * An offer placed on a composed pipeline moves through that pipeline's
@@ -590,6 +623,16 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
     || /** @type {any} */ (error).status === 503);
 
 export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog c61b882bbf2a (prova del Mac 18/11 sul live: la scheda restò sui
+ * riquadri scheletro oltre 60 s senza nessun messaggio mentre lo spazio si
+ * riavviava): oltre questa soglia con il profilo ancora in volo la scheda
+ * mostra un messaggio in italiano con un nuovo tentativo, al posto degli
+ * scheletri muti del profilo. Il messaggio sparisce quando i dati arrivano
+ * (la pittura finale non lo conosce). DECISION (to be confirmed): 10 s —
+ * oltre il budget della prima ondata (3 s) ma molto prima del minuto muto.
+ */
+export const PROFILE_SLOW_MS = 10 * 1000;
 /**
  * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
  * spins without end — a run that answers nothing within the timeout refuses
@@ -1142,6 +1185,25 @@ export function noteRefusalText(error) {
 }
 
 /**
+ * What a refused custom-field value says (backlog:ed03a20360d5, verifica Mac
+ * 20/11: «—» svuota, un 400 senza spiegazione no): a validation refusal
+ * reads the reason the server named — retrying the same value would meet
+ * the same refusal, so never «Riprova più tardi». Anything the server did
+ * not name keeps the write's own wording.
+ * @param {unknown} error
+ */
+export function fieldValueRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'VALIDATION_FAILED' || status === 400 || status === 422) {
+    const said = String(record.message ?? '').trim();
+    if (said !== '') return said;
+  }
+  return humanWriteError(error, { failed: 'Campo non salvato: il server non risponde, riprova tra poco.' });
+}
+
+/**
  * What a refused «Modifica» or «Elimina» says (backlog:cb348c9fcaeb): each
  * refusal the server names reads what happened and what to do — never
  * «Riprova più tardi», which would only meet the same refusal again.
@@ -1286,6 +1348,16 @@ export function createCustomerCardView(deps) {
   // where the host allows it, so an idle process never waits on it.
   const firstWaveWait = typeof deps.firstWaveWait === 'function'
     ? deps.firstWaveWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
+  // Backlog c61b882bbf2a: the slow-profile clock — its own seam like the
+  // first-wave budget above, so tests fire it without real time and the
+  // load backstop never sits among the screen's user-facing `wait` pauses.
+  // Unref'd where the host allows it, so an idle process never waits on it.
+  const profileSlowWait = typeof deps.profileSlowWait === 'function'
+    ? deps.profileSlowWait
     : (ms) => new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
       if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
@@ -1791,6 +1863,16 @@ export function createCustomerCardView(deps) {
   }
 
 
+  /**
+   * Review Muse #1107 (P2): the archive / restore / delete write in flight,
+   * per contact, held by the view — every repaint (paintPartial,
+   * buildAndShow) builds new buttons, so the guard cannot live on a node.
+   * While a write flies all three actions paint disabled and a second
+   * click sends nothing.
+   * @type {Map<string, { action: string, key: string }>}
+   */
+  const contactWrites = new Map();
+
   function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
@@ -1844,7 +1926,182 @@ export function createCustomerCardView(deps) {
     else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
+    if (resource === 'contact' && typeof id === 'string' && id !== '') head.appendChild(contactTools(card, id));
     panel.appendChild(head);
+  }
+
+  /**
+   * Voce 91c92940274c (Dan 19/11: «sui contatti non c'è la possibilità di
+   * archiviare/cancellare quelli che non voglio»). Two quiet buttons in the
+   * scheda head, never a menu to hunt for:
+   * - «Archivia» is one click: the contact leaves lists and counts (it is
+   *   found again under «Archiviati»), the toast keeps «Annulla» to bring
+   *   it back, and the screen goes back to Clienti;
+   * - «Elimina» is final, so it asks on the spot (never a native dialog)
+   *   and says what stays: the audit trace. A contact with offers can only
+   *   be archived: the server says so (409) and the strip offers Archivia.
+   * An archived contact opened again shows a strip with «Ripristina».
+   * @param {any} card @param {string} id
+   */
+  function contactTools(card, id) {
+    const tools = el('div', 'bo-scheda-head-tools');
+    const path = `/api/contacts/${encodeURIComponent(id)}`;
+    const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo contatto';
+    const button = (label, action, cls = 'ui-btn ui-btn-secondary') => {
+      const node = el('button', cls, label);
+      node.setAttribute('type', 'button');
+      node.setAttribute('data-action', action);
+      return node;
+    };
+    const say = el('p', 'bo-scheda-tools-note');
+    // aria-live, not role=status: the scheda keeps one status line per
+    // section, read by position; this note speaks only after a refusal.
+    say.setAttribute('aria-live', 'polite');
+    say.setAttribute('hidden', '');
+    const tell = (text) => {
+      say.textContent = text;
+      if (text === '') say.setAttribute('hidden', '');
+      else say.removeAttribute('hidden');
+    };
+    const refusal = (error, failed, action) => {
+      // Only the named service verdict selects special wording. A bare
+      // 409/503 keeps its actual cause and the shared failure handling.
+      const code = String(error?.code ?? error?.body?.error?.code ?? '');
+      if (code === 'CONTACT_HAS_OPPORTUNITIES') {
+        logWriteFailure(error);
+        return 'Questo contatto ha offerte collegate: si può archiviare, non eliminare.';
+      }
+      if (code === 'CONTACT_SERVICE_UNAVAILABLE') {
+        logWriteFailure(error);
+        const subject = { archive: 'Archiviazione non ancora attiva', restore: 'Ripristino non ancora attivo', delete: 'Eliminazione non ancora attiva' }[action];
+        return `${subject} su questo rilascio: riprova dopo l’aggiornamento.`;
+      }
+      return humanWriteError(error, { failed });
+    };
+    /** @type {any[]} */
+    const actionNodes = [];
+    const busy = (node, on) => {
+      for (const each of actionNodes) {
+        if (on) each.setAttribute('disabled', '');
+        else each.removeAttribute('disabled');
+      }
+      if (on) node.setAttribute('aria-busy', 'true');
+      else node.removeAttribute('aria-busy');
+    };
+    /**
+     * One write at a time per contact, across repaints.
+     * @param {string} action @param {(key: string) => Promise<any>} send
+     */
+    const write = async (action, send) => {
+      // A write already in flight for this contact (from this paint or an
+      // earlier one): never a second request.
+      if (contactWrites.has(id)) return { skipped: true };
+      const entry = { action, key: submissions.issueKey() };
+      contactWrites.set(id, entry);
+      try {
+        await send(entry.key);
+        return { ok: true };
+      } catch (error) {
+        return { error };
+      } finally {
+        if (contactWrites.get(id) === entry) contactWrites.delete(id);
+      }
+    };
+    const restore = (key) => client.request(`${path}/restore`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) });
+    const archivedAt = typeof card?.archivedAt === 'string' && card.archivedAt !== '' ? card.archivedAt : null;
+    if (archivedAt !== null) {
+      tools.setAttribute('data-archived', 'true');
+      tools.appendChild(el('span', 'bo-scheda-archived-pill', 'Archiviato'));
+      const back = button('Ripristina', 'contact-restore', 'ui-btn ui-btn-primary');
+      actionNodes.push(back);
+      back.addEventListener('click', async () => {
+        busy(back, true);
+        const result = await write('restore', restore);
+        if (result.skipped) return;
+        if (result.error) {
+          busy(back, false);
+          tell(refusal(result.error, 'Contatto non ripristinato. Riprova più tardi.', 'restore'));
+          return;
+        }
+        toast('Contatto ripristinato');
+        await renderCard('contact', id);
+      });
+      tools.appendChild(back);
+      if (contactWrites.has(id)) busy(back, true);
+      tools.appendChild(say);
+      return tools;
+    }
+    const archive = button('Archivia', 'contact-archive');
+    archive.setAttribute('title', 'Toglilo da liste e conteggi: lo ritrovi in «Archiviati»');
+    const drop = button('Elimina', 'contact-delete', 'ui-btn ui-btn-secondary bo-scheda-danger');
+    drop.setAttribute('title', 'Eliminalo per sempre');
+    const doArchive = async () => {
+      busy(archive, true);
+      tell('');
+      const result = await write('archive', (key) => client.request(`${path}/archive`, { method: 'POST', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
+        busy(archive, false);
+        tell(refusal(result.error, 'Contatto non archiviato. Riprova più tardi.', 'archive'));
+        return;
+      }
+      toast(`${name} archiviato`, false, {
+        action: {
+          label: 'Annulla',
+          run: async () => {
+            const undo = await write('restore', restore);
+            if (undo.skipped) return;
+            if (undo.error) {
+              toast(refusal(undo.error, 'Contatto non ripristinato: lo trovi in «Archiviati».', 'restore'), true);
+              return;
+            }
+            toast('Contatto ripristinato');
+            navigate(`#/customer-card/contact/${encodeURIComponent(id)}`);
+          },
+        },
+      });
+      navigate('#/customer-data');
+    };
+    archive.addEventListener('click', doArchive);
+    const confirmRow = el('div', 'bo-scheda-confirm');
+    confirmRow.setAttribute('hidden', '');
+    confirmRow.setAttribute('data-confirm', 'contact-delete');
+    confirmRow.appendChild(el('span', undefined, `Eliminare ${name} per sempre? Spariscono scheda e dati; resta solo la traccia di chi l’ha fatto.`));
+    const sure = button('Elimina per sempre', 'contact-delete-confirm', 'ui-btn ui-btn-danger');
+    const keep = button('Annulla', 'contact-delete-cancel');
+    confirmRow.appendChild(sure);
+    confirmRow.appendChild(keep);
+    drop.addEventListener('click', () => {
+      tell('');
+      confirmRow.removeAttribute('hidden');
+      drop.setAttribute('hidden', '');
+    });
+    keep.addEventListener('click', () => {
+      confirmRow.setAttribute('hidden', '');
+      drop.removeAttribute('hidden');
+    });
+    sure.addEventListener('click', async () => {
+      busy(sure, true);
+      const result = await write('delete', (key) => client.request(path, { method: 'DELETE', idempotencyKey: key, body: JSON.stringify({}) }));
+      if (result.skipped) return;
+      if (result.error) {
+        busy(sure, false);
+        confirmRow.setAttribute('hidden', '');
+        drop.removeAttribute('hidden');
+        tell(refusal(result.error, 'Contatto non eliminato. Riprova più tardi.', 'delete'));
+        return;
+      }
+      toast(`${name} eliminato`);
+      navigate('#/customer-data');
+    });
+    actionNodes.push(archive, drop, sure);
+    tools.appendChild(archive);
+    tools.appendChild(drop);
+    tools.appendChild(confirmRow);
+    tools.appendChild(say);
+    // A write still in flight from an earlier paint keeps every action off.
+    if (contactWrites.has(id)) busy(archive, true);
+    return tools;
   }
 
   /**
@@ -2290,7 +2547,20 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify(callBody),
         });
         toast('Chiamata registrata');
+        // Voce 600964e2d14e: dopo una chiamata dall'azione rapida «Chiama»
+        // la scheda propone «Detta nota vocale» per quella chiamata — il
+        // pannello Chiama si chiude e la rilettura riapre il dettato, vuoto,
+        // con il cursore dentro. Solo la finestra della chiamata si chiude
+        // (uno «Scrivi» aperto resta dov'è); retainedDrafts è il canale
+        // disegnato per portare le bozze nella pittura dopo la rilettura —
+        // paint lo consuma una volta sola e la digitazione vera vince sopra.
+        // Senza chiamata registrata dal CRM (tel: di ripiego) non c'è nessun
+        // gancio: il dettato resta l'opzione già visibile nella scheda.
+        const open = mount.querySelector('div[data-call="open"]');
+        if (open && open.parentNode) open.parentNode.removeChild(open);
+        retainedDrafts = { ...(retainedDrafts ?? {}), voice: { open: true, text: '' } };
         await renderCard(navCtx.resource, navCtx.id);
+        focusAtEnd(mount.querySelector('[name="voiceNoteText"]'));
       } catch (error) {
         err.textContent = humanReadError(error, { failed: 'Chiamata non registrata. Riprova più tardi.' });
       } finally {
@@ -3938,7 +4208,7 @@ export function createCustomerCardView(deps) {
         closeEditor();
         await renderCard(ctx.resource, ctx.id);
       } catch (err) {
-        entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
+        entry.setError(fieldValueRefusalText(err));
         busy = false;
       }
     }));
@@ -4673,9 +4943,12 @@ export function createCustomerCardView(deps) {
         if (item?.entry === 'offer-created' || item?.entry === 'stage-moved') {
           // backlog:82235e46e3e9: an offer or a stage move in the
           // cronologia — a system line with its own mark, never a bubble.
+          // backlog:acd136b3cd5d: an author the reads cannot name paints
+          // no «da —» tail — the fact stays, the empty author does not
+          // (same rule as the offer page's historyLine).
           const when = timeParts(item?.occurredAt);
           const head = item.entry === 'offer-created' ? 'Offerta creata' : 'Cambio di stato';
-          const by = typeof item.who === 'string' && item.who !== '' ? ` · da ${item.who}` : '';
+          const by = typeof item.who === 'string' && item.who !== '' && item.who !== '—' ? ` · da ${item.who}` : '';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-event');
           const mark = el('span', 'bo-scheda-chan bo-tile-event', item.entry === 'offer-created' ? '€' : '→');
           mark.setAttribute('aria-hidden', 'true');
@@ -4882,7 +5155,12 @@ export function createCustomerCardView(deps) {
       }
       if (ordered.length > visible.length) {
         const rest = ordered.length - visible.length;
-        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        // backlog:acd136b3cd5d: «20 di 20» reads as if everything were
+        // shown while a page is still hidden — a remainder that fits one
+        // page names no counts, only the action.
+        const older = el('button', 'bo-scheda-older', rest <= TIMELINE_PAGE
+          ? 'Mostra precedenti'
+          : `Mostra precedenti · ${TIMELINE_PAGE} di ${rest}`);
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
@@ -5561,16 +5839,41 @@ export function createCustomerCardView(deps) {
     // offer page hero): never two bare figures that read as the same.
     const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
       fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
+    // backlog:d4270d5efebe: a quote line hid the offer value the Clienti list
+    // shows (the list sums open opportunities, the scheda showed only the
+    // quote total: 1 € vs 15 € on 19/11). Paint the linked opportunity's own
+    // value beside the quote total, with the same «valore dell’offerta»
+    // label the offer row uses — the list's words for the linked row's own
+    // figure. Shown only when it differs AND the linked row is open by the
+    // same rule the list uses (review #1142 P1, isLinkedOfferOpen): a
+    // won/lost/closed linked offer is out of the list total, so the scheda
+    // never paints it beside the quote as if it were the list figure. With
+    // several open offers the list sums them all while this line shows only
+    // the linked one (follow-up, disclosed in the PR).
+    const linkedOffer = fromQuote && typeof first?.opportunityId === 'string' && Array.isArray(opportunities)
+      ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+      : null;
+    const linkedDiffers = linkedOffer !== null
+      && (linkedOffer.amountCents !== first?.amountCents || linkedOffer.currency !== first?.currency);
+    const offerAmount = linkedDiffers && isLinkedOfferOpen(linkedOffer, pipelines)
+      && Number.isSafeInteger(linkedOffer?.amountCents) && linkedOffer.amountCents > 0
+      && typeof linkedOffer?.currency === 'string' && linkedOffer.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(linkedOffer.amountCents, linkedOffer.currency)) : null;
+    const offerAmountNote = offerAmount === null ? null : el('p', 'bo-scheda-offer-amount-note', 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
       if (amountNote) box.appendChild(amountNote);
+      if (offerAmount) box.appendChild(offerAmount);
+      if (offerAmountNote) box.appendChild(offerAmountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
       if (amountNote) link.appendChild(amountNote);
+      if (offerAmount) link.appendChild(offerAmount);
+      if (offerAmountNote) link.appendChild(offerAmountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -5912,15 +6215,19 @@ export function createCustomerCardView(deps) {
         const words = stageMoveLabels(pipelines, move);
         const who = auditActorLabel(entry, [owner, companyName], people);
         const when = italianDateTime(entry?.createdAt) ?? '—';
+        // backlog:acd136b3cd5d: an actor the reads cannot name paints no
+        // «da —» tail — the move stays, the empty author does not (same
+        // rule as the offer page's historyLine).
+        const by = who === '—' || who === '' ? '' : ` · da ${who}`;
         if (words === null) {
           // Review giro 1 (P2): the audit holds a move but no side has a
           // label (pipelines unavailable, unknown keys). Like the detail,
           // the row reads the generic Italian line — never a raw key, and
           // never a false «no moves» message for moves that exist.
           // Backlog 169cd4bc988c: one word for every move, like the offer page.
-          rows.push(`Cambio di stato · da ${who} · ${when}`);
+          rows.push(`Cambio di stato${by} · ${when}`);
         } else {
-          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+          rows.push(`da ${words.from} a ${words.to}${by} · ${when}`);
         }
         if (rows.length >= 5) break;
       }
@@ -6411,7 +6718,9 @@ export function createCustomerCardView(deps) {
     }
     appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
-      box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
+      // backlog:f2e52f14: il singolare conta — «+ 1 appuntamenti successivi» è sbagliato.
+      const rest = upcoming.length - 1;
+      box.appendChild(el('p', 'bo-muted', rest === 1 ? '+ 1 appuntamento successivo' : `+ ${rest} appuntamenti successivi`));
     }
   }
 
@@ -6636,10 +6945,17 @@ export function createCustomerCardView(deps) {
     // A partial paint is a courtesy: if it ever throws, the scheda waits for
     // the full answer like before instead of failing the read.
     let partials = firstVisit;
+    // Backlog c61b882bbf2a: the slow-profile watch — the last partial paint,
+    // so the threshold repaint says the same data with the notice added.
+    let lastPartial = null;
+    let lastPending = PART_NAMES_PENDING();
+    let profileSlow = false;
     const partialPaint = (partial, pending) => {
+      lastPartial = partial;
+      lastPending = pending;
       if (!partials || renderToken !== cardRenderToken || pending.size === 0) return;
       try {
-        paintPartial(key, resource, id, partial, pending);
+        paintPartial(key, resource, id, partial, pending, profileSlow);
       } catch (error) {
         // Review Muse #835 (P2): the cause reaches on-call — name, code and
         // the space only, never a value — so a stalled progressive load is
@@ -6662,6 +6978,22 @@ export function createCustomerCardView(deps) {
       if (known !== null) emitTitle(known);
     }
     partialPaint(null, PART_NAMES_PENDING());
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, repaint the same partial with the notice — a newer render or
+    // a landed profile makes this a noop, so the notice never outlives the
+    // wait. Only a first visit shows skeletons, so only it watches. Like
+    // every courtesy paint, a hostile clock never fails the read.
+    if (firstVisit) {
+      try {
+        void profileSlowWait(PROFILE_SLOW_MS).then(() => {
+          if (renderToken !== cardRenderToken || !lastPending.has('profile')) return;
+          profileSlow = true;
+          partialPaint(lastPartial, lastPending);
+        }, () => {});
+      } catch {
+        // No notice: the full answer still lands like before.
+      }
+    }
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
     } catch (error) {
@@ -7282,8 +7614,9 @@ export function createCustomerCardView(deps) {
    * @param {string} key @param {string} resource @param {string} id
    * @param {any} partial what has landed, or null for nothing yet
    * @param {Set<string> | null} pending the reads still in flight, null for all
+   * @param {boolean} [profileSlow] the profile read passed its threshold
    */
-  function paintPartial(key, resource, id, partial, pending) {
+  function paintPartial(key, resource, id, partial, pending, profileSlow = false) {
     const waiting = pending ?? PART_NAMES_PENDING();
     if (partial?.cardError) return;
     if (partial?.card) {
@@ -7297,6 +7630,7 @@ export function createCustomerCardView(deps) {
         reloadEnrichment: enrichmentReloader(key, resource, id),
         pipelines: partial?.pipelines ?? [],
         pending: waiting,
+        profileSlow,
       });
     } finally {
       pendingDrafts = null;
@@ -7387,6 +7721,7 @@ export function createCustomerCardView(deps) {
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
     services = null,
     pending = null,
+    profileSlow = false,
   }) {
     // backlog:0d68c387: the listino names behind the booked service keys —
     // the booking menu's list, or an empty map (slug words) while it loads.
@@ -7448,15 +7783,39 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     const skeleton = (col, cls, title) => section(col, cls, skeletonSection, title);
-    if (waits('card', 'profile', 'timeline')) skeleton(left, '', 'Azioni rapide');
+    // Backlog c61b882bbf2a: past the threshold with the profile still in
+    // flight, the profile-gated skeletons would sit mute (live 18/11: oltre
+    // 60 s). One notice speaks for all of them — in Italian, with a retry
+    // that re-reads the scheda — and the other skeletons stay off, so no
+    // mute grey box waits on the profile. Sections gated on other reads
+    // keep their own skeletons: they are not the profile's wait.
+    const slowProfile = profileSlow === true && waits('profile');
+    let slowNoticeShown = false;
+    /** @param {any} col */
+    const profileSlowNotice = (col) => section(col, 'bo-scheda-card-profile-slow', (box) => {
+      box.setAttribute('aria-busy', 'true');
+      box.setAttribute('data-loading', 'true');
+      box.appendChild(el('h4', undefined, 'Profilo'));
+      box.appendChild(el('p', 'bo-muted', 'Il caricamento del profilo sta impiegando più del previsto.'));
+      box.appendChild(schedaRetryButton());
+      return true;
+    });
+    // The first profile-gated skeleton becomes the notice; the rest stay
+    // off while it speaks, and everything repaints from the data the moment
+    // it lands (the settled paint never sets profileSlow).
+    const skeletonOrNotice = (col, cls, title) => {
+      if (!slowProfile) { skeleton(col, cls, title); return; }
+      if (!slowNoticeShown) { slowNoticeShown = true; profileSlowNotice(col); }
+    };
+    if (waits('card', 'profile', 'timeline')) skeletonOrNotice(left, '', 'Azioni rapide');
     else {
       section(left, '', quickActions, card, {
         resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
       }, { numbers: schedaNumbers(card, profile, timeline) });
     }
-    if (waits('profile', 'timeline')) skeleton(left, '', 'Identità collegate');
+    if (waits('profile', 'timeline')) skeletonOrNotice(left, '', 'Identità collegate');
     else section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
-    if (waits('card', 'profile')) skeleton(left, '', 'Dettagli');
+    if (waits('card', 'profile')) skeletonOrNotice(left, '', 'Dettagli');
     else section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
     // section, never the scheda — like enrichment above.
@@ -7491,7 +7850,7 @@ export function createCustomerCardView(deps) {
     // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
     // prototype has not got.
     if (waits('calls', 'timeline', 'profile')) {
-      skeleton(right, 'bo-scheda-ai', '✦ Recap');
+      skeletonOrNotice(right, 'bo-scheda-ai', '✦ Recap');
     } else {
       section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
         card, calls, callsError, timeline, timelineError, profile, profileError,

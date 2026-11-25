@@ -328,6 +328,24 @@ async function requireExistingSubject(modules, resource, id) {
   }
 }
 
+/**
+ * Voce ed03a20360d5: svuotare un valore registrato. La riga esistente va a
+ * NULL (valore e fonte: un valore svuotato non ha fonte), così la rilettura
+ * torna null e la scheda mostra «—». Senza riga non si scrive nulla e la
+ * risposta dice comunque svuotato.
+ */
+async function clearCustomFieldValue({ def, resource, id, key, actor, values }) {
+  const shaped = shapeDef(def);
+  const cleared = Object.freeze({
+    ...shaped, value: null, source: null, updatedAt: null, updatedBy: null,
+  });
+  const stored = await deciding(values, { sourceKey: valueSourceKey(resource, id, key) });
+  if (!stored[0]) return Object.freeze({ value: cleared, replayed: true });
+  const row = await values.applyManaged(stored[0].id,
+    { value: null, source: null, updatedBy: actor.id }, { actor });
+  return Object.freeze({ value: shapeValue(def, row), replayed: false });
+}
+
 export async function setCustomFieldValue({ database, modules, names }, request) {
   void database;
   const actor = requireUser(request?.actor, 'Setting a custom field value');
@@ -342,6 +360,13 @@ export async function setCustomFieldValue({ database, modules, names }, request)
       'questo campo non esiste più: aggiungilo di nuovo prima di dare un valore');
   }
   await requireExistingSubject(modules, resource, id);
+  // Voce ed03a20360d5: «—» svuota il valore, non lo rifiuta. Un valore
+  // assente o vuoto cancella quello registrato (NULL sulla riga, che torna
+  // a leggersi null), mai un 400.
+  if (input.value === undefined || input.value === null
+    || (typeof input.value === 'string' && input.value.trim() === '')) {
+    return await clearCustomFieldValue({ def, resource, id, key, actor, values });
+  }
   const value = normalizeFieldValue(shapeDef(def), input.value);
   const source = requireValueSource(input.source);
   const sourceKey = valueSourceKey(resource, id, key);
@@ -613,6 +638,17 @@ export async function applyCustomerPhrase({ database, modules, core, names, impo
     for (const entry of fields) {
       if (!entry || typeof entry !== 'object') continue;
       const key = normalizeFieldKey(entry.key);
+      // Voce ed03a20360d5, correzione review P2: la conferma rifiuta il
+      // valore vuoto prima di definire, così la transazione annulla tutto
+      // (cliente, definizioni, valori) come su main. Svuotare («—») resta
+      // solo sulla rotta del singolo valore (setCustomFieldValue).
+      const rawValue = entry.value ?? entry.fieldValue;
+      if (rawValue === undefined || rawValue === null
+        || (typeof rawValue === 'string' && rawValue.trim() === '')) {
+        const name = typeof entry.label === 'string' && entry.label.trim() !== ''
+          ? entry.label.trim() : key;
+        throw new ValidationError(`«${name}» ha bisogno di un valore`, { field: 'value' });
+      }
       const defined = await defineCustomField({ modules, names }, {
         actor, key,
         label: entry.label,
