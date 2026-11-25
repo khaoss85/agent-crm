@@ -682,6 +682,42 @@ test('1a8f1bff2086: the chi line never shows the space owner email under a custo
   );
 });
 
+test('1a8f1bff2086: a customer address that merely contains a team address as suffix still reads', () => {
+  // REVIEW_FINDINGS_BLOCK rev-agent-crm-1147-d5c9e2ebd66a P2: the roster
+  // match used substring, so a customer mailbox ending with a shorter team
+  // address was hidden. The label matches by value; a notes cue is hidden
+  // only when one of its email tokens is a roster address.
+  const roster = [{ subject: 'op-1', displayName: 'Team', email: 'ore@spazio.it' }];
+  const labelled = {
+    ...APPT_TODAY, id: 'appt-suffix-label', teamMemberId: 'op-1',
+    subjectLabel: 'tore@spazio.it', notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([labelled], OGGI_NOW, {}, roster)[0].who,
+    'tore@spazio.it',
+    'a longer customer mailbox is customer data, never hidden as a team address',
+  );
+  const shortRoster = [{ subject: 'op-1', displayName: 'Team', email: 'li@x.it' }];
+  const shortLabelled = {
+    ...APPT_TODAY, id: 'appt-suffix-label-2', teamMemberId: 'op-1',
+    subjectLabel: 'ali@x.it', notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([shortLabelled], OGGI_NOW, {}, shortRoster)[0].who,
+    'ali@x.it',
+    'same class: ali@x.it is not li@x.it',
+  );
+  const noted = {
+    ...APPT_TODAY, id: 'appt-suffix-notes', teamMemberId: 'op-1',
+    subjectLabel: 'Mario Rossi', notes: 'Scrivere a tore@spazio.it per il rinnovo.',
+  };
+  assert.equal(
+    buildTodayAgenda([noted], OGGI_NOW, {}, roster)[0].who,
+    'Scrivere a tore@spazio.it per il rinnovo.',
+    'a notes cue with only a non-team address still reads',
+  );
+});
+
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');

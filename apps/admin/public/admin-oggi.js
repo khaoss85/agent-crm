@@ -1240,13 +1240,18 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
       if (typeof text !== 'string') return false;
       const lowered = text.trim().toLowerCase();
       if (lowered === '') return false;
-      return [...teamMails].some((mail) => lowered.includes(mail));
+      return teamMails.has(lowered);
+    };
+    const cueHasTeamMail = (text) => {
+      if (typeof text !== 'string') return false;
+      const tokens = text.toLowerCase().match(/[^@\s<>()]+@[^@\s<>()]+\.[^@\s<>()]+/g) ?? [];
+      return tokens.some((token) => teamMails.has(token));
     };
     const labelMail = memberText(row?.subjectLabel);
     const labelAddress = labelMail !== null && labelMail.includes('@') ? labelMail : null;
     const contactMail = labelAddress !== null && !isTeamMail(labelAddress) ? labelAddress : null;
     const notesCue = nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null;
-    const cue = contactMail ?? (notesCue !== null && !isTeamMail(notesCue) ? notesCue : null);
+    const cue = contactMail ?? (notesCue !== null && !cueHasTeamMail(notesCue) ? notesCue : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
     const card = cardHrefForSubject(row);
