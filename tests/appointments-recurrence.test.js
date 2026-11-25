@@ -13,7 +13,11 @@
  * successivi / tutti»): su una serie locale tutti e tre gli scope spostano
  * o annullano le righe giuste; su una serie collegata a Google solo
  * «tutti» passa, gli altri sono 409 prima di ogni scrittura (le eccezioni
- * EXDATE/UNTIL sono la voce 6acf0a73bfc3, non questa).
+ * EXDATE/UNTIL sono la voce 6acf0a73bfc3, non questa). A decidere se la
+ * serie è collegata è il suo link di sync letto dal server, mai la sola
+ * presenza del bordo calendario: con il bordo composto una serie locale
+ * tiene tutti gli scope, e «tutti» su una serie collegata spinge la testa
+ * su Google anche quando la richiesta non nomina nessun calendario.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -694,7 +698,7 @@ test('senza bordo calendario single e following funzionano come ora (backlog:573
   assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
 });
 
-test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto, single e following sono 409 anche senza «calendar» (backlog:573a1e85942f)', async () => {
+test('serie locale con il bordo composto: single e following passano, decide il link non il bordo (backlog:573a1e85942f)', async () => {
   const service = fakeAppointments();
   const pushes = [];
   const calendarSync = {
@@ -702,9 +706,46 @@ test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto
       pushes.push(sourceKey);
       return { status: 'noop', sourceKey, reason: 'finto' };
     },
+    // Serie mai sincronizzata: Google non ha niente per lei.
+    async readAppointmentDetail() {
+      return {};
+    },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+  });
+  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z', '«solo questo» muove la riga locale');
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-25T16:00:00.000Z',
+    endsAt: '2026-11-25T17:00:00.000Z',
+    scope: 'following',
+  });
+  assert.equal(service.rows[1].startsAt, '2026-11-25T16:00:00.000Z', '«questo e i successivi» muove la serie locale');
+  assert.deepEqual(pushes, [], 'serie locale: niente da spingere su Google');
+});
+
+test('serie collegata a Google senza «calendar» nella richiesta: single e following sono 409, «tutti» spinge la testa (backlog:573a1e85942f)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push([calendarId, sourceKey]);
+      return { status: 'ok', sourceKey };
+    },
+    // Serie davvero collegata: il link di sync nomina il calendario.
+    async readAppointmentDetail() {
+      return { sync: { calendarId: 'cal-1' } };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const headKey = booked.occurrences[0].sourceKey;
   const before = service.rows.map((row) => row.startsAt);
   await assert.rejects(
     rescheduleAppointment(context, {
@@ -731,7 +772,8 @@ test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto
   );
   assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
   assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Tutti» senza «calendar» resta com'era: la serie si sposta, senza push.
+  // «Tutti» senza «calendar» converge Google da solo: la serie si sposta e
+  // la push nomina la testa, che porta la RRULE.
   await rescheduleAppointment(context, {
     id: booked.occurrences[0].id,
     startsAt: '2026-11-18T16:00:00.000Z',
@@ -739,35 +781,62 @@ test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto
     scope: 'all',
   });
   assert.notDeepEqual(service.rows.map((row) => row.startsAt), before, '«tutti» sposta la serie');
-  assert.deepEqual(pushes, [], 'senza «calendar» la richiesta non spinge');
+  assert.deepEqual(pushes, [['cal-1', headKey]], '«tutti» spinge la testa sul calendario del link');
 });
 
-test('la guardia serie-Google vale anche per l’annullo senza «calendar» nella richiesta (backlog:573a1e85942f)', async () => {
-  const service = fakeAppointments();
-  const pushes = [];
-  const calendarSync = {
+test('annullo senza «calendar»: la serie locale passa, quella collegata rifiuta single e following (backlog:573a1e85942f)', async () => {
+  const local = fakeAppointments();
+  const localPushes = [];
+  const localSync = {
     async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
+      localPushes.push(sourceKey);
       return { status: 'ok', sourceKey };
     },
+    // Serie mai sincronizzata: Google non ha niente per lei.
+    async readAppointmentDetail() {
+      return {};
+    },
   };
-  const context = { ...contextFor(service), calendarSync };
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const bookedLocal = await bookAppointment(
+    { ...contextFor(local), calendarSync: localSync },
+    booking({ recurrence: { kind: 'weekly', count: 3 } }),
+  );
+  await cancelAppointment(
+    { ...contextFor(local), calendarSync: localSync },
+    { id: bookedLocal.occurrences[1].id, scope: 'single', reason: 'spostato' },
+  );
+  assert.deepEqual(local.rows.map((row) => row.status), ['booked', 'cancelled', 'booked'], '«solo questo» annulla la riga locale');
+  assert.deepEqual(localPushes, [], 'serie locale: niente da spingere su Google');
+
+  const linked = fakeAppointments();
+  const linkedPushes = [];
+  const linkedSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      linkedPushes.push(sourceKey);
+      return { status: 'ok', sourceKey };
+    },
+    // Serie davvero collegata: il link di sync nomina il calendario.
+    async readAppointmentDetail() {
+      return { sync: { calendarId: 'cal-1' } };
+    },
+  };
+  const linkedContext = { ...contextFor(linked), calendarSync: linkedSync };
+  const bookedLinked = await bookAppointment(linkedContext, booking({ recurrence: { kind: 'weekly', count: 3 } }));
   await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' }),
+    cancelAppointment(linkedContext, { id: bookedLinked.occurrences[1].id, scope: 'single', reason: 'spostato' }),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
       assert.equal(error.status, 409);
       return true;
     },
   );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
+  assert.deepEqual(linked.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
   await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', reason: 'serie finita' }),
+    cancelAppointment(linkedContext, { id: bookedLinked.occurrences[0].id, scope: 'following', reason: 'serie finita' }),
     (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
   );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
+  assert.deepEqual(linked.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
+  assert.deepEqual(linkedPushes, [], 'nessuna push su un rifiuto');
 });
 
 test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:573a1e85942f)', async () => {

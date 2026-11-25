@@ -928,19 +928,33 @@ export async function seriesScopeRows(appointments, row, scope) {
 }
 
 /**
- * Series scope on a Google-linked series (backlog:573a1e85942f): a series the
- * calendar edge knows moves as one Google event — «solo questo» and «questo e
- * i successivi» would move the grid while Google keeps the old rule, so they
- * are refused before any write and only «tutti» stays. The guard keys on the
- * SAVED row (`seriesKey`) and the composed calendar edge, never on a request
- * `calendar` field the first-party UI never sends — otherwise it is dead code
- * on the real path. Without the edge every scope works as before.
- * Per-occurrence Google exceptions (EXDATE/UNTIL) are item 6acf0a73bfc3: until
- * then the refusal is the fail-closed answer, never a silent divergence.
+ * Series scope on a Google-linked series (backlog:573a1e85942f): a series
+ * Google knows moves as one Google event — «solo questo» and «questo e i
+ * successivi» would move the grid while Google keeps the old rule, so they
+ * are refused before any write and only «tutti» stays. The refusal keys on
+ * the ACTUAL linkage of the named series — resolved server-side through
+ * `calendarSync.readAppointmentDetail`, never from a request `calendar`
+ * field the first-party UI never sends — or on an explicitly named
+ * `calendar` in the request, which means Google is in play. A local series
+ * (no sync link) keeps every scope exactly as before, even when the edge is
+ * composed: the edge alone proves nothing about this series. When the link
+ * cannot be resolved (no detail reader, or the read fails) the guard stays
+ * open like before, never a false 409. Per-occurrence Google exceptions
+ * (EXDATE/UNTIL) are item 6acf0a73bfc3: until then the refusal is the
+ * fail-closed answer, never a silent divergence.
  */
-function googleLinkedSeriesScopeRefused(calendarSync, row, scope) {
-  const edge = calendarSync != null && typeof calendarSync.pushAppointment === 'function';
-  return edge && Boolean(row?.seriesKey) && scope !== 'all';
+async function googleLinkedSeriesScopeRefused(calendarSync, row, scope, { actor, calendarNamed }) {
+  if (!row?.seriesKey || scope === 'all') return false;
+  if (calendarNamed) return typeof calendarSync?.pushAppointment === 'function';
+  if (typeof calendarSync?.pushAppointment !== 'function') return false;
+  if (typeof calendarSync?.readAppointmentDetail !== 'function') return false;
+  try {
+    const detail = await calendarSync.readAppointmentDetail({ id: row.id, actor });
+    const linked = detail?.sync?.calendarId;
+    return typeof linked === 'string' && linked.trim() !== '';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1777,7 +1791,11 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
  * converged through the injected `calendarSync.pushAppointment` handle
  * after the commit, exactly like the confirm path: validated before any
  * row exists, answered as data (`push` / `pushError`) after it, never a
- * throw past the commit.
+ * throw past the commit. Without `calendar` the move carries its own
+ * convergence (backlog:27923678 pattern, same as the cancel path): the
+ * appointment's sync link names the calendar, resolved server-side through
+ * `calendarSync.readAppointmentDetail` after the commit. Without a link
+ * nothing is pushed.
  */
 export async function rescheduleAppointment(context, request) {
   const names = resolvedNames(context.moduleNames);
@@ -1872,11 +1890,12 @@ export async function rescheduleAppointment(context, request) {
     });
   }
   // A series linked to Google moves as one event: «solo questo» and «questo
-  // e i successivi» would move the grid while Google keeps the old rule (the
-  // push through the head is a noop), so they are refused before any write.
-  // «Tutti» stays as it is. Per-occurrence Google exceptions (EXDATE/UNTIL)
-  // are item 6acf0a73bfc3, not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
+  // e i successivi» would move the grid while Google keeps the old rule, so
+  // they are refused before any write. «Tutti» stays as it is. The refusal
+  // keys on the series' own sync link (or an explicitly named calendar),
+  // never on the composed edge alone. Per-occurrence Google exceptions
+  // (EXDATE/UNTIL) are item 6acf0a73bfc3, not covered here.
+  if (await googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope, { actor: who, calendarNamed: calendarPush !== null })) {
     throw new AppError(
       'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
       { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
@@ -2091,6 +2110,39 @@ export async function rescheduleAppointment(context, request) {
         : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
       pushError = Object.freeze({ code });
     }
+  } else if (typeof context?.calendarSync?.readAppointmentDetail === 'function'
+    && typeof context?.calendarSync?.pushAppointment === 'function') {
+    // backlog:573a1e85942f — no calendar named: the appointment's own sync
+    // link names it (backlog:27923678 pattern, same as the cancel path).
+    // Resolved server-side after the commit, never from caller input, so a
+    // forged calendarId cannot steer the push; the grant gate inside the
+    // push still enforces the owning space. A scope=all on a linked series
+    // converges the head — it carries the Google RRULE — while
+    // single/following on a linked series never reach this point (refused
+    // before any write). Without a link nothing is pushed; a push the link
+    // cannot reach rides as data, never a throw past the commit.
+    try {
+      const calendarSync = context.calendarSync;
+      const detail = await calendarSync.readAppointmentDetail({ id: appointment.id, actor: who });
+      const linked = detail?.sync?.calendarId;
+      if (typeof linked === 'string' && linked.trim() !== '') {
+        const autoSpace = typeof record.spaceId === 'string' && record.spaceId.trim() !== ''
+          ? record.spaceId
+          : undefined;
+        push = await calendarSync.pushAppointment(linked, pushKey, { spaceId: autoSpace, actor: who });
+      }
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      // The move stands and the cause rides as data, so name it here: space
+      // and code only, never the appointment, the actor or the reason.
+      console.error(
+        `[accordo] appointments reschedule auto-push detail unreadable: code=${code} `
+        + `spaceId=${typeof record.spaceId === 'string' && record.spaceId.trim() !== '' ? record.spaceId : 'none'}`,
+      );
+      pushError = Object.freeze({ code });
+    }
   }
   return Object.freeze({ appointment, moved, occurrences: occurrences ?? Object.freeze([]), scope, push, pushError });
 }
@@ -2197,11 +2249,12 @@ export async function cancelAppointment(context, request) {
     });
   }
   // A series linked to Google cancels as one event: «solo questo» and «questo
-  // e i successivi» would cancel the grid while Google keeps the old rule
-  // (the push through the head is a noop), so they are refused before any
-  // write. «Tutti» stays as it is. Per-occurrence Google exceptions
-  // (EXDATE/UNTIL) are item 6acf0a73bfc3, not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
+  // e i successivi» would cancel the grid while Google keeps the old rule,
+  // so they are refused before any write. «Tutti» stays as it is. The
+  // refusal keys on the series' own sync link (or an explicitly named
+  // calendar), never on the composed edge alone. Per-occurrence Google
+  // exceptions (EXDATE/UNTIL) are item 6acf0a73bfc3, not covered here.
+  if (await googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope, { actor: who, calendarNamed: calendarPush !== null })) {
     throw new AppError(
       'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
       { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
@@ -3792,8 +3845,8 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
  * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?, readAppointmentDetail?}` (per opener; optional):
  *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path,
- *   and the detail read lets a cancellation auto-push through its own sync link (backlog:27923678) when the
- *   request names no calendar
+ *   and the detail read lets a cancellation or a reschedule auto-push through its own sync link
+ *   (backlog:27923678, backlog:573a1e85942f) when the request names no calendar
  */
 export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
