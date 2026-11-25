@@ -34,6 +34,10 @@ import {
   dashboardSpecs,
   parseDashboardQuery,
 } from '../../../packages/analytics/src/dashboard.js';
+import {
+  reportingSummaryHasData,
+  summarizeReportingPeriod,
+} from '../../../packages/llm/src/reporting-summary.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -2034,24 +2038,13 @@ export function buildRouter(app) {
     );
   });
 
-  // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
-  // screen, read-only. Every number comes from the declared analytics
-  // registry — compileReport/runReport over pipeline_value_by_stage and
-  // pipeline_close_schedule, or over their per-pipeline twins when the
-  // opportunity pipeline is composed (backlog 099c41c32355) — plus the
-  // operator's own obiettivo row from the
-  // reporting bundle when composed. No storage query of its own, no write
-  // surface: there is deliberately no POST under /api/reporting/*, so the
-  // "Cosa noto" proposal the model carries can never reassign by itself.
-  // Portable compositions (backlog:0e3e67eb: the production /bo reader)
-  // carry no `database` handle, so the report specs execute through the
-  // application's closed-over runReportFromSpec instead — same registry,
-  // same numbers, empty data answering 200 with an empty model, never a
-  // 500. Specs cross the boundary, never pre-compiled descriptors: each
-  // executor compiles the spec itself, so a forged descriptor cannot reach
-  // storage through this route or through the facade.
-  router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
-    await gate(app, identity, organizationId, 'records.read');
+  /**
+   * The dashboard model both reporting reads share (backlog:766e9cf9469e):
+   * the dashboard route serves it, the summary route rewrites its numbers
+   * into two AI lines. One builder, so the lines can never disagree with
+   * the cards.
+   */
+  async function readReportingDashboardModel(app, query) {
     // Backlog 099c41c32355 (Reporting like the Pipeline board): the numbers
     // read the composed opportunity pipeline — the same registry the board's
     // `/api/schema` serves — so phases, open count and total match the board
@@ -2094,6 +2087,126 @@ export function buildRouter(app) {
       if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
     }
     return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins, pipelines);
+  }
+
+  /**
+   * The summary's facts from a dashboard model (backlog:766e9cf9469e): the
+   * same numbers the cards show — channel totals, funnel counts, forecast —
+   * as short lines plus every integer the answer may echo. Pure, so the
+   * route test pins the numbers without a model call.
+   */
+  function reportingSummaryFacts(model) {
+    const integers = [];
+    const integer = (value) => {
+      if (Number.isSafeInteger(value)) integers.push(value);
+      return Number.isSafeInteger(value) ? value : 0;
+    };
+    const text = [];
+    const channels = model?.channels ?? {};
+    const weeks = Array.isArray(channels.weeks) ? channels.weeks : [];
+    const entries = Array.isArray(channels.channels) ? channels.channels : [];
+    const total = integer(channels.total);
+    const top = entries.reduce((best, entry) => (
+      (Number.isSafeInteger(entry?.total) ? entry.total : 0) > (Number.isSafeInteger(best?.total) ? best.total : 0)
+        ? entry
+        : best
+    ), entries[0] ?? null);
+    if (total > 0 && entries.length > 0) {
+      text.push(
+        `Nuovi clienti: ${total} in ${weeks.length} ${weeks.length === 1 ? 'settimana' : 'settimane'}`
+        + `${top !== null && Number.isSafeInteger(top?.total) && top.total > 0 ? `, canale principale ${top.channel} (${top.total})` : ''}.`,
+      );
+      if (Number.isSafeInteger(top?.total)) integers.push(top.total);
+      if (weeks.length >= 2) {
+        const totals = weeks.map((_, index) => entries.reduce((sum, entry) => {
+          const value = entry?.weeks?.[index];
+          return sum + (Number.isInteger(value) && value > 0 ? value : 0);
+        }, 0));
+        text.push(`Ultima settimana: ${totals[weeks.length - 1]}, quella prima: ${totals[weeks.length - 2]}.`);
+        integers.push(totals[weeks.length - 1], totals[weeks.length - 2]);
+      }
+    }
+    const team = Array.isArray(model?.team) ? model.team : [];
+    const openCount = team.reduce((sum, entry) => sum + integer(entry?.openCount), 0);
+    const wonCount = team.reduce((sum, entry) => sum + integer(entry?.wonCount), 0);
+    const lostCount = team.reduce((sum, entry) => sum + integer(entry?.lostCount), 0);
+    const currency = typeof model?.currency === 'string' ? model.currency : 'EUR';
+    if (openCount + wonCount + lostCount > 0) {
+      const openMinor = team.reduce((sum, entry) => sum + (Number.isSafeInteger(entry?.openMinor) ? entry.openMinor : 0), 0);
+      if (team.some((entry) => Number.isSafeInteger(entry?.openMinor))) integers.push(openMinor);
+      text.push(`Preventivi aperti: ${openCount} (${openMinor} ${currency}); vinte: ${wonCount}; perse: ${lostCount}.`);
+    }
+    const forecast = model?.forecast ?? null;
+    if (forecast !== null && typeof forecast === 'object'
+      && Number.isSafeInteger(forecast.targetMinor) && forecast.targetMinor > 0) {
+      integers.push(forecast.targetMinor);
+      if (Number.isSafeInteger(forecast.closedMinor) && Number.isSafeInteger(forecast.probableMinor)) {
+        integers.push(forecast.closedMinor, forecast.probableMinor);
+        text.push(`Obiettivo ${forecast.targetMinor} ${currency}; chiuse e probabili ${forecast.closedMinor + forecast.probableMinor}.`);
+      } else {
+        text.push(`Obiettivo ${forecast.targetMinor} ${currency}.`);
+      }
+    }
+    return {
+      facts: { text, integers },
+      counts: {
+        customersTotal: total,
+        openCount,
+        wonCount,
+        lostCount,
+      },
+    };
+  }
+
+  // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
+  // screen, read-only. Every number comes from the declared analytics
+  // registry — compileReport/runReport over pipeline_value_by_stage and
+  // pipeline_close_schedule, or over their per-pipeline twins when the
+  // opportunity pipeline is composed (backlog 099c41c32355) — plus the
+  // operator's own obiettivo row from the
+  // reporting bundle when composed. No storage query of its own, no write
+  // surface: there is deliberately no POST under /api/reporting/*, so the
+  // "Cosa noto" proposal the model carries can never reassign by itself.
+  // Portable compositions (backlog:0e3e67eb: the production /bo reader)
+  // carry no `database` handle, so the report specs execute through the
+  // application's closed-over runReportFromSpec instead — same registry,
+  // same numbers, empty data answering 200 with an empty model, never a
+  // 500. Specs cross the boundary, never pre-compiled descriptors: each
+  // executor compiles the spec itself, so a forged descriptor cannot reach
+  // storage through this route or through the facade.
+  router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    return readReportingDashboardModel(app, query);
+  });
+
+  // Reporting AI summary (backlog:766e9cf9469e): the two lines at the top
+  // of the Reporting screen, written by the model from the period's own
+  // numbers. Read-only like the dashboard above: the model rewrites the
+  // dashboard's numbers, never new ones, and the header keeps the computed
+  // fallback of #1145 whenever the AI is off, capped or failing. An empty
+  // period answers `{ lines: null, reason: 'empty' }` before any `complete`
+  // is touched, so no spend lands on nothing to say.
+  router.add('GET', '/api/reporting/summary', async ({ query, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    const model = await readReportingDashboardModel(app, query);
+    const { facts, counts } = reportingSummaryFacts(model);
+    if (!reportingSummaryHasData(counts)) return { lines: null, reason: 'empty' };
+    const complete = typeof app.completeLlmCall === 'function'
+      ? (request) => app.completeLlmCall(request)
+      : null;
+    // Voce 5c9e006a: the caller organization comes from the verified
+    // identity, never the body — spend on another organization's space
+    // refuses inside `complete` before any provider is touched.
+    const spaceId = typeof query.spaceId === 'string' && query.spaceId !== '' ? query.spaceId : undefined;
+    const out = await summarizeReportingPeriod({
+      complete,
+      spaceId,
+      actor,
+      ...(organizationId === undefined || organizationId === null ? {} : { organizationId }),
+      facts,
+      counts,
+    });
+    return { lines: out.lines, reason: out.reason };
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {

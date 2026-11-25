@@ -221,7 +221,10 @@ export async function summarizeReportingPeriod({
   if (typeof complete !== 'function' || typeof spaceId !== 'string' || spaceId === '') {
     return Object.freeze({ lines: null, reason: 'ai-unavailable' });
   }
-  const { messages } = buildReportingSummaryPrompt(checked);
+  // The prompt builder re-checks the caller's raw facts (asserted again
+  // inside): `checked` carries the integers as a Set for the parser, which
+  // the builder's array shape would refuse.
+  const { messages } = buildReportingSummaryPrompt(facts);
   /** @type {{ text?: unknown, dryRun?: unknown }} */
   let result;
   try {

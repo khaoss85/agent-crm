@@ -77,6 +77,19 @@ export {
   parseContactBriefResponse,
 } from './contact-brief.js';
 export {
+  REPORTING_SUMMARY_FALLBACK_REASONS,
+  REPORTING_SUMMARY_LINES,
+  REPORTING_SUMMARY_MAX_FACTS,
+  REPORTING_SUMMARY_MAX_FACT_CHARS,
+  REPORTING_SUMMARY_MAX_LINE_CHARS,
+  REPORTING_SUMMARY_PURPOSE,
+  assertReportingSummaryFacts,
+  buildReportingSummaryPrompt,
+  parseReportingSummaryResponse,
+  reportingSummaryHasData,
+  summarizeReportingPeriod,
+} from './reporting-summary.js';
+export {
   MESSAGE_DRAFT_KINDS,
   MESSAGE_DRAFT_MAX_CHANNELS,
   MESSAGE_DRAFT_MAX_HISTORY,
@@ -145,7 +158,7 @@ export function createLlmPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: LLM_PACKAGE,
-    version: 4,
+    version: 5,
     label: 'Language-model completions',
     description:
       'One space-scoped LLM path on a single adapter contract: an explicit dry-run without a key, a daily '

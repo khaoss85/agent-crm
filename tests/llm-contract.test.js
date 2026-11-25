@@ -138,8 +138,8 @@ test('the llm package conforms and imports no sibling package', () => {
     dir: packageDir,
     expected: {
       name: 'llm',
-      // Voce 317fcc684f51 adds the contact-brief purpose: package v4.
-      version: 4,
+      // Voce 766e9cf9469e adds the reporting-summary purpose: package v5.
+      version: 5,
       resources: ['llm-usage-day', 'llm-call-audit'],
       provides: ['llm-complete@1'],
       requires: [],

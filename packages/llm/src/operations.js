@@ -76,6 +76,10 @@ export const LLM_PURPOSES = Object.freeze([
   // assistant chatter. Additive: every purpose accepted before stays
   // accepted.
   'contact-brief',
+  // Voce 766e9cf9469e: the two-line Reporting header summary is its own
+  // audited workload, so its spend is attributed separately from the
+  // brief. Additive: every purpose accepted before stays accepted.
+  'reporting-summary',
 ]);
 
 export const LLM_AUDIT_LIMIT = 200;
