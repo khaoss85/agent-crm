@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareShortLabel, offerShareUrl } from './admin-offer-panel.js';
+import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareShortLabel, offerShareUrl, OFFER_SHARE_LIVE_LINK_LOST } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -1440,8 +1440,10 @@ export function createOfferDetail(deps) {
         }
         if (url === null) {
           hideLink();
+          // backlog:e5de90ac5daf: the same words as the scheda: the lost
+          // live link is remade with «Crea un nuovo link» below.
           say(result.alreadyExisted === true
-            ? 'Il link esiste già ma non è visibile qui. Premi «Crea un nuovo link»: il vecchio smetterà di funzionare.'
+            ? OFFER_SHARE_LIVE_LINK_LOST
             : 'Link non creato: la risposta è senza link. Riprova più tardi.', true);
           return;
         }

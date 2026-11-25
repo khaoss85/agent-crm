@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import { OFFER_SHARE_LIVE_LINK_LOST } from '../apps/admin/public/admin-offer-panel.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -38,7 +39,7 @@ const timelineOf = (id) => ({
   appointments: { available: true, count: 0, truncated: false, items: [] },
 });
 
-const approvedQuote = () => ({
+const approvedQuote = (overrides = {}) => ({
   id: 'q1',
   status: 'approved',
   opportunityName: 'Cucina per Giulia',
@@ -47,9 +48,10 @@ const approvedQuote = () => ({
     oneTimeTotal: { currency: 'EUR', listAmountCents: 500000, discountAmountCents: 0, netAmountCents: 500000 },
     recurringTotals: [],
   }),
+  ...overrides,
 });
 
-const profileOf = (id) => ({
+const profileOf = (id, quoteOverrides = {}) => ({
   customerProfileContract: 1,
   subject: { resource: 'contact', id },
   canonicalIdentity: { linked: false, members: [] },
@@ -61,7 +63,7 @@ const profileOf = (id) => ({
     count: id === 'c1' ? 1 : 0,
     countIsComplete: true,
     truncated: false,
-    items: id === 'c1' ? [approvedQuote()] : [],
+    items: id === 'c1' ? [approvedQuote(quoteOverrides)] : [],
   },
 });
 
@@ -156,4 +158,68 @@ test('7fa422415232: a slow share answer never lands in the next customer compose
   const back = mount.findAll('a').find((node) => node.getAttribute('href') === URL);
   assert.ok(back, 'the link stayed staged for A (kept by quote, reused on reopen)');
   assert.ok(mount.textContent.includes('Link già pronto, da inviare'), 'A reuses it on reopen, in the offer page words (backlog:19adbbb982ef)');
+});
+
+/**
+ * backlog:e5de90ac5daf — NON PASSA in produzione 25/11: with a live link
+ * minted in another session the server answers alreadyExisted with no token
+ * (quote-share never resends the bearer), and the scheda pointed at the
+ * offer page while the offer page showed no link either. Red before the
+ * cure: the scheda reads «aprilo dalla pagina offerta» with no way there.
+ * Green after: the single status line reads the same words as the offer
+ * page and links «pagina offerta» to the offer page — no toast.
+ */
+function deadEndShareClient() {
+  return {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+        return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+      }
+      if (path.startsWith('/api/customer-hub/card/')) {
+        const id = path.split('/').pop();
+        return cardOf(id, id === 'c1' ? 'Giulia Verdi' : 'Sara Blu');
+      }
+      if (path.startsWith('/api/customer-hub/timeline/')) return timelineOf(path.split('/').pop());
+      if (path.startsWith('/api/customer-data/profile/')) return profileOf(path.split('/').pop(), { opportunityId: 'off1' });
+      if (path === '/api/connectors') {
+        return {
+          connectors: [
+            { channel: 'email', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra-esempio.it' },
+          ],
+        };
+      }
+      if (path === '/api/profile') throw Object.assign(new Error('no profile'), { status: 404 });
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/customer-hub/messages')) return { items: [] };
+      throw Object.assign(new Error(`Not Found: ${path}`), { status: 404 });
+    },
+  };
+}
+
+test('e5de90ac5daf: a live link minted elsewhere names «Crea un nuovo link» and links the offer page, with no toast', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client: deadEndShareClient(), spaceId: 'presti', origin: ORIGIN,
+    toast: (text) => toasts.push(text),
+    wait: () => Promise.resolve(),
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const press = shareButton(mount);
+  assert.ok(press, 'the approved quote still offers «Invia offerta»');
+  press.dispatch('click');
+  await flush();
+  const lines = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-share-line'));
+  assert.equal(lines.length, 1, 'one status line, never two notices');
+  assert.equal(lines[0].textContent, OFFER_SHARE_LIVE_LINK_LOST, 'the scheda reads the same words as the offer page');
+  const open = lines[0].findAll('a')
+    .find((node) => String(node.getAttribute('href') ?? '').startsWith('#/offerte/off1'));
+  assert.ok(open, '«pagina offerta» links the offer page, where «Crea un nuovo link» mints a fresh one');
+  assert.deepStrictEqual(toasts, [], 'no toast: the line is the one notice');
 });

@@ -102,6 +102,15 @@ export function offerShareMessage({ offerName, url, expiresAt } = {}) {
 }
 
 /**
+ * backlog:e5de90ac5daf: the one status line for a live link the server keeps
+ * but never resends (share-link answers alreadyExisted with no token — a
+ * link minted in another session). The scheda and the offer page read these
+ * exact words; the scheda links «pagina offerta» to the offer page, where
+ * «Crea un nuovo link» mints a fresh one. One status line, never a toast.
+ */
+export const OFFER_SHARE_LIVE_LINK_LOST = 'Il link esiste già ma non è visibile qui. Premi «Crea un nuovo link» nella pagina offerta: il vecchio smetterà di funzionare.';
+
+/**
  * backlog:78f79b0768ac: how a share link reads on screen — host and the first
  * characters of the token, never the 64-character URL. The whole URL stays
  * in the link's href and on the clipboard; this label is only for the eye.

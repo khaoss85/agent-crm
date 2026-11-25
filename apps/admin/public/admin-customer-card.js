@@ -7,7 +7,7 @@ import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
-import { openOfferPanel, offerShareMessage, offerShareShortLabel, offerShareUrl } from './admin-offer-panel.js';
+import { openOfferPanel, offerShareMessage, offerShareShortLabel, offerShareUrl, OFFER_SHARE_LIVE_LINK_LOST } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { mergeHandoffIntoDraft } from './admin-composer-handoff.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -6105,6 +6105,28 @@ export function createCustomerCardView(deps) {
         shareLine.setAttribute('class', failed ? 'field-error offer-share-line' : 'bo-muted offer-share-line');
         shareLine.textContent = text;
       };
+      // backlog:e5de90ac5daf: a live link minted in another session is not
+      // readable here (the server never resends its bearer): the single
+      // status line reads the same words as the offer page, with «pagina
+      // offerta» linked to the offer page where «Crea un nuovo link» mints
+      // a fresh one. Never a toast — the line is the one notice.
+      const sayShareLiveLink = () => {
+        shareLine.setAttribute('class', 'field-error offer-share-line');
+        // Reset through textContent (never child-by-child): the text set by
+        // the earlier «Creo il link…» must go too, in every DOM.
+        shareLine.textContent = '';
+        const [before, after] = OFFER_SHARE_LIVE_LINK_LOST.split('pagina offerta');
+        if (offerHref !== null && after !== undefined) {
+          const open = el('a', 'offer-share-link-open', 'pagina offerta');
+          open.setAttribute('href', offerHref);
+          open.setAttribute('title', 'Apri la pagina offerta');
+          shareLine.appendChild(el('span', undefined, before));
+          shareLine.appendChild(open);
+          shareLine.appendChild(el('span', undefined, after));
+        } else {
+          shareLine.textContent = OFFER_SHARE_LIVE_LINK_LOST;
+        }
+      };
       /** The pill of the ready link: short label, whole URL only in the href and on the clipboard. @param {string} url */
       const showPill = (url) => {
         while (sharePill.firstChild) sharePill.removeChild(sharePill.firstChild);
@@ -6162,9 +6184,8 @@ export function createCustomerCardView(deps) {
           }
           if (staged === null) {
             if (mount.contains(shareLine)) {
-              sayShare(result.alreadyExisted === true
-                ? 'Il link esiste già ma non è visibile qui: aprilo dalla pagina offerta.'
-                : 'Link non creato: la risposta è senza link. Riprova più tardi.', true);
+              if (result.alreadyExisted === true) sayShareLiveLink();
+              else sayShare('Link non creato: la risposta è senza link. Riprova più tardi.', true);
             }
             return;
           }
