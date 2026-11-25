@@ -46,11 +46,36 @@ export const REPORTING_CURRENCY = 'EUR';
 export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi tutto']);
 
 /**
- * backlog:4d5ae183 (verifica 12/11: «25 nel periodo» with 18 customers in
- * the space): what the channel card counts, in words — each customer once,
- * in the channel of their first contact, over the four weeks the bars show.
- * @param {{ total?: unknown, weeks?: Array<{ week?: unknown }> }} breakdown
+ * backlog:526e1bf4bd28: the weekly totals of the channel breakdown, one per
+ * week shown, summed over the channels. One rule for the header summary and
+ * the bars, so the two can never disagree: only whole counts are added, any
+ * other value counts as zero.
+ * @param {any} breakdown
+ * @returns {number[]}
  */
+export function channelWeekTotals(breakdown) {
+  const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
+  const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
+  return weeks.map((_, index) => entries.reduce((sum, entry) => {
+    const value = entry?.weeks?.[index];
+    return sum + (Number.isInteger(value) && value > 0 ? value : 0);
+  }, 0));
+}
+
+/**
+ * backlog:526e1bf4bd28: whether the breakdown has anything to show — at
+ * least one new customer counted and at least one of them inside the weeks
+ * the bars show. The single emptiness rule for the header summary and the
+ * card: a breakdown is either summarised and drawn, or neither.
+ * @param {any} breakdown
+ * @returns {boolean}
+ */
+export function channelsHaveData(breakdown) {
+  const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
+  const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
+  return total > 0 && entries.length > 0 && channelWeekTotals(breakdown).some((value) => value > 0);
+}
+
 /**
  * backlog:526e1bf4bd28: the two plain lines under the Reporting title — what
  * the period brought, in the operator's words, read from the same channel
@@ -65,7 +90,7 @@ export function channelsSummary(breakdown) {
   const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
   const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
   const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
-  if (total <= 0 || entries.length === 0) return null;
+  if (!channelsHaveData(breakdown)) return null;
   const top = entries.reduce((best, entry) => ((entry?.total ?? 0) > (best?.total ?? 0) ? entry : best), entries[0]);
   // The weeks are the ones the card shows, which follow the chosen period:
   // «in 4 settimane», never «le ultime», so a past month reads true too.
@@ -75,9 +100,9 @@ export function channelsSummary(breakdown) {
       + `${(top?.total ?? 0) > 0 ? `, soprattutto da ${channelLabel(top.channel)}` : ''}.`,
   ];
   if (weeks.length >= 2) {
-    const weekTotal = (index) => entries.reduce((sum, entry) => sum + (Number.isInteger(entry?.weeks?.[index]) ? entry.weeks[index] : 0), 0);
-    const last = weekTotal(weeks.length - 1);
-    const before = weekTotal(weeks.length - 2);
+    const totals = channelWeekTotals(breakdown);
+    const last = totals[weeks.length - 1];
+    const before = totals[weeks.length - 2];
     const trend = last > before ? 'in crescita' : last < before ? 'in calo' : 'stabile';
     const label = typeof weeks.at(-1)?.label === 'string' && weeks.at(-1).label !== '' ? `Settimana del ${weeks.at(-1).label}` : 'Ultima settimana';
     lines.push(`${label}: ${last}, quella prima: ${before} (${trend}).`);
@@ -85,6 +110,12 @@ export function channelsSummary(breakdown) {
   return lines;
 }
 
+/**
+ * backlog:4d5ae183 (verifica 12/11: «25 nel periodo» with 18 customers in
+ * the space): what the channel card counts, in words — each customer once,
+ * in the channel of their first contact, over the four weeks the bars show.
+ * @param {{ total?: unknown, weeks?: Array<{ week?: unknown }> }} breakdown
+ */
 export function channelsLede(breakdown) {
   const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
   const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
@@ -612,18 +643,16 @@ export function createReportingView(deps) {
     panel.appendChild(el(doc, 'p', { class: 'lede', text: channelsLede(breakdown) }));
     const slots = Array.isArray(breakdown.weeks) ? breakdown.weeks : [];
     const entries = Array.isArray(breakdown.channels) ? breakdown.channels : [];
-    const totals = slots.map((slot, index) => {
-      void slot;
-      return entries.reduce((sum, entry) => sum + (entry.weeks?.[index] ?? 0), 0);
-    });
+    const totals = channelWeekTotals(breakdown);
     const max = Math.max(0, ...totals);
     // backlog:526e1bf4bd28: a period that counts nobody says what to do —
-    // never a row of zeros over empty bars.
-    if (max <= 0) {
+    // never a row of zeros over empty bars. Same rule as the header summary.
+    if (!channelsHaveData(breakdown)) {
       const empty = el(doc, 'div', { class: 'bo-rep-channels-empty' });
       empty.appendChild(el(doc, 'p', { text: 'Ancora nessun nuovo cliente in queste settimane.' }));
       const hint = el(doc, 'p', { class: 'bo-muted', text: 'Qui vedrai da quale canale arriva ogni nuovo cliente, settimana per settimana. ' });
-      const add = el(doc, 'a', { text: 'Aggiungi un cliente', attrs: { href: '#/clienti' } });
+      // The link opens the creation form (CLIENTI_NUOVO_ROUTE), not the list.
+      const add = el(doc, 'a', { text: 'Aggiungi un cliente', attrs: { href: '#/clienti/nuovo' } });
       hint.appendChild(add);
       empty.appendChild(hint);
       panel.appendChild(empty);
@@ -639,7 +668,8 @@ export function createReportingView(deps) {
         column.appendChild(el(doc, 'span', { class: 'bo-rep-week-total', text: String(totals[index]) }));
         const stack = el(doc, 'div', { class: 'bo-rep-week-stack' });
         for (const entry of entries) {
-          const count = entry.weeks?.[index] ?? 0;
+          const raw = entry?.weeks?.[index];
+          const count = Number.isInteger(raw) && raw > 0 ? raw : 0;
           if (count <= 0) continue;
           const tip = `${channelLabel(entry.channel)} ${count}`;
           const segment = el(doc, 'div', { class: 'bo-rep-week-seg' });

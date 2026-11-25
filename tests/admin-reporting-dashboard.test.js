@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import {
   FORECAST_LEGEND,
   channelsSummary,
+  channelWeekTotals,
   REPORTING_CODE_FILES,
   REPORTING_CODE_LEDE,
   REPORTING_CURRENCY,
@@ -513,9 +514,33 @@ test('an empty channel breakdown says what to do, never blank and never a row of
   assert.match(text, /0 primi contatti da un canale/);
   assert.match(text, /Ancora nessun nuovo cliente in queste settimane\./);
   const add = mount.findAll('a').find((node) => node.textContent === 'Aggiungi un cliente');
-  assert.equal(add?.getAttribute('href'), '#/clienti', 'the empty state offers the next step');
+  assert.equal(add?.getAttribute('href'), '#/clienti/nuovo', 'the empty state opens the creation form, not the list');
   assert.equal(mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '') === 'bo-rep-week').length, 0,
     'no empty bars and no zero totals');
+});
+
+test('526e1bf4bd28: header summary and card share one emptiness rule and one weekly total', async () => {
+  const twoWeeks = [{ week: '2026-10-05', label: '5 ott' }, { week: '2026-10-12', label: '12 ott' }];
+  // Customers counted but none inside the weeks shown: no summary, empty card.
+  const outside = { total: 5, undated: 0, weeks: twoWeeks, channels: [{ channel: 'instagram', total: 5, weeks: [0, 0] }] };
+  assert.equal(channelsSummary(outside), null);
+  {
+    const { mount, view } = harness({ dashboard: { ...MODEL, channels: outside } });
+    await view.renderReporting();
+    const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+    assert.match(text, /Ancora nessun nuovo cliente in queste settimane\./);
+    assert.doesNotMatch(text, /nuovi clienti in 2 settimane/, 'the header says nothing the card does not draw');
+  }
+  // Non-integer weekly values count as zero in both places.
+  const fractional = { total: 3, undated: 0, weeks: twoWeeks, channels: [{ channel: 'whatsapp', total: 3, weeks: [1.5, 2] }] };
+  assert.deepEqual(channelWeekTotals(fractional), [0, 2]);
+  assert.match(channelsSummary(fractional)[1], /Settimana del 12 ott: 2, quella prima: 0 \(in crescita\)\./);
+  {
+    const { mount, view } = harness({ dashboard: { ...MODEL, channels: fractional } });
+    await view.renderReporting();
+    const totals = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '') === 'bo-rep-week-total').map((node) => node.textContent);
+    assert.deepEqual(totals, ['0', '2'], 'bars show the same weekly totals as the header');
+  }
 });
 
 test('forecastStatus is on track at and past the obiettivo, honest below it (C13)', () => {
