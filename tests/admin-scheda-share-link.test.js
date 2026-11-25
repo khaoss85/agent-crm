@@ -155,5 +155,5 @@ test('7fa422415232: a slow share answer never lands in the next customer compose
   await flush();
   const back = mount.findAll('a').find((node) => node.getAttribute('href') === URL);
   assert.ok(back, 'the link stayed staged for A (kept by quote, reused on reopen)');
-  assert.ok(mount.textContent.includes('Link già pronto nel composer'), 'A reuses it on reopen');
+  assert.ok(mount.textContent.includes('Link già pronto, da inviare'), 'A reuses it on reopen, in the offer page words (backlog:19adbbb982ef)');
 });
