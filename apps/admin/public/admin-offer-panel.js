@@ -101,6 +101,19 @@ export function offerShareMessage({ offerName, url, expiresAt } = {}) {
   return `Ciao, ecco ${name}: ${url.trim()}.${expiry} Aprilo senza account: vedi righe e totali, e puoi accettare o rifiutare.`;
 }
 
+/**
+ * backlog:78f79b0768ac: how a share link reads on screen — host and the first
+ * characters of the token, never the 64-character URL. The whole URL stays
+ * in the link's href and on the clipboard; this label is only for the eye.
+ * @param {string} url
+ */
+export function offerShareShortLabel(url) {
+  const text = typeof url === 'string' ? url.trim() : '';
+  const match = /^https?:\/\/([^/]+)\/q\/([0-9a-f]{64})$/.exec(text);
+  if (match === null) return 'link dell’offerta';
+  return `${match[1]}/q/${match[2].slice(0, 6)}…`;
+}
+
 /** The quantity of one chosen chip: its own field for a per-unit price, else 1. */
 function pickQuantity(pick) {
   if (pick.qtyInput === null) return 1;

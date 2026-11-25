@@ -186,3 +186,18 @@ message and the operator's typed input.
 Selection state that must survive a write — such as which support case is open —
 lives outside the render closure, because a successful action re-renders the
 whole quote detail and builds a brand new section.
+
+
+## Contact archive controls
+
+The customer card reads `archivedAt` from the customer-hub projection. An archived
+contact offers **Ripristina** instead of archive/delete; a successful restore
+reloads the card before rendering the active controls. These controls require
+the contact archive/restore/delete service routes and the card projection added
+by #1077.
+
+Only `CONTACT_HAS_OPPORTUNITIES` explains that linked offers prevent deletion.
+Only `CONTACT_SERVICE_UNAVAILABLE` names a release that lacks the requested
+operation, using the archive, restore or delete wording for that action. A bare
+409 or gateway 503 follows the shared write-error handling; it must not invent
+a linked offer or an unavailable product feature. Each refused write logs once.

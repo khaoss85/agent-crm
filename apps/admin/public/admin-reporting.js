@@ -46,6 +46,71 @@ export const REPORTING_CURRENCY = 'EUR';
 export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi tutto']);
 
 /**
+ * backlog:526e1bf4bd28: the weekly totals of the channel breakdown, one per
+ * week shown, summed over the channels. One rule for the header summary and
+ * the bars, so the two can never disagree: only whole counts are added, any
+ * other value counts as zero.
+ * @param {any} breakdown
+ * @returns {number[]}
+ */
+export function channelWeekTotals(breakdown) {
+  const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
+  const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
+  return weeks.map((_, index) => entries.reduce((sum, entry) => {
+    const value = entry?.weeks?.[index];
+    return sum + (Number.isInteger(value) && value > 0 ? value : 0);
+  }, 0));
+}
+
+/**
+ * backlog:526e1bf4bd28: whether the breakdown has anything to show — at
+ * least one new customer counted and at least one of them inside the weeks
+ * the bars show. The single emptiness rule for the header summary and the
+ * card: a breakdown is either summarised and drawn, or neither.
+ * @param {any} breakdown
+ * @returns {boolean}
+ */
+export function channelsHaveData(breakdown) {
+  const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
+  const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
+  return total > 0 && entries.length > 0 && channelWeekTotals(breakdown).some((value) => value > 0);
+}
+
+/**
+ * backlog:526e1bf4bd28: the two plain lines under the Reporting title — what
+ * the period brought, in the operator's words, read from the same channel
+ * breakdown the card below paints. Deterministic text, never an AI claim:
+ * the first line is the count and where most new customers came from, the
+ * second compares the last two weeks shown. Null when the breakdown counts nobody,
+ * so the header stays the title alone.
+ * @param {any} breakdown
+ * @returns {string[] | null}
+ */
+export function channelsSummary(breakdown) {
+  const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
+  const entries = Array.isArray(breakdown?.channels) ? breakdown.channels : [];
+  const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
+  if (!channelsHaveData(breakdown)) return null;
+  const top = entries.reduce((best, entry) => ((entry?.total ?? 0) > (best?.total ?? 0) ? entry : best), entries[0]);
+  // The weeks are the ones the card shows, which follow the chosen period:
+  // «in 4 settimane», never «le ultime», so a past month reads true too.
+  const span = weeks.length === 1 ? 'in una settimana' : `in ${weeks.length} settimane`;
+  const lines = [
+    `${total} ${total === 1 ? 'nuovo cliente' : 'nuovi clienti'} ${weeks.length > 0 ? span : 'nel periodo'}`
+      + `${(top?.total ?? 0) > 0 ? `, soprattutto da ${channelLabel(top.channel)}` : ''}.`,
+  ];
+  if (weeks.length >= 2) {
+    const totals = channelWeekTotals(breakdown);
+    const last = totals[weeks.length - 1];
+    const before = totals[weeks.length - 2];
+    const trend = last > before ? 'in crescita' : last < before ? 'in calo' : 'stabile';
+    const label = typeof weeks.at(-1)?.label === 'string' && weeks.at(-1).label !== '' ? `Settimana del ${weeks.at(-1).label}` : 'Ultima settimana';
+    lines.push(`${label}: ${last}, quella prima: ${before} (${trend}).`);
+  }
+  return lines;
+}
+
+/**
  * backlog:4d5ae183 (verifica 12/11: «25 nel periodo» with 18 customers in
  * the space): what the channel card counts, in words — each customer once,
  * in the channel of their first contact, over the four weeks the bars show.
@@ -300,19 +365,6 @@ export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 
 /** Records read per page: a bounded page with an honest cap note, never a total. */
 export const REPORTING_LIMIT = 100;
-
-/**
- * Badge row under the Reporting title (spec checklist C2): fixed text in
- * the operator's own words (backlog:1ce3a1f0: no bundle/kernel/version on
- * the screen). It names what the screen shows and its boundary, never a
- * technical identity: the composed bundle version stays in the bundle
- * manifest (`bundles/reporting/1.2.0/bundle.json`), not on the screen.
- */
-export const REPORTING_BADGES = Object.freeze([
-  'Clienti, preventivi e vendite',
-  'Si toglie senza rompere niente',
-  'Fatto dal tuo agente di coding',
-]);
 
 /**
  * File list of the "Questo modulo è codice tuo" card (spec checklist C17):
@@ -591,45 +643,61 @@ export function createReportingView(deps) {
     panel.appendChild(el(doc, 'p', { class: 'lede', text: channelsLede(breakdown) }));
     const slots = Array.isArray(breakdown.weeks) ? breakdown.weeks : [];
     const entries = Array.isArray(breakdown.channels) ? breakdown.channels : [];
-    const totals = slots.map((slot, index) => {
-      void slot;
-      return entries.reduce((sum, entry) => sum + (entry.weeks?.[index] ?? 0), 0);
-    });
+    const totals = channelWeekTotals(breakdown);
     const max = Math.max(0, ...totals);
-    const row = el(doc, 'div');
-    row.setAttribute('style', 'display:flex;align-items:flex-end;gap:18px;padding:12px 4px 0 4px;min-height:150px;');
-    slots.forEach((slot, index) => {
-      const column = el(doc, 'div');
-      column.setAttribute('style', 'flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;');
-      column.appendChild(el(doc, 'span', { text: String(totals[index]) }));
-      const stack = el(doc, 'div');
-      const height = max > 0 ? Math.round((totals[index] / max) * 120) : 0;
-      stack.setAttribute('style', `width:100%;max-width:64px;height:${height}px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-soft);`);
+    // backlog:526e1bf4bd28: a period that counts nobody says what to do —
+    // never a row of zeros over empty bars. Same rule as the header summary.
+    if (!channelsHaveData(breakdown)) {
+      const empty = el(doc, 'div', { class: 'bo-rep-channels-empty' });
+      empty.appendChild(el(doc, 'p', { text: 'Ancora nessun nuovo cliente in queste settimane.' }));
+      const hint = el(doc, 'p', { class: 'bo-muted', text: 'Qui vedrai da quale canale arriva ogni nuovo cliente, settimana per settimana. ' });
+      // The link opens the creation form (CLIENTI_NUOVO_ROUTE), not the list.
+      const add = el(doc, 'a', { text: 'Aggiungi un cliente', attrs: { href: '#/clienti/nuovo' } });
+      hint.appendChild(add);
+      empty.appendChild(hint);
+      panel.appendChild(empty);
+    } else {
+      // Small values stay readable: every segment has a floor height, and
+      // its value and channel read in a tooltip on hover and on focus
+      // (`data-tip`, painted by styles.css; `title` stays as the fallback).
+      const SCALE = 132;
+      const FLOOR = 14;
+      const row = el(doc, 'div', { class: 'bo-rep-weeks' });
+      slots.forEach((slot, index) => {
+        const column = el(doc, 'div', { class: 'bo-rep-week' });
+        column.appendChild(el(doc, 'span', { class: 'bo-rep-week-total', text: String(totals[index]) }));
+        const stack = el(doc, 'div', { class: 'bo-rep-week-stack' });
+        for (const entry of entries) {
+          const raw = entry?.weeks?.[index];
+          const count = Number.isInteger(raw) && raw > 0 ? raw : 0;
+          if (count <= 0) continue;
+          const tip = `${channelLabel(entry.channel)} ${count}`;
+          const segment = el(doc, 'div', { class: 'bo-rep-week-seg' });
+          segment.setAttribute('title', tip);
+          segment.setAttribute('data-tip', tip);
+          segment.setAttribute('aria-label', `${tip}, settimana del ${slot.label ?? ''}`);
+          segment.setAttribute('tabindex', '0');
+          segment.setAttribute('role', 'img');
+          segment.setAttribute('style', `height:${Math.max(FLOOR, Math.round((count / max) * SCALE))}px;background:${channelColor(entry.channel)};`);
+          stack.appendChild(segment);
+        }
+        column.appendChild(stack);
+        column.appendChild(el(doc, 'span', { class: 'bo-rep-week-label', text: slot.label ?? '' }));
+        row.appendChild(column);
+      });
+      panel.appendChild(row);
+      // The legend is its own block under the axis, never glued to the labels.
+      const legend = el(doc, 'div', { class: 'bo-rep-channel-legend' });
       for (const entry of entries) {
-        const count = entry.weeks?.[index] ?? 0;
-        if (count <= 0) continue;
-        const segment = el(doc, 'div');
-        segment.setAttribute('title', `${channelLabel(entry.channel)} ${count}`);
-        segment.setAttribute('style', `height:${max > 0 ? Math.max(2, Math.round((count / max) * 120)) : 0}px;background:${channelColor(entry.channel)};`);
-        stack.appendChild(segment);
+        const wrap = el(doc, 'span', { class: 'bo-rep-channel-key' });
+        const dot = el(doc, 'span', { class: 'bo-rep-channel-dot' });
+        dot.setAttribute('style', `background:${channelColor(entry.channel)};`);
+        wrap.appendChild(dot);
+        wrap.appendChild(el(doc, 'span', { text: `${channelLabel(entry.channel)} ${entry.total}` }));
+        legend.appendChild(wrap);
       }
-      column.appendChild(stack);
-      column.appendChild(el(doc, 'span', { text: slot.label ?? '' }));
-      row.appendChild(column);
-    });
-    panel.appendChild(row);
-    const legend = el(doc, 'div', { class: 'actions' });
-    for (const entry of entries) {
-      const dot = el(doc, 'span');
-      dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;background:${channelColor(entry.channel)};margin-right:6px;`);
-      const item = el(doc, 'span', { text: `${channelLabel(entry.channel)} ${entry.total}` });
-      item.setAttribute('style', 'margin-right:14px;font-size:13px;');
-      const wrap = el(doc, 'span');
-      wrap.appendChild(dot);
-      wrap.appendChild(item);
-      legend.appendChild(wrap);
+      panel.appendChild(legend);
     }
-    panel.appendChild(legend);
     if ((breakdown.undated ?? 0) > 0) {
       panel.appendChild(el(doc, 'p', {
         class: 'lede',
@@ -920,7 +988,7 @@ export function createReportingView(deps) {
     return panel;
   }
 
-  async function renderDashboard(host, filtersHost = host) {
+  async function renderDashboard(host, filtersHost = host, summaryHost = null) {
     let model = null;
     try {
       model = await client.request(dashboardPath({ period: dashboard.period, owner: dashboard.owner || null }));
@@ -974,6 +1042,11 @@ export function createReportingView(deps) {
     // the shared formatAmount helper, never as raw minor units.
     const grid = el(doc, 'div', { class: 'bo-rep-grid' });
     host.appendChild(grid);
+    if (summaryHost !== null) {
+      for (const text of channelsSummary(model.channels) ?? []) {
+        summaryHost.appendChild(el(doc, 'p', { text }));
+      }
+    }
     // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
     // built, by direct reference — never via lastChild, so the grid classes
     // stay assertable under the view doubles.
@@ -1040,17 +1113,16 @@ export function createReportingView(deps) {
     const top = el(doc, 'div', { class: 'bo-rep-top' });
     top.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo personalizzato' }));
     top.appendChild(el(doc, 'h1', { class: 'bo-rep-title', text: 'Reporting' }));
-    // Badge row (checklist C2): bundle identity under the title. The
-    // `.kicker` paints uppercase through CSS, so the source keeps the
-    // sentence case the shell owns; badges stay mono through `.badge`.
-    const badges = el(doc, 'div', { class: 'actions' });
-    for (const badge of REPORTING_BADGES) {
-      badges.appendChild(el(doc, 'span', { class: 'badge', text: badge }));
-    }
-    top.appendChild(badges);
+    // The `.kicker` paints uppercase through CSS, so the source keeps the
+    // sentence case the shell owns.
+    // backlog:526e1bf4bd28: no label row under the title — the header says
+    // what the period brought (filled once the dashboard has read), and
+    // stays the title alone when there is nothing to say.
+    const summary = el(doc, 'div', { class: 'bo-rep-summary' });
+    top.appendChild(summary);
     header.appendChild(top);
     dashHost.appendChild(header);
-    await renderDashboard(dashHost, header);
+    await renderDashboard(dashHost, header, summary);
     if (token !== renderToken) return;
     mount.appendChild(dashHost);
     const panel = kicker('Reporting', 'Righe del report');
