@@ -1102,10 +1102,12 @@ export function createReportingView(deps) {
         for (const text of answer.lines) {
           summaryHost.appendChild(el(doc, 'p', { text }));
         }
-      }).catch((error) => {
-        log('reporting summary request failed', {
-          name: error?.name ?? 'Error', status: error?.status ?? null, code: error?.code ?? null,
-        });
+      }).catch(() => {
+        // backlog:766e9cf9469e: the AI lines are best-effort — a failing,
+        // capped or disabled summary keeps the computed fallback silently.
+        // Logging here would double-count a dashboard/records failure the
+        // screen already logs (or invent an error on a 404 that is honest
+        // setup state), so the catch stays silent by contract.
       });
     }
     // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
