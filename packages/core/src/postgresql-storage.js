@@ -95,6 +95,33 @@ export function toSafeCause(error) {
   return Object.freeze({ code: 'UNKNOWN', name: 'Error' });
 }
 
+/**
+ * Shared destroyed-client truth for every holder of a pooled pg client on
+ * this pool (backlog:983526c730b1). The storage layer and the bootstrap
+ * renewal path check out the same physical client objects from shared pools,
+ * but each kept its own destroyed registry: a bootstrap `error` listener
+ * that destroyed a client left the storage registry stale, so the storage
+ * `finally` released the same client a second time. Either side marks here,
+ * both sides read here; the per-storage `checkedOut` sets stay untouched.
+ * @param {any} client
+ */
+export function markPostgresqlClientDestroyed(client) {
+  if (client !== null && (typeof client === 'object' || typeof client === 'function')) {
+    DESTROYED.add(client);
+  }
+}
+
+/**
+ * @param {any} client
+ */
+export function isPostgresqlClientDestroyed(client) {
+  try {
+    return DESTROYED.has(client);
+  } catch {
+    return false;
+  }
+}
+
 function publicUnavailable(cause) {
   return new AppError('PostgreSQL storage is unavailable', {
     code: 'STORAGE_UNAVAILABLE',

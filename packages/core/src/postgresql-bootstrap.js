@@ -8,6 +8,8 @@ import { SCHEMA_MIGRATIONS_CHECKSUM_VERSION, isPinnedModuleBootstrapPredecessor,
 import {
   createPostgresqlPool,
   createPostgresqlStorage,
+  isPostgresqlClientDestroyed,
+  markPostgresqlClientDestroyed,
   toSafeCause,
 } from './postgresql-storage.js';
 import { createWriterReadinessObserver, requireTelemetrySink } from './observability-export.js';
@@ -143,6 +145,7 @@ function withDeadline(promise, ms, kind) {
 
 function destroyClient(client) {
   DESTROYED.add(client);
+  markPostgresqlClientDestroyed(client);
   try {
     client.release(new Error('accordo-postgresql-client-destroyed'));
   } catch {
@@ -153,7 +156,7 @@ function destroyClient(client) {
 }
 
 function releaseClient(client) {
-  if (DESTROYED.has(client)) return;
+  if (DESTROYED.has(client) || isPostgresqlClientDestroyed(client)) return;
   try { client.release(); } catch { /* already gone */ }
 }
 
@@ -163,12 +166,16 @@ function releaseClient(client) {
  * The pool detaches its idle listener at checkout, so without a listener of
  * our own the client emission throws uncaught (backlog:983526c730b1: the
  * 25/11 full failed this way inside the writer-lease renewal). Guard once
- * per client, like the storage layer does on its checkouts; destroying is
- * idempotent and releasing a destroyed client is a no-op.
+ * per client, and never steal the storage layer's slot: on the shared pools
+ * the storage checkout guards the same physical client first, and a second
+ * destroy domain leaves storage bookkeeping stale (double release/destroy).
+ * A destroy from either side is visible to both (shared destroyed registry),
+ * so deferring to the existing listener loses nothing.
  * @param {any} client
  */
 function guardCheckout(client) {
   if (!client || typeof client.on !== 'function' || ERROR_GUARDED.has(client)) return;
+  if (typeof client.listenerCount === 'function' && client.listenerCount('error') > 0) return;
   ERROR_GUARDED.add(client);
   client.on('error', () => destroyClient(client));
 }
@@ -619,7 +626,7 @@ export async function renewWriterLease(client, input) {
 }
 
 async function rollbackQuietly(client) {
-  if (DESTROYED.has(client)) return;
+  if (DESTROYED.has(client) || isPostgresqlClientDestroyed(client)) return;
   try { await client.query('ROLLBACK'); } catch { /* primary wins */ }
 }
 

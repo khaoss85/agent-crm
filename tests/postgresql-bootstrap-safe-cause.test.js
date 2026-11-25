@@ -6,6 +6,10 @@ import {
   bootstrapPostgresqlApplication,
   startupStorageFailure,
 } from '../packages/core/src/postgresql-bootstrap.js';
+import {
+  createPostgresqlStorage,
+  probePostgresqlQuery,
+} from '../packages/core/src/postgresql-storage.js';
 import { createTestVerifier } from './helpers/identity-verifier-fixture.mjs';
 
 // backlog:112ff66d: a migration that failed during startup printed
@@ -374,6 +378,155 @@ test('a backend terminated mid-renewal reports retrying, recovers and raises not
     await sleep(20);
   }
   await renewer.stop();
+  assert.deepEqual(
+    unhandled.map((error) => String(error && error.message ? error.message : error)),
+    [],
+  );
+});
+
+// backlog:983526c730b1 (review rev-agent-crm-1155-447e69360ed7 P1): the
+// renewal guard stole the storage layer's error-listener slot on shared pool
+// clients, leaving storage bookkeeping stale (double release/destroy). The
+// storage checkout touches the shared client first here; the bootstrap plane
+// checks out the same physical client second and must defer to the existing
+// listener, so one backend death destroys exactly once.
+test('a storage-guarded client keeps a single error listener: bootstrap defers, one emission destroys once', async () => {
+  const events = new EventEmitter();
+  const releases = [];
+  let emitOnNextQuery = false;
+  const client = Object.assign(events, {
+    query: async () => {
+      if (emitOnNextQuery) {
+        emitOnNextQuery = false;
+        events.emit('error', new Error('Connection terminated unexpectedly'));
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release: (error) => { releases.push(error); },
+  });
+  const pool = { connect: async () => client, end: async () => {}, on: () => {} };
+
+  const storage = createPostgresqlStorage(pool, {});
+  await probePostgresqlQuery(storage, 'SELECT 1');
+  assert.equal(client.listenerCount('error'), 1, 'storage guards its checkout');
+
+  await bootstrapPlane(pool, planeInput());
+  assert.equal(client.listenerCount('error'), 1, 'bootstrap must not steal the storage slot');
+
+  assert.equal(
+    releases.filter((release) => release instanceof Error).length,
+    0,
+    'nothing destroyed yet',
+  );
+  emitOnNextQuery = true;
+  await probePostgresqlQuery(storage, 'SELECT 1');
+  assert.equal(
+    releases.filter((release) => release instanceof Error).length,
+    1,
+    `one emission destroys once, saw ${JSON.stringify(releases.map((release) => release instanceof Error ? 'error' : 'plain'))}`,
+  );
+  await storage.close();
+});
+
+// backlog:983526c730b1 (review rev-agent-crm-1155-447e69360ed7 P2): the
+// renewal test must observe the destroy half of the cure, not just the
+// retrying outcome. The pre-installed guard records the backend death but
+// never destroys (and the bootstrap checkout defers to it), so recovery can
+// only happen when the renewal path destroys the dead client: the scripted
+// pool mints a fresh client only after a release-with-error, and keeps
+// handing back the poisoned one otherwise.
+test('a poisoned renewal client is destroyed, not released: the pool mints a fresh client only after destroy', async (t) => {
+  const controlEvents = new EventEmitter();
+  const benignEmissions = [];
+  controlEvents.on('error', (error) => { benignEmissions.push(error); });
+  const releases = [];
+  const destroyed = () => releases.some((release) => release instanceof Error);
+  let poisonArmed = false;
+  const controlClient = Object.assign(controlEvents, {
+    query: async (sql) => {
+      const text = String(sql);
+      if (text.startsWith('UPDATE') && text.includes('spine_writer_leases') && poisonArmed && !destroyed()) {
+        controlEvents.emit('error', new Error('Connection terminated unexpectedly'));
+        throw new Error('Connection terminated unexpectedly');
+      }
+      return { rows: [], rowCount: 1 };
+    },
+    release: (error) => { releases.push(error); },
+  });
+  let freshUsed = false;
+  const freshClient = {
+    query: async () => {
+      freshUsed = true;
+      return { rows: [], rowCount: 1 };
+    },
+    release: () => {},
+  };
+  const controlPool = {
+    connect: async () => (destroyed() ? freshClient : controlClient),
+    end: async () => {},
+    on: () => {},
+  };
+  const scripted = (client) => ({ connect: async () => client, end: async () => {}, on: () => {} });
+  const app = await bootstrapPostgresqlApplication({
+    control: { host: 'db.test', port: 5432, database: 'accordo_control', user: 'u', password: 'p' },
+    data: { host: 'db.test', port: 5432, database: 'accordo', user: 'u', password: 'p' },
+    tenantId: 'acme',
+    identityVerifier: createTestVerifier({ tenantId: 'acme' }),
+    leaseTtlMs: 1000,
+    createPool: async (endpoint) => (endpoint.database === 'accordo_control' ? controlPool : scripted(okClient())),
+  });
+  assert.equal(controlEvents.listenerCount('error'), 1, 'bootstrap defers to the existing guard');
+  const renewer = app.leaseRenewer;
+  assert.ok(renewer, 'the composed application exposes its renewer');
+  const unhandled = [];
+  const onUnhandled = (reason) => { unhandled.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  process.on('uncaughtException', onUnhandled);
+  t.after(() => {
+    process.off('unhandledRejection', onUnhandled);
+    process.off('uncaughtException', onUnhandled);
+  });
+  t.after(() => renewer.stop());
+  const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  renewer.start();
+  const steadyDeadline = Date.now() + 10_000;
+  while (renewer.status().renewals < 1) {
+    if (Date.now() >= steadyDeadline) {
+      assert.fail(`the renewer never renewed, saw ${JSON.stringify(renewer.status())}`);
+    }
+    await sleep(20);
+  }
+  const renewalsBeforeKill = renewer.status().renewals;
+  poisonArmed = true;
+  let retryingCode = null;
+  const retryDeadline = Date.now() + 10_000;
+  for (;;) {
+    const status = renewer.status();
+    if (status.lastOutcome === 'retrying') { retryingCode = status.lastErrorCode; break; }
+    if (status.lastOutcome === 'surrendered') assert.fail('a dropped connection must retry, never surrender');
+    if (Date.now() >= retryDeadline) {
+      assert.fail(`no retrying renewal after the backend died, saw ${JSON.stringify(status)}`);
+    }
+    await sleep(10);
+  }
+  assert.equal(retryingCode, 'STORAGE_UNAVAILABLE');
+  const recoverDeadline = Date.now() + 10_000;
+  for (;;) {
+    const status = renewer.status();
+    if (status.lastOutcome === 'renewed' && status.renewals > renewalsBeforeKill) break;
+    if (status.lastOutcome === 'surrendered') assert.fail('the renewer surrendered instead of recovering');
+    if (Date.now() >= recoverDeadline) {
+      assert.fail(`the renewer never recovered, saw ${JSON.stringify(status)}`);
+    }
+    await sleep(20);
+  }
+  await renewer.stop();
+  assert.ok(
+    releases.some((release) => release instanceof Error),
+    `the dead client was destroyed, not plain-released, saw ${releases.length} releases`,
+  );
+  assert.ok(freshUsed, 'recovery ran on a fresh client minted after the destroy');
+  assert.ok(benignEmissions.length >= 1, 'the backend death was observed');
   assert.deepEqual(
     unhandled.map((error) => String(error && error.message ? error.message : error)),
     [],
