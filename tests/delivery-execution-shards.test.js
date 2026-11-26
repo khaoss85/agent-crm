@@ -6,7 +6,7 @@
  * server loaded. Timing is load-dependent and cannot be asserted
  * deterministically here, so this file pins the structural proxy the split
  * was sized on: no `delivery-execution-e2e*` file declares more than four
- * top-level cases (about 100–180 s locally, each case boots its own project),
+ * top-level cases (each case boots its own private copy of the one cached build),
  * and the twelve original cases are all still present somewhere — a split
  * that drops or weakens a case fails here, not in the full.
  */

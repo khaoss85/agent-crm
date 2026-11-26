@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project.js';
+import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project-cache.js';
 
 /**
  * Milestone 14a e2e, project-lifecycle third (voce fb0d1a3517b1): the first
  * file of the split of this suite — the project-lifecycle cases stay here,
+ * each on a private copy of the one cached build (`contracts-project-cache`),
  * the surface cases moved to `tests/delivery-execution-e2e-1.test.js` and
  * the block/close cases to `tests/delivery-execution-e2e-2.test.js` — so
  * each file stays under the per-file ceiling (`MEASURE_FILE_MAX_SEC`, 600 s)

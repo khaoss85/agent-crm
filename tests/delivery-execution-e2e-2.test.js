@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project.js';
+import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project-cache.js';
 
 /**
  * Milestone 14a execution, project-lifecycle third (voce fb0d1a3517b1):
