@@ -19,6 +19,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
+import { reportingSummaryFacts } from '../apps/server/src/http-server.js';
+import {
+  assertReportingSummaryFacts,
+  parseReportingSummaryResponse,
+} from '../packages/llm/src/reporting-summary.js';
 
 const TS = '2026-09-01T00:00:00.000Z';
 
@@ -144,4 +149,77 @@ test('there is no write surface under /api/reporting/summary', async (t) => {
   const { baseUrl } = await summaryServer(t);
   const post = await fetch(`${baseUrl}/api/reporting/summary?period=2026-10`, { method: 'POST', body: '{}' });
   assert.equal(post.status, 404, 'no POST under /api/reporting/*: the proposal cannot reassign by itself');
+});
+
+// Review Muse rev-agent-crm-1163-abb9b6b317dc (P1, backlog:766e9cf9469e):
+// every integer rendered in facts.text belongs to facts.integers, or the
+// invented-number guard refuses the faithful answer. Red on abb9b6b3
+// (weeks.length and the forecast sum missing), green with the fix.
+test('the facts allowlist covers the rendered weeks count (P1 repro)', () => {
+  const { facts } = reportingSummaryFacts({
+    channels: {
+      total: 16,
+      weeks: [0, 0, 0, 0, 0],
+      channels: [{ channel: 'instagram', total: 16, weeks: [0, 0, 0, 7, 9] }],
+    },
+    team: [],
+    forecast: null,
+    currency: 'EUR',
+  });
+  assert.match(facts.text[0], /16 in 5 settimane/, 'the text renders the weeks count');
+  assert.ok(facts.integers.includes(5), 'the weeks count is allowlisted');
+  assert.ok(facts.integers.includes(9) && facts.integers.includes(7), 'the weekly split is allowlisted');
+  const checked = assertReportingSummaryFacts({ text: [...facts.text], integers: [...facts.integers] });
+  assert.doesNotThrow(
+    () => parseReportingSummaryResponse(
+      'Il periodo ha portato 16 nuovi clienti in 5 settimane.\nUltima settimana 9 contro 7 di quella prima.',
+      checked,
+    ),
+    'a faithful echo of the weeks count parses',
+  );
+});
+
+test('the facts allowlist covers the rendered forecast sum (P1 repro)', () => {
+  const { facts } = reportingSummaryFacts({
+    channels: { total: 0, weeks: [], channels: [] },
+    team: [{ openCount: 1, wonCount: 0, lostCount: 0, openMinor: 10000 }],
+    forecast: { targetMinor: 2000000, closedMinor: 14000, probableMinor: 9333 },
+    currency: 'EUR',
+  });
+  assert.match(facts.text.at(-1), /chiuse e probabili 23333/, 'the text renders the closed+probable sum');
+  assert.ok(facts.integers.includes(23333), 'the rendered sum is allowlisted');
+  const checked = assertReportingSummaryFacts({ text: [...facts.text], integers: [...facts.integers] });
+  assert.doesNotThrow(
+    () => parseReportingSummaryResponse(
+      'Obiettivo 2000000 con chiuse e probabili 23333.\nAperti 1 da 10000 nel mese.',
+      checked,
+    ),
+    'a faithful echo of the forecast sum parses',
+  );
+});
+
+test('with channel data the route accepts a faithful echo of the weeks count (P1 repro)', async (t) => {
+  const { app, baseUrl } = await summaryServer(t);
+  // October 2026 spans five Monday weeks (28 set, 5, 12, 19, 26 ott): the
+  // stub puts 7 + 9 in the last two, so weeks.length (5) differs from every
+  // other integer and the old allowlist demonstrably misses it.
+  app.countCustomerChannelOrigins = async () => ({
+    origins: [
+      { system: 'instagram', week: '2026-10-19', count: 7 },
+      { system: 'instagram', week: '2026-10-26', count: 9 },
+    ],
+  });
+  app.completeLlmCall = async () => ({
+    text: 'Il periodo ha portato 16 nuovi clienti in 5 settimane.\nUltima settimana 9 contro 7 di quella prima, con 1 preventivo aperto.',
+    dryRun: false,
+  });
+  const response = await fetch(`${baseUrl}/api/reporting/summary?period=2026-10&spaceId=presti`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    lines: [
+      'Il periodo ha portato 16 nuovi clienti in 5 settimane.',
+      'Ultima settimana 9 contro 7 di quella prima, con 1 preventivo aperto.',
+    ],
+    reason: 'ai',
+  });
 });

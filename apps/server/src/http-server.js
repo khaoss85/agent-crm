@@ -103,6 +103,82 @@ export function isResponseEnvelope(value) {
   return typeof value === 'object' && value !== null && /** @type {any} */ (value)[RESPONSE_ENVELOPE] === true;
 }
 
+/**
+ * The summary's facts from a dashboard model (backlog:766e9cf9469e): the
+ * same numbers the cards show — channel totals, funnel counts, forecast —
+ * as short lines plus every integer the answer may echo. Pure, so the
+ * route test pins the numbers without a model call. Exported for that
+ * test: the allowlist must contain every integer the text renders,
+ * otherwise the invented-number guard refuses faithful answers.
+ */
+export function reportingSummaryFacts(model) {
+  const integers = [];
+  const integer = (value) => {
+    if (Number.isSafeInteger(value)) integers.push(value);
+    return Number.isSafeInteger(value) ? value : 0;
+  };
+  const text = [];
+  const channels = model?.channels ?? {};
+  const weeks = Array.isArray(channels.weeks) ? channels.weeks : [];
+  const entries = Array.isArray(channels.channels) ? channels.channels : [];
+  const total = integer(channels.total);
+  const top = entries.reduce((best, entry) => (
+    (Number.isSafeInteger(entry?.total) ? entry.total : 0) > (Number.isSafeInteger(best?.total) ? best.total : 0)
+      ? entry
+      : best
+  ), entries[0] ?? null);
+  if (total > 0 && entries.length > 0) {
+    text.push(
+      `Nuovi clienti: ${total} in ${weeks.length} ${weeks.length === 1 ? 'settimana' : 'settimane'}`
+      + `${top !== null && Number.isSafeInteger(top?.total) && top.total > 0 ? `, canale principale ${top.channel} (${top.total})` : ''}.`,
+    );
+    // Review Muse rev-agent-crm-1163-abb9b6b317dc (P1): weeks.length is
+    // rendered above, so it belongs to the allowlist too.
+    integers.push(weeks.length);
+    if (Number.isSafeInteger(top?.total)) integers.push(top.total);
+    if (weeks.length >= 2) {
+      const totals = weeks.map((_, index) => entries.reduce((sum, entry) => {
+        const value = entry?.weeks?.[index];
+        return sum + (Number.isInteger(value) && value > 0 ? value : 0);
+      }, 0));
+      text.push(`Ultima settimana: ${totals[weeks.length - 1]}, quella prima: ${totals[weeks.length - 2]}.`);
+      integers.push(totals[weeks.length - 1], totals[weeks.length - 2]);
+    }
+  }
+  const team = Array.isArray(model?.team) ? model.team : [];
+  const openCount = team.reduce((sum, entry) => sum + integer(entry?.openCount), 0);
+  const wonCount = team.reduce((sum, entry) => sum + integer(entry?.wonCount), 0);
+  const lostCount = team.reduce((sum, entry) => sum + integer(entry?.lostCount), 0);
+  const currency = typeof model?.currency === 'string' ? model.currency : 'EUR';
+  if (openCount + wonCount + lostCount > 0) {
+    const openMinor = team.reduce((sum, entry) => sum + (Number.isSafeInteger(entry?.openMinor) ? entry.openMinor : 0), 0);
+    if (team.some((entry) => Number.isSafeInteger(entry?.openMinor))) integers.push(openMinor);
+    text.push(`Preventivi aperti: ${openCount} (${openMinor} ${currency}); vinte: ${wonCount}; perse: ${lostCount}.`);
+  }
+  const forecast = model?.forecast ?? null;
+  if (forecast !== null && typeof forecast === 'object'
+    && Number.isSafeInteger(forecast.targetMinor) && forecast.targetMinor > 0) {
+    integers.push(forecast.targetMinor);
+    if (Number.isSafeInteger(forecast.closedMinor) && Number.isSafeInteger(forecast.probableMinor)) {
+      // Review Muse rev-agent-crm-1163-abb9b6b317dc (P1): the rendered sum
+      // is a number of its own — allowlist it alongside the addends.
+      integers.push(forecast.closedMinor, forecast.probableMinor, forecast.closedMinor + forecast.probableMinor);
+      text.push(`Obiettivo ${forecast.targetMinor} ${currency}; chiuse e probabili ${forecast.closedMinor + forecast.probableMinor}.`);
+    } else {
+      text.push(`Obiettivo ${forecast.targetMinor} ${currency}.`);
+    }
+  }
+  return {
+    facts: { text, integers },
+    counts: {
+      customersTotal: total,
+      openCount,
+      wonCount,
+      lostCount,
+    },
+  };
+}
+
 /** @param {any} app @param {{publicDir?: string}} [options] */
 export function createHttpServer(app, options = {}) {
   const publicDir = resolve(options.publicDir ?? DEFAULT_PUBLIC_DIR);
@@ -2087,75 +2163,6 @@ export function buildRouter(app) {
       if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
     }
     return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins, pipelines);
-  }
-
-  /**
-   * The summary's facts from a dashboard model (backlog:766e9cf9469e): the
-   * same numbers the cards show — channel totals, funnel counts, forecast —
-   * as short lines plus every integer the answer may echo. Pure, so the
-   * route test pins the numbers without a model call.
-   */
-  function reportingSummaryFacts(model) {
-    const integers = [];
-    const integer = (value) => {
-      if (Number.isSafeInteger(value)) integers.push(value);
-      return Number.isSafeInteger(value) ? value : 0;
-    };
-    const text = [];
-    const channels = model?.channels ?? {};
-    const weeks = Array.isArray(channels.weeks) ? channels.weeks : [];
-    const entries = Array.isArray(channels.channels) ? channels.channels : [];
-    const total = integer(channels.total);
-    const top = entries.reduce((best, entry) => (
-      (Number.isSafeInteger(entry?.total) ? entry.total : 0) > (Number.isSafeInteger(best?.total) ? best.total : 0)
-        ? entry
-        : best
-    ), entries[0] ?? null);
-    if (total > 0 && entries.length > 0) {
-      text.push(
-        `Nuovi clienti: ${total} in ${weeks.length} ${weeks.length === 1 ? 'settimana' : 'settimane'}`
-        + `${top !== null && Number.isSafeInteger(top?.total) && top.total > 0 ? `, canale principale ${top.channel} (${top.total})` : ''}.`,
-      );
-      if (Number.isSafeInteger(top?.total)) integers.push(top.total);
-      if (weeks.length >= 2) {
-        const totals = weeks.map((_, index) => entries.reduce((sum, entry) => {
-          const value = entry?.weeks?.[index];
-          return sum + (Number.isInteger(value) && value > 0 ? value : 0);
-        }, 0));
-        text.push(`Ultima settimana: ${totals[weeks.length - 1]}, quella prima: ${totals[weeks.length - 2]}.`);
-        integers.push(totals[weeks.length - 1], totals[weeks.length - 2]);
-      }
-    }
-    const team = Array.isArray(model?.team) ? model.team : [];
-    const openCount = team.reduce((sum, entry) => sum + integer(entry?.openCount), 0);
-    const wonCount = team.reduce((sum, entry) => sum + integer(entry?.wonCount), 0);
-    const lostCount = team.reduce((sum, entry) => sum + integer(entry?.lostCount), 0);
-    const currency = typeof model?.currency === 'string' ? model.currency : 'EUR';
-    if (openCount + wonCount + lostCount > 0) {
-      const openMinor = team.reduce((sum, entry) => sum + (Number.isSafeInteger(entry?.openMinor) ? entry.openMinor : 0), 0);
-      if (team.some((entry) => Number.isSafeInteger(entry?.openMinor))) integers.push(openMinor);
-      text.push(`Preventivi aperti: ${openCount} (${openMinor} ${currency}); vinte: ${wonCount}; perse: ${lostCount}.`);
-    }
-    const forecast = model?.forecast ?? null;
-    if (forecast !== null && typeof forecast === 'object'
-      && Number.isSafeInteger(forecast.targetMinor) && forecast.targetMinor > 0) {
-      integers.push(forecast.targetMinor);
-      if (Number.isSafeInteger(forecast.closedMinor) && Number.isSafeInteger(forecast.probableMinor)) {
-        integers.push(forecast.closedMinor, forecast.probableMinor);
-        text.push(`Obiettivo ${forecast.targetMinor} ${currency}; chiuse e probabili ${forecast.closedMinor + forecast.probableMinor}.`);
-      } else {
-        text.push(`Obiettivo ${forecast.targetMinor} ${currency}.`);
-      }
-    }
-    return {
-      facts: { text, integers },
-      counts: {
-        customersTotal: total,
-        openCount,
-        wonCount,
-        lostCount,
-      },
-    };
   }
 
   // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
