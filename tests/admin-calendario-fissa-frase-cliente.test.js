@@ -34,7 +34,7 @@ const CATALOG = {
   ],
 };
 
-function phraseClient({ draft = draftFor({ durationMinutes: 30 }), customers = [CUSTOMER] } = {}) {
+function phraseClient({ draft = draftFor({ durationMinutes: 30 }), customers = [CUSTOMER], customerPages = null, suggestError = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -52,6 +52,7 @@ function phraseClient({ draft = draftFor({ durationMinutes: 30 }), customers = [
         return { members: ids.map((id) => ({ teamMemberId: id, appointments: [] })) };
       }
       if (path.startsWith('/api/appointments/suggest-slots')) {
+        if (suggestError) throw suggestError;
         const query = new URL(path, 'http://stub.test').searchParams;
         const ids = query.get('teamMemberIds')?.split(',') ?? [];
         const from = Date.parse(query.get('from') ?? '');
@@ -62,7 +63,16 @@ function phraseClient({ draft = draftFor({ durationMinutes: 30 }), customers = [
         }
         return { members: ids.map((id) => ({ teamMemberId: id, slots })) };
       }
-      if (path.startsWith('/api/customer-data/customers')) return { items: customers, complete: true };
+      if (path.startsWith('/api/customer-data/customers')) {
+        if (customerPages) {
+          const query = new URL(path, 'http://stub.test').searchParams;
+          const page = Math.max(1, Number(query.get('page') ?? '1') || 1);
+          const pageSize = Math.max(1, Number(query.get('pageSize') ?? '10') || 10);
+          const pages = Math.max(1, Math.ceil(customerPages.length / pageSize));
+          return { items: customerPages.slice((page - 1) * pageSize, page * pageSize), complete: true, pages, total: customerPages.length };
+        }
+        return { items: customers, complete: true };
+      }
       if (path === '/api/appointments/propose' || path === '/api/appointments/confirm') {
         throw new Error(`no booking call expected: ${path}`);
       }
@@ -77,6 +87,9 @@ const flush = async (rounds = 40) => {
 const button = (mount, label) => mount.findAll('button').find((node) => node.textContent === label);
 const byName = (mount, name) => mount.findAll('input').concat(mount.findAll('select')).find((node) => node.getAttribute('name') === name);
 const pickName = (mount) => mount.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick')?.textContent ?? null;
+const candidateButtons = (mount, name) => mount.findAll('button').filter((node) => String(node.textContent ?? '').startsWith(name));
+const MARIO_1 = { resource: 'contact', id: 'mario-1', name: 'Mario Rossi', email: 'mario.uno@example.it', phone: null, company: null };
+const MARIO_2 = { resource: 'contact', id: 'mario-2', name: 'Mario Rossi', email: 'mario.due@example.it', phone: null, company: null };
 
 async function askPhrase(view, mount, phrase) {
   await view.render();
@@ -164,4 +177,83 @@ test('«Annulla» sulla bozza toglie anche il cliente proposto (backlog:3aabaea0
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'phrase-cancel').dispatch('click');
   await flush();
   assert.equal(pickName(mount), null, 'the proposed customer goes back with the draft');
+});
+
+test('omonimi su più pagine: nessuna scelta automatica, mostra i candidati (backlog:3aabaea07bfe)', async () => {
+  const fillers = Array.from({ length: 9 }, (_, i) => ({ resource: 'contact', id: `zeta-${i}`, name: `Zeta Cliente ${i}`, email: null, phone: null, company: null }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ customer: 'Mario Rossi', durationMinutes: 30 }),
+    customerPages: [MARIO_1, ...fillers, MARIO_2],
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti con khaoss85 per Mario Rossi');
+  assert.equal(pickName(mount), null, 'homonyms on later pages are never auto-picked');
+  assert.equal(candidateButtons(mount, 'Mario Rossi').length, 2, 'both homonyms are listed as candidates');
+});
+
+test('omonimia solo-servizio: servizio svuotato ma candidati mostrati (backlog:3aabaea07bfe)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ serviceKey: 'mario-rossi', durationMinutes: 30 }),
+    customers: [MARIO_1, MARIO_2],
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti con khaoss85 per Mario Rossi');
+  assert.equal(byName(mount, 'serviceKey').value, '', 'the customer name never reaches the service field');
+  assert.equal(pickName(mount), null, 'no guess among homonyms');
+  assert.equal(candidateButtons(mount, 'Mario Rossi').length, 2, 'the homonyms are listed as candidates');
+});
+
+test('frase senza persona: il cliente proposto non resta (backlog:3aabaea07bfe)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ teamMemberId: undefined, customer: 'Prova verifica 40 NoteInvio', durationMinutes: 30 }),
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti per Prova verifica 40 NoteInvio');
+  assert.equal(pickName(mount), null, 'a refused phrase leaves no customer behind');
+  assert.ok(mount.textContent.includes('non capisco la persona'), 'the refusal names the person');
+});
+
+test('frase con persona fuori team: il cliente proposto non resta (backlog:3aabaea07bfe)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ teamMemberId: 'Guido', customer: 'Prova verifica 40 NoteInvio', durationMinutes: 30 }),
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti con Guido per Prova verifica 40 NoteInvio');
+  assert.equal(pickName(mount), null, 'an outsider phrase leaves no customer behind');
+  assert.ok(mount.textContent.includes('non capisco la persona'), 'the refusal names the person');
+});
+
+test('errore di ricerca slot: il cliente proposto non resta (backlog:3aabaea07bfe)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ customer: 'Prova verifica 40 NoteInvio', durationMinutes: 30 }),
+    suggestError: Object.assign(new Error('boom'), { status: 500 }),
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti con khaoss85 per Prova verifica 40 NoteInvio');
+  assert.equal(pickName(mount), null, 'a failed slot search leaves no customer behind');
+});
+
+test('omonimo del servizio con cliente diverso: servizio conservato (backlog:3aabaea07bfe)', async () => {
+  const ada = { resource: 'contact', id: 'ada-1', name: 'Ada Rossi', email: 'ada@example.it', phone: null, company: null };
+  const taglio = { resource: 'contact', id: 'taglio-1', name: 'Taglio', email: null, phone: null, company: null };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    draft: draftFor({ customer: 'Ada Rossi', serviceKey: 'taglio', durationMinutes: 30 }),
+    customers: [ada, taglio],
+  });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount, 'trova 30 minuti con khaoss85 per Ada Rossi un taglio');
+  assert.equal(pickName(mount), 'Ada Rossi', 'the stated customer is proposed');
+  assert.equal(byName(mount, 'serviceKey').value, 'taglio', 'a real service survives a same-named customer');
 });

@@ -4820,7 +4820,10 @@ export function createCalendarioView(deps) {
           }
           const totalPages = Number(answer?.pages ?? 1);
           pages = Number.isFinite(totalPages) && totalPages >= 1 ? Math.floor(totalPages) : 1;
-          if (rows.some((item) => names.some((entry) => normalizeCustomerName(item?.name) === entry.norm))) break;
+          // backlog:3aabaea07bfe — no early break on the first exact match:
+          // homonyms may sit on later pages, and stopping early would
+          // auto-pick the first one instead of listing the candidates. The
+          // read stays bounded (five pages of ten, like the manual search).
         }
       }
     } catch {
@@ -4830,8 +4833,13 @@ export function createCalendarioView(deps) {
     const exact = (norm) => rows.filter((item) => normalizeCustomerName(item?.name) === norm);
     const customerHits = normCustomer === '' ? [] : exact(normCustomer);
     const serviceHits = normService === '' ? [] : exact(normService);
+    // backlog:3aabaea07bfe — a same-named customer drops the service only
+    // in the legacy service-only shape, or when the service reads as the
+    // stated customer itself: with a different customer stated, a real
+    // service survives the collision.
     const dropService = serviceText !== ''
-      && (serviceHits.length > 0 || (normCustomer !== '' && normService === normCustomer));
+      && ((customerText === '' && serviceHits.length > 0)
+        || (normCustomer !== '' && normService === normCustomer));
     let fixed = draft;
     if (dropService) {
       fixed = { ...draft };
@@ -4862,6 +4870,16 @@ export function createCalendarioView(deps) {
       state.customerItems = customerHits;
       state.customerError = null;
       state.draftCustomer = { id: null, query: customerText, prior };
+    } else if (customerText === '' && serviceHits.length > 1) {
+      // backlog:3aabaea07bfe — the legacy service-only shape naming a
+      // customer with homonyms: no guess either — the candidates ride the
+      // search box under the readable query, instead of dropping the
+      // service in silence with no list to pick from.
+      const readable = serviceText.replace(/[-_]+/g, ' ');
+      state.customerQuery = readable;
+      state.customerItems = serviceHits;
+      state.customerError = null;
+      state.draftCustomer = { id: null, query: readable, prior };
     }
     return fixed;
   }
@@ -4895,6 +4913,10 @@ export function createCalendarioView(deps) {
     // The space that asks it (review #664): a queued id is never read back
     // under another space.
     const askedSpace = readSpace();
+    // backlog:3aabaea07bfe — restores what the form held before this phrase
+    // when its draft is refused or fails; assigned before the customer
+    // resolves, so the catch below can use it too.
+    let dropPhraseCustomer = () => {};
     try {
       const answer = await phraseAnswer({ resumeId, seq });
       // e98e7a346b37: the asking space left while the answer was on its way
@@ -4910,16 +4932,35 @@ export function createCalendarioView(deps) {
       // backlog:3aabaea07bfe: the customer the sentence names is resolved
       // before anything paints, so an existing customer lands in the
       // customer field and their name never reaches the service field.
+      // backlog:3aabaea07bfe — what the form held before this phrase, so a
+      // refused or failed draft restores it: the next manual booking never
+      // inherits this phrase's customer.
+      const customerBefore = {
+        pick: state.customerPick ?? null,
+        query: state.customerQuery,
+        items: state.customerItems,
+        error: state.customerError,
+        draftCustomer: state.draftCustomer ?? null,
+      };
+      dropPhraseCustomer = () => {
+        state.customerPick = customerBefore.pick;
+        state.customerQuery = customerBefore.query;
+        state.customerItems = customerBefore.items;
+        state.customerError = customerBefore.error;
+        state.draftCustomer = customerBefore.draftCustomer;
+      };
       const draft = await resolveDraftCustomer(draftWithEnd(answer?.draft ?? null), seq, askedSpace);
       if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = draft;
       if (!draft) {
+        dropPhraseCustomer();
         state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
         state.phraseNoDraft = true;
         return;
       }
       const member = typeof draft.teamMemberId === 'string' ? draft.teamMemberId : '';
       if (member === '') {
+        dropPhraseCustomer();
         state.draftNote = '';
         state.draft = null;
         state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
@@ -4946,6 +4987,7 @@ export function createCalendarioView(deps) {
       }
       const bounds = suggestBounds(dayKey, draft);
       if (!bounds) {
+        dropPhraseCustomer();
         state.aiNote = 'Settimana non valida.';
         return;
       }
@@ -4967,6 +5009,7 @@ export function createCalendarioView(deps) {
       const knownTeam = Array.isArray(state.members)
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
+        dropPhraseCustomer();
         state.draftNote = '';
         // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
         // known team does not hold was never «in the team» — the phrase did
@@ -5022,6 +5065,7 @@ export function createCalendarioView(deps) {
       }
       if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
+        dropPhraseCustomer();
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
       }
@@ -5067,6 +5111,7 @@ export function createCalendarioView(deps) {
       // e98e7a346b37: a late refusal from the space just left never locks or
       // labels the new space — it never refused anything.
       if (seq !== phraseSeq || readSpace() !== askedSpace) return;
+      dropPhraseCustomer();
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
