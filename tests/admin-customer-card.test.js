@@ -955,6 +955,38 @@ test('d77f434ba40c: with past bookings only the vista names the program, with a 
   await Promise.resolve();
 });
 
+// backlog:f2e52f14: the recap counts right — «+ 1 appuntamento successivo»,
+// not «+ 1 appuntamenti successivi».
+test('f2e52f14: the recap vista counts the remaining appointments with the right singular', async () => {
+  const upcoming = (count) => ({
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count,
+      truncated: false,
+      items: Array.from({ length: count }, (_, index) => ({
+        id: `next-${index}`, status: 'booked',
+        startsAt: `2099-11-${12 + index}T10:00:00.000Z`, endsAt: `2099-11-${12 + index}T10:45:00.000Z`,
+        serviceKey: 'pt-single', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+      })),
+    },
+  });
+  const openVista = async (count) => {
+    const mount = await renderCard(stubClient({ timeline: upcoming(count) }));
+    const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+    assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+    vista.dispatch('click');
+    const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+    assert.ok(recap, 'the recap body paints the vista');
+    return recap.textContent;
+  };
+  const two = await openVista(2);
+  assert.ok(two.includes('+ 1 appuntamento successivo'), `one left reads singular: ${two}`);
+  assert.ok(!two.includes('successivi'), `no plural with one left: ${two}`);
+  const three = await openVista(3);
+  assert.ok(three.includes('+ 2 appuntamenti successivi'), `two left read plural: ${three}`);
+});
+
 // backlog:d77f434ba40c, review Codex #1057 (P2): with a channel filter
 // active the «Vedi in cronologia» link resets to Tutti first — otherwise
 // the destination still hides the past bookings the vista advertises.

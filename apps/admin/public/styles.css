@@ -395,6 +395,34 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+/* backlog:78f79b0768ac: the send step of an approved quote — one main action,
+ * the ready message as a quiet card with the link as a short copyable pill,
+ * one status line, and «Crea un nuovo link» as a text action below. */
+.bo-offer .offer-share { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 14px; }
+.bo-offer .offer-share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bo-offer .offer-share-ready { box-sizing: border-box; max-width: min(640px, 100%); min-width: 0; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface-soft); }
+.bo-offer .offer-share-ready[hidden] { display: none; }
+.bo-offer .offer-share-compose[hidden] { display: none; }
+.bo-offer .offer-share-message { margin: 0; font-size: 14px; line-height: 1.7; color: var(--ink); overflow-wrap: anywhere; }
+:is(.bo-offer, .bo-scheda-share) .offer-share-pill { display: flex; align-items: center; gap: 4px; box-sizing: border-box; width: fit-content; max-width: 100%; margin: 6px 0; padding: 2px 3px 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); vertical-align: middle; line-height: 1.3; }
+:is(.bo-offer, .bo-scheda-share) .offer-share-pill .offer-share-link-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; color: var(--ink); text-decoration: none; }
+:is(.bo-offer, .bo-scheda-share) .offer-share-pill .offer-share-link-open:hover { color: var(--accent); }
+:is(.bo-offer, .bo-scheda-share) button.offer-share-copy { flex: none; padding: 4px 10px; border: 0; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; }
+:is(.bo-offer, .bo-scheda-share) button.offer-share-copy:hover { transform: none; background: var(--accent); color: var(--paper); }
+.bo-offer .offer-share-line { margin: 0; max-width: min(640px, 100%); }
+:is(.bo-offer, .bo-scheda-share) .offer-share-line:empty { display: none; }
+/* backlog:19adbbb982ef: the scheda offer line reads like the offer page — main action, pill, one status line. */
+.bo-scheda-share { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; min-width: 0; }
+.bo-scheda-share .offer-share-pill { margin: 0; }
+.bo-scheda-share .offer-share-pill[hidden] { display: none; }
+.bo-scheda-share .offer-share-line { margin: 0; }
+.bo-offer .offer-share-regen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.bo-offer button.offer-share-regen, .bo-offer button.offer-share-regen-cancel { padding: 4px 0; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
+.bo-offer button.offer-share-regen:hover, .bo-offer button.offer-share-regen-cancel:hover { transform: none; color: var(--ink); text-decoration: underline; }
+@media (max-width: 480px) {
+  .bo-offer .offer-share { align-items: stretch; }
+  .bo-offer .offer-share-actions > button { flex: 1 1 auto; }
+}
 /* backlog 169cd4bc988c: the offer page is never a dead end — the customer
  * opens their scheda, «Cambia stato» sits beside Modifica as a small menu
  * card, «Crea preventivo» heads the quotes. */
@@ -2453,10 +2481,30 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
   .bo-rep-grid { grid-template-columns: minmax(0, 1fr); }
   .bo-rep-grid > * , .bo-rep-grid > .bo-rep-wide, .bo-rep-grid > .bo-rep-narrow, .bo-rep-grid > .bo-rep-third { grid-column: 1 / -1; }
 }
-.bo-rep-top .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-.bo-rep-top .actions .badge { margin: 0; padding: 3px 8px; border: none; border-radius: 6px; font-family: var(--sans, inherit); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; background: transparent; color: var(--muted); }
-.bo-rep-top .actions .badge:first-child { font-family: var(--mono); font-size: 11px; background: var(--ink); color: var(--paper); }
-.bo-rep-top .actions .badge:nth-child(2) { background: var(--agent-soft); color: var(--agent-ink); }
+/* backlog:526e1bf4bd28: two plain lines under the title instead of a label
+ * row; the channel chart keeps small values readable, shows value and
+ * channel on hover and on focus, and its legend is a block of its own. */
+.bo-rep-summary { margin-top: 12px; max-width: 560px; }
+.bo-rep-summary:empty { display: none; }
+.bo-rep-summary p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--ink); }
+.bo-rep-summary p + p { color: var(--muted); font-size: 13.5px; }
+.bo-rep-weeks { display: flex; align-items: flex-end; gap: 18px; min-height: 190px; padding: 16px 4px 0; }
+.bo-rep-week { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.bo-rep-week-total { font-family: var(--mono); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bo-rep-week-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.bo-rep-week-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; max-width: 64px; min-height: 2px; border-bottom: 2px solid var(--line); }
+.bo-rep-week-seg { position: relative; border-radius: 4px; cursor: default; }
+.bo-rep-week-seg:hover, .bo-rep-week-seg:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; z-index: 2; }
+.bo-rep-week-seg:hover::after, .bo-rep-week-seg:focus-visible::after { content: attr(data-tip); position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); padding: 5px 9px; border-radius: 8px; background: var(--ink); color: var(--paper); font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; pointer-events: none; }
+.bo-rep-week:last-child .bo-rep-week-seg:hover::after, .bo-rep-week:last-child .bo-rep-week-seg:focus-visible::after { left: auto; right: calc(100% + 8px); }
+.bo-rep-channel-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-faint); font-size: 13px; }
+.bo-rep-channel-key { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.bo-rep-channel-dot { flex: none; width: 10px; height: 10px; border-radius: 99px; }
+.bo-rep-channels-empty { margin-top: 10px; padding: 22px 18px; border: 1px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); }
+.bo-rep-channels-empty p { margin: 0; font-size: 14px; }
+.bo-rep-channels-empty p + p { margin-top: 4px; font-size: 13px; }
+.bo-rep-channels-empty a { color: var(--accent); font-weight: 600; }
+@media (max-width: 480px) { .bo-rep-weeks { gap: 10px; } }
 .bo-rep .pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0; margin: 8px 0 0; }
 .bo-rep .pipeline-forecast .bo-rep-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; margin: 12px 0 10px; }
 /* Review #761: a label that wraps («In chiusura in novembre 2026») must not
@@ -3123,6 +3171,18 @@ button.bo-scheda-details-edit { align-self: flex-start; }
 
 /* Verifica Mac 20/11: «Link riunione» nella finestra appuntamento solo con Luogo Online. */
 .bo-offer-field[hidden] { display: none; }
+/* Voce 91c92940274c: Archivia / Elimina / Ripristina nella testata della scheda contatto. */
+.bo-scheda-head-tools { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; max-width: 520px; }
+.bo-scheda-head-tools .ui-btn { min-height: 32px; padding: 4px 12px; font-size: 13px; }
+.bo-scheda-head-tools .bo-scheda-danger { color: var(--danger); }
+.bo-scheda-head-tools .bo-scheda-danger:hover { background: var(--danger-soft); }
+.bo-scheda-head-tools .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
+.bo-scheda-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 10px; background: var(--danger-soft); font-size: 13px; }
+.bo-scheda-confirm > span { flex: 1 1 220px; color: var(--ink); }
+.bo-scheda-confirm[hidden], .bo-scheda-tools-note[hidden], .bo-scheda-head-tools [hidden] { display: none; }
+.bo-scheda-tools-note { flex-basis: 100%; margin: 0; text-align: right; font-size: 13px; color: var(--danger); }
+.bo-scheda-archived-pill { padding: 2px 10px; border-radius: 999px; background: var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
+@media (max-width: 720px) { .bo-scheda-head { flex-wrap: wrap; } .bo-scheda-head-tools { margin-left: 0; max-width: none; justify-content: flex-start; } .bo-scheda-confirm, .bo-scheda-tools-note { justify-content: flex-start; text-align: left; } }
 /* Restyle e47da0d6655e: le offerte fuori da questa pipeline non sono più un link minuscolo — un richiamo con conteggio e valore aperto. */
 .pipeline-switch .pipeline-off-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; }
 .pipeline-switch .pipeline-off-toggle::after { content: "▾"; font-size: 10px; color: var(--dim); }

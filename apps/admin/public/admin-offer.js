@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { MAX_OFFER_VALUE_CENTS, centsToField, euroToCents, offerShareMessage, offerShareShortLabel, offerShareUrl } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, discountRuleLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -166,6 +166,27 @@ export function backLink(schema, record, from) {
 }
 
 /**
+ * backlog:ab7c38cbcca5: the customer an offer's message can be handed to —
+ * the linked contact or company with its scheda, or null when the offer
+ * has no customer with a scheda (then «Scrivi a» never shows).
+ * @param {any} record
+ * @returns {{ resource: string, id: string, name: string, href: string } | null}
+ */
+export function offerComposeTarget(record) {
+  const customer = offerCustomer(record);
+  const parts = customer?.href ? /^#\/customer-card\/([a-z][a-z0-9-]*)\/([^/]+)$/.exec(customer.href) : null;
+  if (customer === null || parts === null) return null;
+  let id;
+  try {
+    id = decodeURIComponent(parts[2]);
+  } catch {
+    return null;
+  }
+  if (id === '') return null;
+  return { resource: parts[1], id, name: customer.name, href: customer.href };
+}
+
+/**
  * backlog:f2d39e473e3a: the breadcrumb of the offer page names the customer
  * and the offer — «Offerta / Giulia Verdi / Cucina per Giulia» — never the
  * bare «Offerta». Missing parts are left out.
@@ -187,6 +208,9 @@ export function createOfferDetail(deps) {
   const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
+  // backlog:ab7c38cbcca5: the offer message handed to the scheda composer.
+  const composerHandoff = deps.composerHandoff && typeof deps.composerHandoff.stage === 'function'
+    ? deps.composerHandoff : null;
   const spaceOrigin = typeof deps.origin === 'string' && deps.origin !== ''
     ? deps.origin
     : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
@@ -212,6 +236,8 @@ export function createOfferDetail(deps) {
   const shareLinks = new Map();
   /** The offer name the share message uses; set when the record lands. */
   let shareOfferName = '';
+  /** backlog:ab7c38cbcca5: the customer the ready message can be handed to; set with the name. @type {ReturnType<typeof offerComposeTarget>} */
+  let shareTarget = null;
   /** Record id with the edit form open. */
   let editing = false;
   /**
@@ -472,6 +498,7 @@ export function createOfferDetail(deps) {
     editing = false;
     offerSavedId = null;
     shareOfferName = '';
+    shareTarget = null;
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
     // the facts, the quotes and the history as grey bars — never a lone
@@ -520,6 +547,7 @@ export function createOfferDetail(deps) {
         onTitle(offerCrumb(record));
         rememberCustomer(record);
         shareOfferName = typeof record.name === 'string' ? record.name : '';
+        shareTarget = offerComposeTarget(record);
       }
       // Review Muse #887 giro 2: the schema is decoration — a rejected
       // `/api/schema` read leaves the page unnamed (neutral columns, no
@@ -1245,35 +1273,133 @@ export function createOfferDetail(deps) {
    * behind the URL is the pilot's own route (its own PR with a contract test).
    */
   function paintShareBox(panel, quote, token) {
+    // backlog:78f79b0768ac (restyle): one main action, one message at a time.
+    // «Prepara e copia il messaggio» mints (or reuses) the link, paints the
+    // ready Italian message with the link as a short copyable pill — never
+    // the raw URL in the text — and puts the whole message on the clipboard.
+    // «Crea un nuovo link» is a quiet secondary line, and every status reads
+    // in the single `line` below, so two notices can never contradict.
     const box = el('div', 'offer-share');
-    const button = el('button', 'secondary', 'Invia offerta');
+    const actions = el('div', 'offer-share-actions');
+    const button = el('button', 'primary', 'Prepara e copia il messaggio');
     button.setAttribute('type', 'button');
     button.setAttribute('data-action', 'offer-share-link');
+    actions.appendChild(button);
+    // backlog:ab7c38cbcca5: with the message ready, one press opens the
+    // customer's scheda with the message already in its composer. Only for
+    // an offer whose customer has a scheda; the send stays the operator's
+    // Invia in the composer.
+    const target = composerHandoff !== null ? shareTarget : null;
+    /** @type {any} */
+    let compose = null;
+    if (target !== null) {
+      compose = el('button', 'secondary offer-share-compose', `Scrivi a ${target.name}`);
+      compose.setAttribute('type', 'button');
+      compose.setAttribute('data-action', 'offer-share-compose');
+      compose.setAttribute('title', `Apri la scheda di ${target.name} con il messaggio già nel composer`);
+      compose.setAttribute('hidden', 'hidden');
+      compose.addEventListener('click', () => {
+        if (readyMessage === null || composerHandoff === null) return;
+        const subject = shareOfferName.trim() !== '' ? `Offerta «${shareOfferName.trim()}»` : 'La tua offerta';
+        if (!composerHandoff.stage(target.resource, target.id, readyMessage, subject)) return;
+        navigate(target.href);
+      });
+      actions.appendChild(compose);
+    }
+    const ready = el('div', 'offer-share-ready');
+    ready.setAttribute('hidden', 'hidden');
+    /** @type {any} */
+    let readyBody = null;
+    /** @type {null | string} */
+    let readyMessage = null;
     const line = el('p', 'bo-muted offer-share-line', '');
     line.setAttribute('role', 'status');
-    const state = el('p', 'bo-muted offer-share-state', '');
+    /** The last ready notice, restored when an armed regeneration is cancelled. */
+    let readyNotice = '';
+    /** @param {string} text @param {boolean} [failed] */
+    const say = (text, failed = false) => {
+      line.setAttribute('class', failed ? 'field-error offer-share-line' : 'bo-muted offer-share-line');
+      line.textContent = text;
+    };
     /** @type {null | {key: string}} */
     let pending = null;
     let busy = false;
-    // Review #995 (Muse P2, Codex P2): «Invia offerta» and «Crea un nuovo
-    // link» never run together — one shared in-flight guard: send waits
+    // Review #995 (Muse P2, Codex P2): the send and «Crea un nuovo link»
+    // never run together — one shared in-flight guard: send waits
     // while a regeneration runs and a regeneration waits while a send
     // runs, with both buttons disabled meanwhile. The epoch stays only
     // as a stale-answer guard for answers that were already superseded.
     let linkOp = 0;
-    const showLink = (url, expiresAt, reused) => {
-      line.setAttribute('class', 'bo-muted offer-share-line');
-      line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
-      line.appendChild(el('span', 'bo-scheda-sep', ' '));
-      const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già pronto' : 'Apri il link');
+    /** Clipboard write that never throws: false sends the operator to the pill. @param {string} text */
+    const copyText = async (text) => {
+      try {
+        const clipboard = doc?.defaultView?.navigator?.clipboard
+          ?? (typeof navigator !== 'undefined' ? navigator.clipboard : null);
+        if (!clipboard || typeof clipboard.writeText !== 'function') return false;
+        await clipboard.writeText(text);
+        return true;
+      } catch (error) {
+        // A denied clipboard stays diagnosable; the pill keeps a direct copy.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] copia negli appunti non riuscita', { name: error?.name ?? null });
+        }
+        return false;
+      }
+    };
+    const hideLink = () => {
+      if (readyBody !== null) ready.removeChild(readyBody);
+      readyBody = null;
+      readyMessage = null;
+      readyNotice = '';
+      ready.setAttribute('hidden', 'hidden');
+      compose?.setAttribute('hidden', 'hidden');
+    };
+    /** @param {string} url @param {string | null} expiresAt */
+    const showLink = (url, expiresAt) => {
+      const message = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
+      const at = message.indexOf(url);
+      if (readyBody !== null) ready.removeChild(readyBody);
+      readyBody = el('p', 'offer-share-message');
+      if (at > 0) readyBody.appendChild(el('span', undefined, message.slice(0, at)));
+      const pill = el('span', 'offer-share-pill');
+      // The pill reads short (host and the first characters of the token);
+      // the whole URL lives only in the href and on the clipboard.
+      const open = el('a', 'offer-share-link-open', offerShareShortLabel(url));
       open.setAttribute('href', url);
       open.setAttribute('data-action', 'offer-share-open');
-      line.appendChild(open);
-      // Review Muse #905 (P1): the mint state reads here, outside the
-      // server-audit Cronologia — a mint is «pronto, da inviare», never
-      // «inviata», and a reuse is a mint, never a send.
-      state.setAttribute('class', 'bo-muted offer-share-state');
-      state.textContent = reused ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.';
+      open.setAttribute('title', 'Apri il link dell’offerta');
+      const copy = el('button', 'offer-share-copy', 'Copia link');
+      copy.setAttribute('type', 'button');
+      copy.setAttribute('data-action', 'offer-share-copy-link');
+      copy.addEventListener('click', () => {
+        void copyText(url).then((copied) => {
+          copy.textContent = copied ? 'Copiato' : 'Copia non riuscita';
+        });
+      });
+      pill.appendChild(open);
+      pill.appendChild(copy);
+      readyBody.appendChild(pill);
+      // The pill sits on its own line, so the sentence after it starts
+      // clean: the full stop that closed the URL stays on the clipboard only.
+      const rest = at >= 0 ? message.slice(at + url.length).replace(/^\.\s*/, '') : '';
+      if (rest !== '') readyBody.appendChild(el('span', undefined, rest));
+      ready.appendChild(readyBody);
+      ready.removeAttribute('hidden');
+      readyMessage = message;
+      compose?.removeAttribute('hidden');
+    };
+    /**
+     * Review Muse #905 (P1): the mint state reads here, outside the
+     * server-audit Cronologia — a mint is «pronto, da inviare», never
+     * «inviata», and a reuse is a mint, never a send.
+     * @param {string} lead @param {boolean} copied
+     */
+    const sayReady = (lead, copied) => {
+      const via = compose !== null && target !== null ? `«Scrivi a ${target.name}»` : null;
+      readyNotice = `${lead} ${copied
+        ? (via !== null ? `Messaggio copiato: incollalo in chat, oppure mandalo da qui con ${via}.` : 'Messaggio copiato: incollalo nella chat con il cliente.')
+        : (via !== null ? `Mandalo con ${via}, oppure copia il link qui sopra.` : 'Copia il link qui sopra e mandalo dal composer della scheda.')}`;
+      say(readyNotice);
     };
     const send = async () => {
       // Review #995 P2: one shared in-flight guard — a regeneration that
@@ -1287,12 +1413,12 @@ export function createOfferDetail(deps) {
       // uncertain failure or Enter+click mints one link, never two — the
       // same rule as «Crea preventivo» above.
       if (pending === null) pending = { key: submissions.issueKey() };
+      disarmRegen();
       button.setAttribute('disabled', 'disabled');
       button.setAttribute('aria-busy', 'true');
       regenButton.setAttribute('disabled', 'disabled');
       regenButton.setAttribute('aria-busy', 'true');
-      line.setAttribute('class', 'bo-muted offer-share-line');
-      line.textContent = 'Creo il link…';
+      say('Creo il link…');
       try {
         const answer = await client.request(
           `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/share-link`,
@@ -1313,21 +1439,23 @@ export function createOfferDetail(deps) {
           url = shareLinks.get(quote.id)?.url ?? null;
         }
         if (url === null) {
-          line.setAttribute('class', 'field-error offer-share-line');
-          line.textContent = result.alreadyExisted === true
+          hideLink();
+          say(result.alreadyExisted === true
             ? 'Il link esiste già ma non è visibile qui. Premi «Crea un nuovo link»: il vecchio smetterà di funzionare.'
-            : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+            : 'Link non creato: la risposta è senza link. Riprova più tardi.', true);
           return;
         }
-        showLink(url, expiresAt, fresh === null);
-        toast(fresh === null ? 'Link già pronto: è lo stesso di prima.' : 'Link pronto: invialo dal composer della scheda.');
+        showLink(url, expiresAt);
+        const copied = await copyText(readyMessage ?? url);
+        if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
+        sayReady(fresh === null ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.', copied);
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
         if (token !== renderToken) return;
         if (myOp !== linkOp) return;
-        line.setAttribute('class', 'field-error offer-share-line');
-        line.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+        say(humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' }), true);
       } finally {
         busy = false;
         button.removeAttribute('disabled');
@@ -1339,19 +1467,22 @@ export function createOfferDetail(deps) {
       }
     };
     button.addEventListener('click', () => { void send(); });
-    box.appendChild(button);
+    box.appendChild(actions);
+    box.appendChild(ready);
     box.appendChild(line);
-    box.appendChild(state);
     box.__share = send;
     // backlog:bf1bc20a: «Crea un nuovo link» when the live link is lost
     // (its token left with the first answer): revokes the old link and mints
     // a fresh one through the quote `regenerate-link` action, so the
     // operator ends with one working link. Inline two-step, never a native
     // dialog: the first press arms, the second press runs, «Annulla» disarms.
-    const regenButton = el('button', 'secondary', 'Crea un nuovo link');
+    // backlog:78f79b0768ac: a quiet text action, and the armed pair has two
+    // weights — the confirm is a bordered button, «Annulla» stays text.
+    const regenRow = el('div', 'offer-share-regen-row');
+    const regenButton = el('button', 'offer-share-regen', 'Crea un nuovo link');
     regenButton.setAttribute('type', 'button');
     regenButton.setAttribute('data-action', 'offer-share-regenerate');
-    const regenCancel = el('button', 'secondary', 'Annulla');
+    const regenCancel = el('button', 'offer-share-regen-cancel', 'Annulla');
     regenCancel.setAttribute('type', 'button');
     regenCancel.setAttribute('data-action', 'offer-share-regenerate-cancel');
     /** @type {null | {key: string}} */
@@ -1359,15 +1490,16 @@ export function createOfferDetail(deps) {
     let regenArmed = false;
     let regenBusy = false;
     let regenCancelShown = false;
-    const disarmRegen = () => {
+    function disarmRegen() {
       regenArmed = false;
       regenButton.textContent = 'Crea un nuovo link';
+      regenButton.setAttribute('class', 'offer-share-regen');
       regenButton.setAttribute('data-action', 'offer-share-regenerate');
       if (regenCancelShown) {
-        box.removeChild(regenCancel);
+        regenRow.removeChild(regenCancel);
         regenCancelShown = false;
       }
-    };
+    }
     const runRegen = async () => {
       // Review #995 P2: the other half of the shared guard — a send that
       // is still running keeps this regeneration out.
@@ -1375,14 +1507,13 @@ export function createOfferDetail(deps) {
       regenBusy = true;
       const myOp = ++linkOp;
       // One key per link being minted: a double press mints one link,
-      // never two — the same rule as «Invia offerta» above.
+      // never two — the same rule as the send above.
       if (regenPending === null) regenPending = { key: submissions.issueKey() };
       regenButton.setAttribute('disabled', 'disabled');
       regenButton.setAttribute('aria-busy', 'true');
       button.setAttribute('disabled', 'disabled');
       button.setAttribute('aria-busy', 'true');
-      line.setAttribute('class', 'bo-muted offer-share-line');
-      line.textContent = 'Creo il nuovo link…';
+      say('Creo il nuovo link…');
       try {
         const answer = await client.request(
           `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/regenerate-link`,
@@ -1394,22 +1525,18 @@ export function createOfferDetail(deps) {
         const result = answer?.result ?? answer ?? {};
         const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
         const expiresAt = typeof result.share?.expiresAt === 'string' ? result.share.expiresAt : null;
-        if (fresh === null) {
-          line.setAttribute('class', 'field-error offer-share-line');
-          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
-          return;
-        }
-        const url = offerShareUrl(spaceOrigin, fresh);
+        const url = fresh !== null ? offerShareUrl(spaceOrigin, fresh) : null;
         if (url === null) {
-          line.setAttribute('class', 'field-error offer-share-line');
-          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
+          say('Nuovo link non creato: la risposta è senza link. Riprova più tardi.', true);
           return;
         }
         shareLinks.set(quote.id, { url, expiresAt });
         disarmRegen();
-        showLink(url, expiresAt, false);
-        state.textContent = 'Nuovo link pronto: il vecchio non funziona più. Invialo dal composer della scheda.';
-        toast('Nuovo link pronto: il vecchio non funziona più.');
+        showLink(url, expiresAt);
+        const copied = await copyText(readyMessage ?? url);
+        if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
+        sayReady('Nuovo link pronto: il vecchio non funziona più.', copied);
       } catch (error) {
         if (token !== renderToken) return;
         if (myOp !== linkOp) return;
@@ -1426,14 +1553,14 @@ export function createOfferDetail(deps) {
         // that link stays valid. Every other failure is uncertain — the new
         // link may have committed while its answer was lost — so only a
         // fresh token may paint a ready link again.
-        if (code !== 'QUOTE_LINK_ALREADY_ACCEPTED') shareLinks.delete(quote.id);
         disarmRegen();
-        line.setAttribute('class', 'field-error offer-share-line');
         if (code === 'QUOTE_LINK_ALREADY_ACCEPTED') {
-          line.textContent = 'Il link è già stato accettato: resta come ricevuta e non si può rinnovare.';
+          say('Il link è già stato accettato: resta come ricevuta e non si può rinnovare.', true);
           return;
         }
-        line.textContent = humanWriteError(error, { failed: 'Nuovo link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+        shareLinks.delete(quote.id);
+        hideLink();
+        say(humanWriteError(error, { failed: 'Nuovo link non creato. Riprova più tardi: non ne verrà creato un secondo.' }), true);
       } finally {
         regenBusy = false;
         regenButton.removeAttribute('disabled');
@@ -1449,10 +1576,11 @@ export function createOfferDetail(deps) {
       if (!regenArmed) {
         regenArmed = true;
         regenButton.textContent = 'Sì, crea un nuovo link';
+        regenButton.setAttribute('class', 'secondary small offer-share-regen-confirm');
         regenButton.setAttribute('data-action', 'offer-share-regenerate-confirm');
-        line.setAttribute('class', 'bo-muted offer-share-line');
-        line.textContent = 'Il vecchio link smetterà di funzionare. Continuare?';
-        box.appendChild(regenCancel);
+        // One message at a time: the question replaces any ready notice.
+        say('Il vecchio link smetterà di funzionare. Continuare?');
+        regenRow.appendChild(regenCancel);
         regenCancelShown = true;
         return;
       }
@@ -1460,10 +1588,16 @@ export function createOfferDetail(deps) {
     });
     regenCancel.addEventListener('click', () => {
       disarmRegen();
+      say(readyNotice);
     });
-    box.appendChild(regenButton);
+    regenRow.appendChild(regenButton);
+    box.appendChild(regenRow);
     const known = shareLinks.get(quote.id);
-    if (known) showLink(known.url, known.expiresAt, true);
+    if (known) {
+      showLink(known.url, known.expiresAt);
+      readyNotice = 'Link già pronto, da inviare: è lo stesso di prima.';
+      say(readyNotice);
+    }
     panel.appendChild(box);
   }
 
