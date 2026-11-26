@@ -12,6 +12,7 @@ import {
   CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery, awaitingReplyFor, channelWordsIn, filterCustomerRows,
+  isDeletedCustomerRow,
   matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchMatchFields, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
@@ -1013,7 +1014,16 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const seenCompanies = new Set();
   for (const contact of contacts) {
     const company = (contact?.companyId && companyById.get(contact.companyId)) || null;
-    if (company) seenCompanies.add(company.id);
+    // backlog:4eec2e48 (review #1161 P1 su c50be6af + P1 su 9cdde55cc, stessa
+    // radice: l'unione delle partizioni trattata come una sola): la riga
+    // azienda-sola vive solo nelle viste non archiviate (filterCustomerRows
+    // scarta le righe archiviate lì e le tombstone ovunque), quindi solo un
+    // contatto che quelle viste mostrano — né archiviato né cancellato, gli
+    // stessi predicati del filtro di riga — nasconde la riga azienda-sola.
+    // Un archiviato (o una tombstone) non la nasconde più nelle viste attive.
+    if (company && !contact?.archivedAt && !isDeletedCustomerRow(contact)) {
+      seenCompanies.add(company.id);
+    }
     subjects.push({ contact, company });
   }
   for (const company of companies) {

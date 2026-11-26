@@ -148,6 +148,94 @@ test('4eec2e48: il tetto degli attivi non sporca la vista Archiviati', async (t)
   assert.equal(page.totalIsExact, true, 'the archiviati view stays exact when only the active partition truncates');
 });
 
+/**
+ * backlog:4eec2e48 (review #1161 P1 su c50be6af + P1 su 9cdde55cc, stessa
+ * radice: l'unione delle partizioni trattata come una sola — tabella che
+ * tiene ogni caso dei giri precedenti e di questo):
+ * - un archiviato non nasconde la riga azienda-sola nelle viste attive
+ *   (cade sulla testa c50be6af, dove seenCompanies si riempiva da ogni
+ *   contatto dell'unione e il giro dell'azienda la saltava);
+ * - un attivo coprente non crea doppioni (nessuna riga azienda-sola in più);
+ * - una tombstone non nasconde la riga azienda-sola in nessuna vista;
+ * - la vista Archiviati elenca comunque il contatto archiviato.
+ */
+
+async function companyScene(t) {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const onlyArchived = await app.services.companies.create({ name: 'Solo Archiviati Srl' });
+  const archivedContact = await app.services.contacts.create({
+    companyId: onlyArchived.id, firstName: 'Vecchio', lastName: 'Archiviato',
+    email: 'vecchio-archiviato@b2-esempio.it',
+  });
+  await app.services.contacts.archive(archivedContact.id, { actor: ACTOR });
+  const covered = await app.services.companies.create({ name: 'Attivi Spa' });
+  const activeContact = await app.services.contacts.create({
+    companyId: covered.id, firstName: 'Anna', lastName: 'Attiva',
+    email: 'anna-attiva@b2-esempio.it',
+  });
+  const match = (rows, filters) => rows.filter((row) => Object.entries(filters)
+    .every(([key, value]) => (Array.isArray(value) ? value.includes(row?.[key]) : row?.[key] === value)));
+  const exact = (rows) => ({ listWhere: async (filters) => match(rows, filters) });
+  const modules = {
+    get: (name) => {
+      if (name === 'contact') return { service: app.services.contacts };
+      if (name === 'company') return { service: app.services.companies };
+      if (name === 'interaction-message') return { service: exact([]) };
+      if (name === 'interaction-call') return { service: exact([]) };
+      throw Object.assign(new Error(`Unknown module ${name}`), { code: 'MODULE_NOT_FOUND' });
+    },
+  };
+  return { base: { modules, core: {}, names: {} }, onlyArchived, archivedContact, covered, activeContact };
+}
+
+const companyOnlyRow = (page, companyId) => page.items.find(
+  (item) => item?.resource === 'company' && item?.id === companyId,
+);
+
+test('4eec2e48: un archiviato non nasconde la riga azienda-sola in Tutti', async (t) => {
+  const { base, onlyArchived, archivedContact } = await companyScene(t);
+  const page = await listCustomerRecords(base, {});
+  assert.ok(companyOnlyRow(page, onlyArchived.id) !== undefined,
+    'the company named only by an archived contact still lists its company-only row');
+  assert.ok(page.items.every((item) => item.id !== archivedContact.id),
+    'the archived contact itself stays out of Tutti');
+  assert.equal(pill(page, 'tutti'), page.total, 'the pill agrees with the page');
+});
+
+test('4eec2e48: un attivo coprente non crea righe azienda doppie', async (t) => {
+  const { base, covered } = await companyScene(t);
+  const page = await listCustomerRecords(base, {});
+  assert.equal(companyOnlyRow(page, covered.id), undefined,
+    'no company-only row when an active contact already names the company');
+});
+
+test('4eec2e48: la vista Archiviati elenca comunque il contatto archiviato', async (t) => {
+  const { base, archivedContact } = await companyScene(t);
+  const page = await listCustomerRecords(base, { vista: 'archiviati' });
+  assert.ok(page.items.some((item) => item.id === archivedContact.id),
+    'the archived contact is still listed in its own view');
+});
+
+test('4eec2e48: una tombstone non nasconde la riga azienda-sola', async (t) => {
+  const { base, onlyArchived } = await companyScene(t);
+  const contactService = base.modules.get('contact').service;
+  const tombstone = {
+    id: 'tombstone-stub', companyId: onlyArchived.id, firstName: 'Tomba', lastName: 'Pietra',
+    email: 'tomba@b2-esempio.it', archivedAt: null, deletedAt: '2026-11-25T15:59:10.000Z',
+  };
+  const stubbed = withContactService(base, {
+    list: async (opts = {}) => (opts?.archivedOnly === true
+      ? contactService.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true })
+      : [tombstone]),
+  });
+  const page = await listCustomerRecords(stubbed, {});
+  assert.ok(page.items.every((item) => item.id !== tombstone.id),
+    'the tombstone lists no row in any view');
+  assert.ok(companyOnlyRow(page, onlyArchived.id) !== undefined,
+    'neither the archived contact nor the tombstone hides the company-only row');
+});
+
 test('4eec2e48: la lettura archiviati in errore non rompe Tutti', async (t) => {
   const { base } = await scene(t);
   const fault = Object.assign(new Error('archived index unavailable'), { code: 'ARCHIVED_INDEX_DOWN' });
