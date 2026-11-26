@@ -12,6 +12,7 @@ import {
   CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery, awaitingReplyFor, channelWordsIn, filterCustomerRows,
+  isDeletedCustomerRow,
   matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchMatchFields, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
@@ -835,12 +836,74 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   }
   // Voce 91c92940274c: la vista «Archiviati» legge solo gli archiviati
   // (mai gli eliminati); le altre viste non li vedono mai.
+  // backlog:4eec2e48 (B2, 25/11: la linguetta «Archiviati 0» con due
+  // contatti archiviati): le linguette si contano sulle righe della
+  // scansione, che fuori dalla vista «Archiviati» escludeva gli archiviati
+  // — il conteggio leggeva sempre 0. La scansione li include sempre
+  // (seconda lettura limitata, mai gli eliminati); il filtro di riga li
+  // tiene fuori dalle altre viste e pagine come prima.
   const wantArchived = query.view?.filters?.archiviati === true;
-  let contacts = wantArchived
-    ? await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true })
-    : await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  // backlog:4eec2e48 (review #1161 P2 su c50be6af): la vista «Archiviati»
+  // non dipende mai dalla lettura degli attivi — main non la emetteva per
+  // quella vista. La lettura è protetta come quella dei soli archiviati
+  // (causa nel log come gli altri percorsi 5xx che AGENTS.md richiede);
+  // solo la vista che la partizione serve rifiuta, l'altra la ignora.
+  let activeContacts = [];
+  let activeContactsError = null;
+  try {
+    activeContacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  } catch (error) {
+    activeContactsError = error;
+    console.error(
+      `[accordo] customer active contacts unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+    );
+  }
+  if (!wantArchived && activeContactsError !== null) throw activeContactsError;
+  // backlog:4eec2e48 (review #1161 P2): la lettura dei soli archiviati serve
+  // solo alla vista «Archiviati» e alla sua linguetta — un suo guasto non
+  // deve mai rompere le pagine che non ne hanno bisogno. Si degrada con la
+  // causa nel log (nome, codice, spazio) come gli altri percorsi 5xx che
+  // AGENTS.md richiede; solo la vista «Archiviati» rifiuta con un codice.
+  let archivedContacts = [];
+  let archivedContactsError = null;
+  try {
+    archivedContacts = await contactsSvc.list({
+      limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true,
+    });
+  } catch (error) {
+    archivedContactsError = error;
+    console.error(
+      `[accordo] customer archived contacts unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+    );
+  }
+  if (wantArchived && archivedContactsError !== null) {
+    throw new AppError('the archiviati view needs the archived records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  // Le due letture chiedono predicati disgiunti (stesso tetto), ma un
+  // servizio che ignorasse archivedOnly tornerebbe le stesse righe due
+  // volte: l'unione deduplica per id (vince l'attivo) così le linguette
+  // non contano mai un contatto due volte.
+  const seenContactIds = new Set();
+  let contacts = [...activeContacts, ...archivedContacts].filter((contact) => {
+    const id = contact?.id;
+    if (typeof id !== 'string' || id === '' || seenContactIds.has(id)) return false;
+    seenContactIds.add(id);
+    return true;
+  });
   let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
-  const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
+  // backlog:4eec2e48 (review #1161 P1): la completezza è per partizione —
+  // un troncamento nella partizione che la vista risposta non mostra non
+  // avvelena la sua esattezza (totalIsExact, linguette, scansione di
+  // ricerca). Le aziende sono condivise: se mancano loro, mancano a tutti.
+  const activeComplete = activeContactsError === null
+    && activeContacts.length < CUSTOMER_SCAN_LIMIT
+    && companies.length < CUSTOMER_SCAN_LIMIT;
+  const archivedComplete = archivedContactsError === null
+    && archivedContacts.length < CUSTOMER_SCAN_LIMIT
+    && companies.length < CUSTOMER_SCAN_LIMIT;
+  // La vista risposta decide: «Archiviati» legge la sua partizione, tutte le
+  // altre solo gli attivi (filterCustomerRows li esclude sempre lì).
+  const complete = wantArchived ? archivedComplete : activeComplete;
   // backlog:d128847d21fc: the scan holds the newest records only, so a
   // search over a truncated scan could never find an older customer — a
   // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
@@ -967,7 +1030,16 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const seenCompanies = new Set();
   for (const contact of contacts) {
     const company = (contact?.companyId && companyById.get(contact.companyId)) || null;
-    if (company) seenCompanies.add(company.id);
+    // backlog:4eec2e48 (review #1161 P1 su c50be6af + P1 su 9cdde55cc, stessa
+    // radice: l'unione delle partizioni trattata come una sola): la riga
+    // azienda-sola vive solo nelle viste non archiviate (filterCustomerRows
+    // scarta le righe archiviate lì e le tombstone ovunque), quindi solo un
+    // contatto che quelle viste mostrano — né archiviato né cancellato, gli
+    // stessi predicati del filtro di riga — nasconde la riga azienda-sola.
+    // Un archiviato (o una tombstone) non la nasconde più nelle viste attive.
+    if (company && !contact?.archivedAt && !isDeletedCustomerRow(contact)) {
+      seenCompanies.add(company.id);
+    }
     subjects.push({ contact, company });
   }
   for (const company of companies) {
@@ -1560,7 +1632,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // dependency is unreadable or partial here.
   const views = CUSTOMER_VIEWS.map((view) => {
     const entry = { id: view.id, label: view.label };
-    if (complete !== true) return entry;
+    // backlog:4eec2e48 (review #1161 P1): ogni linguetta dipende dalla sua
+    // partizione — «Archiviati» dagli archiviati, tutte le altre dagli attivi.
+    const viewNeedsArchived = view.filters?.archiviati === true;
+    if ((viewNeedsArchived ? archivedComplete : activeComplete) !== true) return entry;
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
     if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
     if (view.id === 'da-rispondere' && !repliesReadable) return entry;
