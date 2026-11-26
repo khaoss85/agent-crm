@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { Router } from './router.js';
 import {
   AppError,
-  ForbiddenError,
   NotFoundError,
   ValidationError,
   normalizeError,
@@ -514,11 +513,14 @@ export function buildRouter(app) {
       );
     }
   };
+  // A private booking answers 404 to anyone but its creator and the
+  // administrators — the same not-found answer as a missing row, like the
+  // package's own mutation paths (backlog:9aa5c073, `refuseUnlessSeesFull`).
+  // A 403 here would confirm the booking exists. One shared gate, so the
+  // generic PATCH and the generic action surface refuse identically.
   const refuseUnlessAppointmentVisible = (viewer, row) => {
-    if (viewerSeesFull(viewer, row)) return row;
-    throw new ForbiddenError('only its creator and the administrators may change a private booking', {
-      field: 'visibility',
-    });
+    if (row != null && viewerSeesFull(viewer, row)) return row;
+    throw new NotFoundError('appointment', typeof row?.id === 'string' ? row.id : 'unknown');
   };
 
   // Team calendar (BO-F3 \"07 Calendario\"). Reads and the booking flow over
@@ -1991,8 +1993,10 @@ export function buildRouter(app) {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
     // Someone else's private booking is unchangeable (backlog:9aa5c073):
-    // refused 403 before the update runs. Managed fields already refuse a
-    // direct write; this keeps the decision on the row, not on the field.
+    // answered 404 before the update runs — the same not-found as a missing
+    // row, so the answer never confirms the booking exists. Managed fields
+    // already refuse a direct write; this keeps the decision on the row,
+    // not on the field.
     if (params.module === APPOINTMENT_MODULE_NAME && typeof module.service.get === 'function') {
       refuseUnlessAppointmentVisible(
         await resolveAppointmentViewer(app, { actor, identity, organizationId }),
@@ -2014,7 +2018,8 @@ export function buildRouter(app) {
     const actionable = resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
     // Someone else's private booking stays untouchable here too
     // (backlog:9aa5c073): no appointment action exists today, and any
-    // future one meets the same 403 first.
+    // future one meets the same 404 first — never a 403 that would confirm
+    // the booking exists.
     if (params.module === APPOINTMENT_MODULE_NAME && typeof actionable?.service?.get === 'function') {
       refuseUnlessAppointmentVisible(
         await resolveAppointmentViewer(app, { actor, identity, organizationId }),
