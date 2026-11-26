@@ -22,6 +22,7 @@ import {
   checkSpaceId,
   checkStepInput,
   computeSequenceMetrics,
+  correctSequenceMessage,
   enrollSequencePerson,
   optionalSequenceLabel,
   removeSuppression,
@@ -174,7 +175,10 @@ export function createSequencesPackage(options = {}) {
     // pause/resume without doubles, metrics counted from records.
     // 2: backlog:b6f8a6504a24 — space send rules (window, daily cap, one
     // journey, do-not-contact) plus the sequence-suppression resource.
-    version: 2,
+    // 3: backlog:d1f18fcedd12 — the approval proposal shows every planned
+    // message of the person, and a human correction of a waiting message
+    // survives the approval instead of being recomputed away.
+    version: 3,
     label: 'Follow-up sequences',
     description:
       'Follow-up sequences with reply stop and human approval: ordered day+channel steps with personalized '
@@ -518,6 +522,24 @@ export function createSequencesPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'correct-sequence-message',
+        appMethod: 'correctSequenceMessage',
+        label: 'Correct one waiting approval message',
+        description:
+          'Rewrite the planned text of one waiting-approval message: the corrected variables are stored on '
+          + 'the send row and the sweep sends exactly them on approval, only to that recipient. Refuses when the '
+          + 'message is unknown, already decided, or the variable count does not match the step.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id.' },
+          { name: 'messageKey', type: 'string', hint: 'The waiting-approval message key.' },
+          { name: 'variables', type: 'string', hint: 'The corrected template variables, one per step variable.' },
+        ],
+        create(runtime) {
+          return async (request) => correctSequenceMessage({ modules: runtime.modules, input: request ?? {}, at: nowIso() });
+        },
+      },
+      {
+        operationContract: 1,
         name: 'advance-sequences',
         appMethod: 'advanceSequences',
         label: 'Advance due sequence steps',
@@ -634,9 +656,13 @@ export {
   SEQUENCE_SEND_PERMISSION,
   advanceSequences,
   computeSequenceMetrics,
+  correctSequenceMessage,
   findReply,
   optionalSequenceLabel,
+  parseStoredVariables,
   personalizeVars,
+  plannedMessagesPreview,
+  proposalSummary,
   sequenceKey,
   sequenceMessageKey,
 } from './sequences.js';

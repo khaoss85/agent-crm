@@ -344,6 +344,60 @@ export function sameSequenceStepContent(stored, checked) {
     && stored.templateVars === checked.templateVars;
 }
 
+/**
+ * The planned messages of one enrollment for the approval proposal
+ * (backlog:d1f18fcedd12): every step rendered with the person's slot data,
+ * deterministic — the `personalize` hook may still rewrite at send time, so
+ * the proposal is what is planned, not a promise of the final text. One
+ * bounded line per step, so the human approving sees every planned message.
+ */
+export function plannedMessagesPreview(orderedSteps, enrollment, maxChars = 280) {
+  const steps = Array.isArray(orderedSteps) ? orderedSteps : [];
+  return steps
+    .filter((entry) => entry && Number.isInteger(entry.stepOrder))
+    .sort((a, b) => a.stepOrder - b.stepOrder)
+    .map((entry) => {
+      const line = personalizeVars(entry.templateVars, enrollment).join(' ').replace(/\s+/g, ' ').trim();
+      const shown = line.length > maxChars ? `${line.slice(0, maxChars)}…` : line;
+      return `${entry.stepOrder + 1}. ${shown}`;
+    });
+}
+
+/**
+ * The approval proposal summary for one enrollment's due step
+ * (backlog:d1f18fcedd12): the step waiting for a human ok, then every
+ * planned message of that person — before any send starts, the proposal
+ * shows what each person would receive.
+ */
+export function proposalSummary(enrollment, step, orderedSteps, capNote = '') {
+  const label = enrollment?.subjectLabel || enrollment?.subjectId || '?';
+  const lines = [
+    `Sequence step ${step.stepOrder + 1} for ${label} waits for send approval${capNote}.`,
+    `Planned messages for ${label}:`,
+    ...plannedMessagesPreview(orderedSteps, enrollment),
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * A stored send payload the sweep reuses: a non-empty array of strings, or
+ * null for missing, placeholder (`[]`, written before the first render) and
+ * malformed. A human-corrected waiting row carries a non-empty array, so it
+ * survives the approval instead of being recomputed away (backlog:d1f18fcedd12).
+ */
+export function parseStoredVariables(storedJson) {
+  if (typeof storedJson !== 'string' || storedJson === '') return null;
+  try {
+    const parsed = JSON.parse(storedJson);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((entry) => typeof entry === 'string')) {
+      return parsed;
+    }
+  } catch {
+    // Fall through to null: a malformed payload reproduces below.
+  }
+  return null;
+}
+
 /** Substitute `{{key}}` slots from the enrolled person's vars. Unknown slots stay empty, never undefined. */
 export function personalizeVars(templateVarsJson, enrollment) {
   let slots = [];
@@ -1125,7 +1179,7 @@ export async function advanceSequences({
                 permission: SEQUENCE_SEND_PERMISSION,
                 actionKind: 'sequence-step-send',
                 actionKey: messageKey,
-                summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval${capNote}`,
+                summary: proposalSummary(current, step, ordered, capNote),
                 actor: timer,
               });
             } catch (error) {
@@ -1282,13 +1336,18 @@ export async function advanceSequences({
             if (!isWinnerConflict(error)) throw error;
           }
         } else if (stored[0].status === 'waiting-approval') {
-          // A human-approved waiting row still carries the placeholder
-          // payload: persist the computed variables before the first outbox
-          // claim, so a crash retry reuses them instead of recomputing.
-          const computed = await resolveSendVariables(step, current, null);
-          await sends.applyManaged(stored[0].id, {
-            variables: JSON.stringify(computed),
-          }, { actor: timer });
+          // A waiting row the human corrected carries the corrected text:
+          // keeping it is the correction (backlog:d1f18fcedd12) — recomputing
+          // would silently discard what the person wrote. A row still on the
+          // placeholder payload persists the computed variables before the
+          // first outbox claim, so a crash retry reuses them instead of
+          // recomputing.
+          if (parseStoredVariables(stored[0].variables) === null) {
+            const computed = await resolveSendVariables(step, current, null);
+            await sends.applyManaged(stored[0].id, {
+              variables: JSON.stringify(computed),
+            }, { actor: timer });
+          }
         }
         const claim = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
         dueClaimed.add(`${current.spaceId} ${messageKey}`);
@@ -1631,6 +1690,76 @@ export async function enrollSequencePerson({ modules, input, at }) {
       return { enrollment: winner[0], replayed: true };
     }
   });
+}
+
+/**
+ * Correct one waiting approval message (backlog:d1f18fcedd12): the person
+ * saw the planned text in the proposal and rewrites it. The corrected
+ * variables are stored on the waiting send row, and the sweep sends exactly
+ * them on approval instead of recomputing — the correction reaches only
+ * that recipient, never the other enrollments' rows.
+ *
+ * Fail-closed: unknown message refuses (404), a row that already left
+ * `waiting-approval` refuses (409 — a queued, sent, skipped or dead-letter
+ * row is decided and never rewritten), a correction whose variable count
+ * does not match the step refuses (the provider template needs exactly its
+ * variables), and a correction for a person no longer active refuses.
+ */
+export async function correctSequenceMessage({ modules, input, at }) {
+  const record = input && typeof input === 'object' ? input : {};
+  const actor = requireSequenceActor(record.actor, 'Correcting a sequence message');
+  const spaceId = checkSpaceId(record.spaceId);
+  const messageKey = checkRecordKey(record.messageKey, 'messageKey');
+  const raw = Array.isArray(record.variables) ? record.variables : null;
+  if (raw === null || raw.length === 0 || raw.length > 32
+    || raw.some((entry) => typeof entry !== 'string' || entry === '' || entry.length > 1024)) {
+    throw new ValidationError('variables must be a non-empty array of bounded non-empty strings', { field: 'variables' });
+  }
+  const sends = trusted(modules, 'sequence-send');
+  const rows = await sends.listWhere({ spaceId, sourceKey: messageKey });
+  const row = rows[0] ?? null;
+  if (!row) {
+    throw new AppError('Unknown sequence message in this space', { code: 'SEQUENCE_SEND_UNKNOWN', status: 404 });
+  }
+  if (row.status !== 'waiting-approval') {
+    throw new AppError(`Only a waiting-approval message can be corrected, this one is ${row.status}`, {
+      code: 'SEQUENCE_SEND_NOT_CORRECTABLE', status: 409,
+    });
+  }
+  const stepRows = await trusted(modules, 'sequence-step')
+    .listWhere({ spaceId, sequenceSourceKey: row.sequenceSourceKey });
+  const step = (Array.isArray(stepRows) ? stepRows : [])
+    .find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
+  if (step) {
+    let expected = -1;
+    try {
+      const parsed = JSON.parse(step.templateVars ?? '[]');
+      expected = Array.isArray(parsed) ? parsed.length : -1;
+    } catch {
+      expected = -1;
+    }
+    if (expected >= 0 && raw.length !== expected) {
+      throw new ValidationError('variables must match the step variable count', {
+        field: 'variables',
+        details: { expected, received: raw.length },
+      });
+    }
+  }
+  const enrollmentRows = await trusted(modules, 'sequence-enrollment')
+    .listWhere({ spaceId, sourceKey: row.enrollmentSourceKey });
+  const enrollment = enrollmentRows[0] ?? null;
+  if (!enrollment || enrollment.status !== 'active') {
+    throw new AppError('Only the message of an active enrollment can be corrected', {
+      code: 'SEQUENCE_SEND_NOT_CORRECTABLE', status: 409,
+    });
+  }
+  const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
+  await sends.applyManaged(row.id, {
+    variables: JSON.stringify(raw),
+    decidedAt: atIso,
+  }, { actor });
+  const reread = await sends.listWhere({ spaceId, sourceKey: messageKey });
+  return { send: reread[0] ?? null };
 }
 
 /** The longest do-not-contact reason a human reads in one line. */
