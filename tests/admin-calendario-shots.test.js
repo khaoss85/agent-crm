@@ -6,7 +6,7 @@
  * phone viewport. The harness loads a week for two named members through
  * the view's own "Mostra settimana" button, searches free slots through
  * "Trova slot liberi" from a phrase, so the PNG shows the week, the proposal
- * rows with their ghost, the out-of-hours note (fetta 8) and the prefilled
+ * rows with their ghosts and the prefilled
  * manual form. Each run writes a PNG of the
  * painted week and reports its byte size and pixel dimensions; the phone
  * run additionally asserts, from inside the page, that nothing scrolls
@@ -180,14 +180,16 @@ const WEEK = {
 
 // The first slot sits beside the held taglio, never on it: a proposal that
 // overlaps the person's own booking is dropped (backlog:5fbebe8559e9).
+// backlog:0a57d7b520ef: both demo slots sit inside the 09:00–18:00 Rome
+// grid — out-of-grid steps are never proposed, so none is named below it.
 const SLOTS = [
   { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
-  { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
+  { startsAt: '2026-10-22T15:00:00.000Z', endsAt: '2026-10-22T15:30:00.000Z' },
 ];
 
 // backlog:913c61ec: a phrase with a time proposes that time only, so the
-// shot drafts a day without a time («giovedì») to paint several proposals,
-// their ghost and the out-of-hours line.
+// shot drafts a day without a time («giovedì») to paint several proposals
+// and their ghosts.
 const DRAFT = {
   teamMemberId: 'marco',
   serviceKey: 'taglio',
@@ -329,8 +331,8 @@ const probe = {
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
   ghosts: [...document.querySelectorAll('button')].filter((b) => b.textContent.startsWith('✦ Proposta')).length,
-  // Fetta 8 names out-of-grid proposals under the grid instead of ghosting
-  // them: the 19:00 demo slot paints this note, never a second ghost.
+  // backlog:0a57d7b520ef: no out-of-grid proposal is ever named under the
+  // grid — both demo slots ghost on their own rows instead.
   outside: [...document.querySelectorAll('p.empty')].filter((n) => n.textContent.startsWith('✦ Proposta')).length,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
@@ -588,10 +590,11 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.ask.popBottom <= probe.ask.innerHeight && probe.ask.popRight <= probe.ask.innerWidth, `the popover with the question stays on screen: ${JSON.stringify(probe.ask)}`);
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.ok(probe.form && probe.form.inRail === false && probe.form.forms === 1, `one form, in the popover (${JSON.stringify(probe.form)})`);
-  assert.deepEqual(probe.form.labels, ['Cliente', 'Persona del team', 'Servizio', 'Prezzo (€)', 'Giorno', 'Inizio', 'Fine', 'Luogo', 'Link riunione', 'Note', 'Visibilità'], 'every field carries its label');
+  // backlog:0f2ae629 (incidental, pre-existing on main): the form carries «Si ripete».
+  assert.deepEqual(probe.form.labels, ['Cliente', 'Persona del team', 'Servizio', 'Prezzo (€)', 'Giorno', 'Inizio', 'Fine', 'Luogo', 'Link riunione', 'Note', 'Si ripete', 'Visibilità'], 'every field carries its label');
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
-  assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
-  assert.equal(probe.outside, 1, 'the out-of-hours slot is named under the grid (fetta 8)');
+  assert.equal(probe.ghosts, 2, 'two dashed ghosts on the Thursday column');
+  assert.equal(probe.outside, 0, 'no out-of-hours slot is named under the grid (backlog:0a57d7b520ef)');
   console.log(`calendario desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 

@@ -1619,27 +1619,27 @@ export function resolveDraftMemberIds(draftMember, named, members) {
 }
 
 /**
- * backlog:d1e4d90e — keep phrase proposals bookable: begun steps are cut, so
- * a «45 minuti con Marco» search never proposes the past. Out-of-hours steps
- * stay, named below the grid by their honest lines (BO-F6-11 fetta 8, owner
- * 29/10) — only the past is unbookable for everyone.
+ * backlog:d1e4d90e + backlog:0a57d7b520ef — keep phrase proposals bookable:
+ * begun steps are cut, so a «45 minuti con Marco» search never proposes the
+ * past, and steps outside the 09:00–18:00 Rome grid are dropped, so a day
+ * search never proposes 18:00–09:00 (production 18/11: night steps 00:00–
+ * 02:30 filled the proposals). Same rule the booking panel already applies
+ * with slotInGrid; no member-hours store exists, the grid is the rule.
  * @param {unknown} slots @param {number} [nowMs]
  */
 export function filterPhraseProposals(slots, nowMs = Date.now()) {
   if (!Array.isArray(slots)) return [];
   return slots.filter((slot) => {
     const startMs = Date.parse(String(slot?.startsAt ?? ''));
-    return Number.isFinite(startMs) && startMs >= nowMs;
+    return Number.isFinite(startMs) && startMs >= nowMs && slotInGrid(slot?.startsAt, slot?.endsAt);
   });
 }
 
 /**
- * backlog:d1e4d90e — rank phrase proposals so the painted hours win: the
- * night is always free, so the first free steps of the week are night steps
- * and a plain time order fills every proposal with the night. Steps inside
- * the 09:00–18:00 grid come first (in time order), out-of-hours steps after
- * (in time order, for the honest lines below the grid) — never dropped, only
- * ordered, so fetta 8 still names them.
+ * backlog:d1e4d90e + backlog:0a57d7b520ef — rank phrase proposals in time
+ * order, painted hours first: with out-of-grid steps dropped upstream by
+ * filterPhraseProposals this is a plain time order, kept as the shared
+ * ordering step (the booking panel ranks before its own grid cut).
  * @param {unknown} slots
  */
 export function rankPhraseProposals(slots) {
@@ -3773,9 +3773,9 @@ export function createCalendarioView(deps) {
       // One dashed ghost per searched slot on its Rome day, clickable to
       // confirm like the card rows. The dashed `bo-add-button` is the shared
       // shell control for add-an-item blocks, not a new style. Fetta 4 seats
-      // each ghost on its time rows, spanning the day width. Fetta 8: a slot
-      // starting outside 09:00–18:00 never lands on another hour's row — it
-      // joins the honest out-of-hours lines below the grid instead.
+      // each ghost on its time rows, spanning the day width
+      // (backlog:0a57d7b520ef: proposals are cut to the grid upstream, so
+      // every ghost lands on its own rows, never on another hour's).
       for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
@@ -3838,23 +3838,9 @@ export function createCalendarioView(deps) {
       }
     });
     panel.appendChild(grid);
-    // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or
-    // says so): proposals starting outside 09:00–18:00 are named here with
-    // their real time instead of landing on another hour's row. Confirming
-    // stays in the «Fissa con una frase» card rows, like every other slot.
-    for (const slot of state.proposals) {
-      if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
-      const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
-      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
-      // spanning several rows is never confirmed from the card — the
-      // operator picks the person in the form.
-      panel.appendChild(el(doc, 'p', {
-        className: 'empty',
-        text: slot?.personChoiceRequired === true
-          ? `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dal modulo «Nuovo appuntamento» dopo aver scelto la persona.`
-          : `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
-      }));
-    }
+    // backlog:0a57d7b520ef — proposals are already cut to the 09:00–18:00
+    // grid upstream (filterPhraseProposals), so every proposal paints its
+    // own ghost rows above: nothing is ever named below the grid.
     return panel;
   }
 
@@ -4879,12 +4865,9 @@ export function createCalendarioView(deps) {
       if (needsPersonChoice) for (const slot of kept) slot.personChoiceRequired = true;
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
-      // future steps are proposed — cut against the view clock so tests pin
-      // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
-      // below the grid (fetta 8), never dropped.
-      // backlog:d1e4d90e — the night is always free, so rank the painted
-      // hours first: day steps fill the proposals, night steps stay behind
-      // for the honest lines, never dropped (fetta 8).
+      // future in-grid steps are proposed — cut against the view clock and
+      // the 09:00–18:00 grid so tests pin it (backlog:d1e4d90e,
+      // backlog:0a57d7b520ef): no 18:00–09:00 step is ever proposed.
       // Review #646 P2: the held-booking guard reads the SEARCHED person's
       // week. When the painted week does not hold every searched identity
       // (nobody named, the filter shows marco and the phrase names sara, a

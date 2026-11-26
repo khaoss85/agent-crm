@@ -1311,7 +1311,9 @@ test('slotInGrid keeps the painted 09:00–18:00 hours, nothing else', () => {
   assert.equal(slotInGrid('not-a-time', '2026-10-22T16:30:00.000Z'), false, 'a corrupt start fails closed');
 });
 
-test('a 19:00 proposal is named below the grid with its real time, never on the 17:00 row', async () => {
+// backlog:0a57d7b520ef — a 19:00 step is never proposed: no ghost lands
+// on a grid row for it, and no out-of-hours line names it below the grid.
+test('a 19:00 step is never proposed, never ghosted, never named below the grid', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -1343,8 +1345,12 @@ test('a 19:00 proposal is named below the grid with its real time, never on the 
   const ghosts = mount.findAll('button').filter((node) => (node.textContent ?? '').startsWith('✦ Proposta'));
   assert.equal(ghosts.length, 0, 'no ghost lands on a grid row for the out-of-hours slot');
   assert.ok(
-    texts(mount, 'p').some((text) => text.includes('✦ Proposta') && text.includes('19:00') && text.includes("fuori dall'orario mostrato")),
-    'the honest line names the real 19:00 time and says the grid does not show it',
+    !texts(mount, 'p').some((text) => text.includes('✦ Proposta') && text.includes("fuori dall'orario mostrato")),
+    'no out-of-hours line below the grid',
+  );
+  assert.ok(
+    !texts(mount, 'span').some((text) => text.includes('19:00')),
+    'no 19:00 proposal row in the phrase card',
   );
 });
 
@@ -3889,7 +3895,9 @@ test('a phrase step held under one identity is never proposed under the other', 
 test('a phrase step free under every identity is proposed once on the drafted one', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  // backlog:0a57d7b520ef: the identity fixture stays inside the grid (16:00
+  // Rome) — out-of-grid steps are never proposed.
+  const step = { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
   const client = stubClient({
     phrase: {
       teamMemberId: 'coach-guido',
@@ -3927,7 +3935,7 @@ test('a phrase step free under every identity is proposed once on the drafted on
   assert.equal(payload(booked[0]).teamMemberId, 'coach-guido', 'the booking stays on the drafted identity');
 });
 
-test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:d1e4d90e)', () => {
+test('filterPhraseProposals cuts begun steps and out-of-grid steps (backlog:d1e4d90e, backlog:0a57d7b520ef)', () => {
   const nowMs = Date.parse('2026-11-04T08:00:00.000Z');
   const slots = [
     { startsAt: '2026-11-02T08:00:00.000Z', endsAt: '2026-11-02T08:30:00.000Z' },
@@ -3939,8 +3947,8 @@ test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:
   ];
   assert.deepEqual(
     filterPhraseProposals(slots, nowMs).map((slot) => slot.startsAt),
-    ['2026-11-04T22:00:00.000Z', '2026-11-04T08:00:00.000Z', '2026-11-04T09:00:00.000Z'],
-    'past Monday and corrupt rows go, future night steps stay for the honest lines',
+    ['2026-11-04T08:00:00.000Z', '2026-11-04T09:00:00.000Z'],
+    'past Monday, corrupt rows and night steps go: only future 09:00–18:00 Rome steps stay',
   );
   assert.deepEqual(filterPhraseProposals('nope', nowMs), [], 'non-lists stay empty');
 });
@@ -3953,7 +3961,7 @@ test('rankPhraseProposals puts the painted hours first, night stays behind (back
   assert.deepEqual(
     rankPhraseProposals([night, evening, morning]).map((slot) => slot.startsAt),
     [morning.startsAt, night.startsAt, evening.startsAt],
-    'day steps first in time order, out-of-hours behind for the honest lines, never dropped',
+    'day steps first in time order, out-of-hours behind (dropped upstream by filterPhraseProposals), never dropped here',
   );
   assert.deepEqual(rankPhraseProposals([night]), [night], 'a night-only week still proposes honestly');
   assert.deepEqual(rankPhraseProposals('nope'), [], 'non-lists stay empty');
