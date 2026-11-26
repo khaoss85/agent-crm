@@ -491,9 +491,9 @@ export async function planReply({ inbound, consecutiveReplies, maxConsecutiveRep
   const checked = assertReplyInbound(inbound);
   const streak = assertConsecutive(consecutiveReplies, 'consecutiveReplies');
   const cap = assertMaxConsecutive(maxConsecutiveReplies);
-  if (!REPLIES_INBOUND_CHANNELS.includes(checked.channel)) {
-    return Object.freeze({ status: 'skipped', reason: 'unsupported-channel', proposal: null });
-  }
+  // Opt-out first: a do-not-contact line or an opted-out consent halts the
+  // agent even on a channel that carries no reply (e.g. tiktok), so the
+  // thread waits for a human instead of leaving as a quiet skip.
   if (checked.consent === 'opted-out' || carriesOptOut(checked.text)) {
     return Object.freeze({
       status: 'halted',
@@ -506,6 +506,9 @@ export async function planReply({ inbound, consecutiveReplies, maxConsecutiveRep
         note: 'La persona ha chiesto di non essere contattata: il filo aspetta una persona.',
       }),
     });
+  }
+  if (!REPLIES_INBOUND_CHANNELS.includes(checked.channel)) {
+    return Object.freeze({ status: 'skipped', reason: 'unsupported-channel', proposal: null });
   }
   if (checked.consent === 'unknown') {
     return Object.freeze({ status: 'skipped', reason: 'consent-unknown', proposal: null });
