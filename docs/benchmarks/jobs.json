@@ -148,8 +148,6 @@
       "summary": "superseded by JTBD-DS-01, which is the current row for this job and carries its evidence. This row is kept because \"hand off a won deal\" is the phrasing a reader or an agent searches for; it said \"there is no handover process, no delivery project and no acceptance\" long after M13, M14a and M14b2 shipped all three, so the same file answered the same question two opposite ways. Activating a contract (M12) records explicit pending obligations from the signed order; M13 turns them into a Delivery Project with work packages and milestones, M14a runs it, M14b2 records deliverables and acceptance.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
-        "tests/delivery-execution-e2e-1.test.js",
-        "tests/delivery-execution-e2e-2.test.js",
         "tests/delivery-execution-e2e.test.js",
         "tests/delivery-handover-e2e.test.js"
       ],
@@ -850,10 +848,8 @@
       "id": "JTBD-DS-02",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
       "status": "partially supported",
-      "summary": "one Delivery Project per activated contract, with one work package per delivery obligation and a milestone plan, each carrying its own snapshot; a project is created from the Contract rather than directly from the Order. M14a adds execution: the project starts, its work packages start, block with a stated reason, resume and complete, and it closes only over completed work — tests/delivery-execution-e2e.test.js, tests/delivery-execution-e2e-1.test.js, tests/delivery-execution-e2e-2.test.js. Still no percent complete, scheduling, staffing, cost or billing",
+      "summary": "one Delivery Project per activated contract, with one work package per delivery obligation and a milestone plan, each carrying its own snapshot; a project is created from the Contract rather than directly from the Order. M14a adds execution: the project starts, its work packages start, block with a stated reason, resume and complete, and it closes only over completed work — tests/delivery-execution-e2e.test.js. Still no percent complete, scheduling, staffing, cost or billing",
       "tests": [
-        "tests/delivery-execution-e2e-1.test.js",
-        "tests/delivery-execution-e2e-2.test.js",
         "tests/delivery-execution-e2e.test.js"
       ],
       "title": "Create a Commessa / Delivery Project from an Order"
