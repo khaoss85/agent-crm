@@ -5,10 +5,12 @@
  * main, so the fast gate must not queue 3 h behind ordinary PRs. The routing
  * has two halves, both pinned here to their definition — never to comments:
  *
- * - runner: the workflow routes a `cure` PR to the reserved `accordo-cure`
- *   runner (registered by the Leader Server); any other PR stays on today's
- *   `accordo-ci` runners. A static `runs-on` (the 21/11 revert, which sent
- *   every cure PR back to the shared runners) fails the routing test below.
+ * - runner: every PR runs on today's static `accordo-ci` runners until the
+ *   Leader Server registers the reserved `accordo-cure` runner (live
+ *   readback 2026-11-26: only the two `accordo-ci` answer). A label-branched
+ *   `runs-on` demanding the unregistered `accordo-cure` label queues the
+ *   gate indefinitely with no in-repo fallback, so it fails the routing
+ *   test below. Re-route by label only after the registration is observed.
  * - rank: the workflow names a `cure` PR's gate `fast-main-red-cure` (rank 0
  *   in the CI server queue via the `main-red-` glob), and
  *   `scripts/ci-fast-step.sh` turns CI_FAST_HEAVY_NAME into the heavy name
@@ -118,16 +120,20 @@ test('a malformed heavy name never reaches the lock: it falls back to today’s 
   assert.equal(heavyName({ CI_FAST_HEAVY_NAME: 'fast main-red' }), normal);
 });
 
-test('a cure PR takes the reserved accordo-cure runner, any other PR stays on accordo-ci', () => {
-  // Anchored to the `runs-on:` line itself (single-line match): workflow
-  // comments also name both runners, so a bare /accordo-cure/ match would
-  // pass on a static `runs-on` and certify a cure that queues nowhere.
-  assert.match(fastJob, /runs-on:.*contains\(github\.event\.pull_request\.labels\.\*\.name, 'cure'\)/, 'runs-on branches on the cure label');
-  assert.match(fastJob, /runs-on:.*accordo-cure/, 'a cure PR leaves the shared runners');
-  assert.match(fastJob, /runs-on:.*accordo-ci/, 'any other PR stays on today’s runners');
-  assert.doesNotMatch(fastJob, /runs-on: \[self-hosted, accordo-ci\]/, 'no static runs-on for every PR (the 21/11 revert)');
+test('the fast job stays on accordo-ci until the reserved runner exists (no cure queue-forever)', () => {
+  // Anchored to the `runs-on:` line itself: a label-branched `runs-on`
+  // demanding the unregistered `accordo-cure` label queues a `cure` PR
+  // indefinitely (live readback 2026-11-26: only the two `accordo-ci`
+  // answer), with no in-repo fallback. Comments also name both runners, so
+  // only the `runs-on:` line counts.
+  const runsOn = fastJob.split('\n').filter((line) => line.includes('runs-on:'));
+  assert.ok(runsOn.some((line) => /runs-on: \[self-hosted, accordo-ci\]/.test(line)), 'every PR runs on today’s static runners');
+  assert.ok(!runsOn.some((line) => line.includes('accordo-cure')), 'no PR demands the unregistered reserved runner');
   // The routing echo lives in the step's `run:` block, reading the values —
-  // not in a comment describing them.
+  // not in a comment describing them. The runner it prints is the static
+  // one above for every label shape (single, cure-first, cure-second): no
+  // label-derived runner, so the echo can never certify a lane `runs-on`
+  // did not take.
   const stepAt = fastJob.indexOf('- name: Cure routing (runner and queue rank)');
   assert.notEqual(stepAt, -1, 'the cure routing step exists');
   const nextStepAt = fastJob.indexOf('- name: PR gate under one machine lock', stepAt);
@@ -135,7 +141,8 @@ test('a cure PR takes the reserved accordo-cure runner, any other PR stays on ac
   const code = fastJob.slice(stepAt, nextStepAt).split('\n')
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'));
-  assert.ok(code.some((line) => line.includes('*,cure,*)') && code.some((other) => other.includes('runner=accordo-cure'))), 'the run block derives the cure runner from the labels');
+  assert.ok(code.some((line) => line.includes('runner=accordo-ci')), 'the run block echoes today’s static runner');
+  assert.ok(!code.some((line) => line.includes('runner=accordo-cure')), 'the run block never echoes the unregistered runner');
   assert.ok(code.some((line) => line.includes('heavy-name=$CI_FAST_HEAVY_NAME')), 'the run block echoes the heavy name it runs under');
 });
 
