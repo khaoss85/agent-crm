@@ -107,13 +107,16 @@ const fakeContact = (kind, i) => ({
   archivedAt: kind === 'archiviato' ? '2026-11-25T15:59:10.000Z' : null,
 });
 
-const stubContactService = (service, { actives = null, archived = null, archivedError = null }) => ({
+const stubContactService = (service, {
+  actives = null, archived = null, archivedError = null, activeError = null,
+}) => ({
   list: async (opts = {}) => {
     if (opts?.archivedOnly === true) {
       if (archivedError !== null) throw archivedError;
       if (archived !== null) return archived;
       return service.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true });
     }
+    if (activeError !== null) throw activeError;
     if (actives !== null) return actives;
     return service.list({ limit: CUSTOMER_SCAN_LIMIT });
   },
@@ -250,4 +253,25 @@ test('4eec2e48: la lettura archiviati in errore non rompe Tutti', async (t) => {
     (error) => error?.code === 'CUSTOMER_LIST_UNAVAILABLE',
     'the archiviati view refuses with a code instead of a bare rejection',
   );
+});
+
+/**
+ * backlog:4eec2e48 (review #1161 P2 su c50be6af, direzione simmetrica):
+ * la vista «Archiviati» non dipende dalla lettura degli attivi — main non
+ * la emetteva per quella vista. Cade sulla testa c50be6af (la lettura
+ * attivi scoppia fuori da ogni try/catch e la vista rifiuta grezza).
+ */
+test('4eec2e48: la lettura attivi in errore non rompe la vista Archiviati', async (t) => {
+  const { base, noMessages, withMessages } = await scene(t);
+  const fault = Object.assign(new Error('active index unavailable'), { code: 'ACTIVE_INDEX_DOWN' });
+  const stubbed = withContactService(base,
+    stubContactService(base.modules.get('contact').service, { activeError: fault }));
+  const page = await listCustomerRecords(stubbed, { vista: 'archiviati' });
+  assert.equal(page.total, 2, 'both archived contacts are listed without the active read');
+  const ids = page.items.map((item) => item.id);
+  assert.ok(ids.includes(noMessages.id), 'the archived contact without messages is listed');
+  assert.ok(ids.includes(withMessages.id), 'the archived contact with messages is listed');
+  assert.equal(pill(page, 'archiviati'), 2, 'the pill agrees with the page');
+  assert.equal(page.totalIsExact, true, 'the archiviati view stays exact without the active read');
+  assert.equal(pill(page, 'tutti'), null, 'no Tutti count without the active read');
 });

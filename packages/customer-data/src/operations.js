@@ -843,7 +843,22 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // (seconda lettura limitata, mai gli eliminati); il filtro di riga li
   // tiene fuori dalle altre viste e pagine come prima.
   const wantArchived = query.view?.filters?.archiviati === true;
-  const activeContacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  // backlog:4eec2e48 (review #1161 P2 su c50be6af): la vista «Archiviati»
+  // non dipende mai dalla lettura degli attivi — main non la emetteva per
+  // quella vista. La lettura è protetta come quella dei soli archiviati
+  // (causa nel log come gli altri percorsi 5xx che AGENTS.md richiede);
+  // solo la vista che la partizione serve rifiuta, l'altra la ignora.
+  let activeContacts = [];
+  let activeContactsError = null;
+  try {
+    activeContacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  } catch (error) {
+    activeContactsError = error;
+    console.error(
+      `[accordo] customer active contacts unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+    );
+  }
+  if (!wantArchived && activeContactsError !== null) throw activeContactsError;
   // backlog:4eec2e48 (review #1161 P2): la lettura dei soli archiviati serve
   // solo alla vista «Archiviati» e alla sua linguetta — un suo guasto non
   // deve mai rompere le pagine che non ne hanno bisogno. Si degrada con la
@@ -880,7 +895,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // un troncamento nella partizione che la vista risposta non mostra non
   // avvelena la sua esattezza (totalIsExact, linguette, scansione di
   // ricerca). Le aziende sono condivise: se mancano loro, mancano a tutti.
-  const activeComplete = activeContacts.length < CUSTOMER_SCAN_LIMIT
+  const activeComplete = activeContactsError === null
+    && activeContacts.length < CUSTOMER_SCAN_LIMIT
     && companies.length < CUSTOMER_SCAN_LIMIT;
   const archivedComplete = archivedContactsError === null
     && archivedContacts.length < CUSTOMER_SCAN_LIMIT
