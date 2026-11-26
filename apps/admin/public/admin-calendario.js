@@ -4763,6 +4763,11 @@ export function createCalendarioView(deps) {
     // The space that asks it (review #664): a queued id is never read back
     // under another space.
     const askedSpace = readSpace();
+    // backlog:0a57d7b520ef (review accordo-muse-review Bondarenko#1164 P1): a timed
+    // draft outside 09:00–18:00 that is free must not silently become day-time
+    // alternatives — it proposes zero slots with a dedicated note and leaves
+    // the form hours empty. Set inside the search below, read by the prefill.
+    let timedOutOfGridFree = false;
     try {
       const answer = await phraseAnswer({ resumeId, seq });
       // e98e7a346b37: the asking space left while the answer was on its way
@@ -4888,7 +4893,8 @@ export function createCalendarioView(deps) {
       }
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
       const nowMs = clock().getTime();
-      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      const heldChecked = dropHeldOverlaps(onDay, heldWeek, searchIds);
+      const ranked = rankPhraseProposals(filterPhraseProposals(heldChecked, nowMs));
       // backlog:913c61ec — a sentence with a time asks for that time: when it
       // is free the proposal is the draft itself; when it is missing the next
       // free steps of the same afternoon follow, with the reason said — «già
@@ -4898,9 +4904,30 @@ export function createCalendarioView(deps) {
       const exact = Number.isFinite(timedAt)
         ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
         : null;
+      // backlog:0a57d7b520ef (review accordo-muse-review Bondarenko#1164 P1): exact
+      // is searched inside ranked, which the grid cut already trimmed — a free
+      // timed step outside 09:00–18:00 would silently become day-time
+      // alternatives with no note while the form still prefills the out-of-grid
+      // hour. Read the step on the pre-filter day list instead: when the timed
+      // hour is free but outside the grid, propose zero slots with a dedicated
+      // note (never the day list, never the generic «nessuno slot libero»).
+      const stepOf = Number.isFinite(timedAt) && !exact
+        ? onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
+        : null;
+      const draftStep = stepOf
+        ? { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf.endsAt }
+        : null;
+      timedOutOfGridFree = Boolean(
+        Number.isFinite(timedAt) && !exact && stepOf && draftStep
+        && timedAt >= nowMs
+        && !slotInGrid(stepOf.startsAt, stepOf.endsAt)
+        && dropHeldOverlaps([draftStep], heldWeek, searchIds).length > 0,
+      );
       // The exact step books the draft's own end (a stated 20 minutes inside
       // a free 30-minute step stays 20, never the search size).
-      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
+      const proposals = timedOutOfGridFree
+        ? []
+        : (exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked);
       state.proposals = proposals.slice(0, 24);
       // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
       // several rows the recognition stands (the draft and its free steps),
@@ -4910,16 +4937,16 @@ export function createCalendarioView(deps) {
         ? 'Bozza pronta: con questo nome ci sono più persone, scegli nel modulo «Nuovo appuntamento» e conferma da lì.'
         : 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
-      if (Number.isFinite(timedAt) && !exact) {
-        const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
-        const draftStep = { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf?.endsAt };
+      if (timedOutOfGridFree) {
+        takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono fuori dall'orario mostrato (09:00–18:00)`;
+      } else if (Number.isFinite(timedAt) && !exact) {
         if (timedAt < nowMs) takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono già passate`;
-        else if (stepOf === null || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
+        else if (!stepOf || !draftStep || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
           takenNote = `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`;
         }
       }
       state.aiNote = proposals.length === 0
-        ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
+        ? (timedOutOfGridFree ? takenNote : (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.'))
         : (takenNote !== '' ? `${takenNote}: ecco gli orari liberi dopo.` : '');
     } catch (error) {
       const record = error !== null && typeof error === 'object' ? error : {};
@@ -4979,6 +5006,18 @@ export function createCalendarioView(deps) {
         return rest;
       };
       let fill = fillFor(state.draft);
+      // backlog:0a57d7b520ef (review accordo-muse-review Bondarenko#1164 P1): a free
+      // timed hour outside 09:00–18:00 proposes zero slots — the form keeps the
+      // drafted day but never the out-of-grid hours, so Conferma cannot book
+      // 19:00 from the manual form.
+      if (timedOutOfGridFree) {
+        const key = draftDayKey(state.draft);
+        const hoursOff = { ...fill };
+        delete hoursOff.startsAt;
+        delete hoursOff.endsAt;
+        if (key) hoursOff.day = key;
+        fill = hoursOff;
+      }
       // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
       // every opening proposes a time, so the first free step of the drafted
       // day rides into the form — a real free slot, never an invented
