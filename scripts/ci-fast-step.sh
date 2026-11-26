@@ -19,6 +19,10 @@ case "$heavy_name" in
   ''|*[!A-Za-z0-9_-]*) heavy_name="fast" ;;
 esac
 echo "ci-fast-step: heavy-name=$heavy_name"
+# The retry (scripts/ci-fast-busy-retry.sh) re-acquires under the lane the
+# gate ran: export the sanitized name so a `cure` gate keeps its `main-red`
+# rank on the retry too. Nothing else reads CI_FAST_HEAVY_NAME downstream.
+export CI_FAST_HEAVY_NAME="$heavy_name"
 rc=0
 if [ -n "${CI_FAST_GATE_CMD:-}" ]; then
   bash -c "$CI_FAST_GATE_CMD" || rc=$?
