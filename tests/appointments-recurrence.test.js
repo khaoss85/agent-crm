@@ -443,6 +443,72 @@ test('annullare «tutti» chiude la serie intera (backlog:573a1e85942f)', async 
   assert.ok(service.rows.every((row) => row.status === 'cancelled'));
 });
 
+test('annullo «tutti» che nomina una riga già annullata risponde cancelled:true (backlog:573a1e85942f)', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato dal cliente' });
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
+  const out = await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'all', reason: 'serie finita' });
+  assert.deepEqual(service.rows.map((row) => row.status), ['cancelled', 'cancelled', 'cancelled']);
+  assert.equal(out.cancelled, true, 'la chiamata ha scritto due righe vere');
+  const byId = Object.fromEntries(out.occurrences.map((entry) => [entry.id, entry]));
+  assert.equal(byId[booked.occurrences[1].id].cancelled, false, 'la riga nominata era già annullata');
+  assert.equal(byId[booked.occurrences[0].id].cancelled, true);
+  assert.equal(byId[booked.occurrences[2].id].cancelled, true);
+});
+
+test('annullo «tutti» con calendario nominato spinge solo la testa, mai l\u2019occorrenza nominata (backlog:573a1e85942f)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push([calendarId, sourceKey]);
+      return { status: 'ok', sourceKey };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const headKey = booked.occurrences[0].sourceKey;
+  const lastKey = booked.occurrences[2].sourceKey;
+  assert.notEqual(lastKey, headKey, 'la prova nomina davvero un\u2019occorrenza successiva');
+  const out = await cancelAppointment(context, {
+    id: booked.occurrences[2].id,
+    scope: 'all',
+    reason: 'serie finita',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(out.cancelled, true);
+  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
+  assert.deepEqual(pushes, [['cal-1', headKey]], 'solo la testa che porta la RRULE');
+});
+
+test('annullo «tutti» senza calendario su serie collegata spinge solo la testa (backlog:573a1e85942f)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push([calendarId, sourceKey]);
+      return { status: 'ok', sourceKey };
+    },
+    async readAppointmentDetail() {
+      return { sync: { calendarId: 'cal-1' } };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const headKey = booked.occurrences[0].sourceKey;
+  const out = await cancelAppointment(context, {
+    id: booked.occurrences[2].id,
+    scope: 'all',
+    reason: 'serie finita',
+  });
+  assert.equal(out.cancelled, true);
+  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
+  assert.deepEqual(pushes, [['cal-1', headKey]], 'l\u2019auto-push nomina solo la testa');
+});
+
 test('spostare «questo e i successivi» tiene il ritmo della serie (backlog:573a1e85942f)', async () => {
   const service = fakeAppointments();
   const context = contextFor(service);

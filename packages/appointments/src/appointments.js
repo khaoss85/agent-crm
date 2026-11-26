@@ -2325,7 +2325,10 @@ export async function cancelAppointment(context, request) {
     for (const target of scoped) settled.push(await advanceOne(target));
     const namedEntry = settled.find((entry) => entry.row.id === current.id) ?? settled[0];
     const appointment = namedEntry.row;
-    const cancelled = namedEntry.cancelled;
+    // The flag answers whether this call wrote anything at all: naming an
+    // already-cancelled row must not hide the rows the call really
+    // cancelled (backlog:573a1e85942f, review P1 on 30e4fb47).
+    const cancelled = settled.some((entry) => entry.cancelled);
     const occurrences = Object.freeze(settled.map((entry) => Object.freeze({
       id: entry.row.id,
       sourceKey: entry.row.sourceKey,
@@ -2334,11 +2337,19 @@ export async function cancelAppointment(context, request) {
     })));
     // The push rides the idempotent path on a replay too: a first attempt
     // whose push failed converges Google on the retry. A scoped cancellation
-    // also converges the series head — it carries the Google RRULE, so Google
-    // sees the series change even when the named row is a later occurrence.
-    const pushKeys = [appointment.sourceKey];
-    const head = settled.map((entry) => entry.row).find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
-    if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
+    // converges through the series head alone — it carries the Google RRULE,
+    // so Google sees the series change even when the named row is a later
+    // occurrence. A later occurrence key has no link on Google and would be
+    // exported as a new standalone single event duplicating the series
+    // (backlog:573a1e85942f, review P1 on 30e4fb47): for scope!=single only
+    // the head key is pushed, exactly like the reschedule path. Scope=single
+    // pushes the named row alone.
+    let pushKeys = [appointment.sourceKey];
+    if (scope !== 'single' && appointment.seriesKey) {
+      const siblings = await appointments.listWhere({ seriesKey: appointment.seriesKey });
+      const head = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
+      pushKeys = [head ? head.sourceKey : appointment.sourceKey];
+    }
     return { appointment, cancelled, occurrences, pushKeys };
   };
   // The lookup, the scope read, the terminal pre-check and the advance loop
@@ -2383,17 +2394,17 @@ export async function cancelAppointment(context, request) {
         const autoSpace = typeof record.spaceId === 'string' && record.spaceId.trim() !== ''
           ? record.spaceId
           : undefined;
-        push = await calendarSync.pushAppointment(linked, appointment.sourceKey, { spaceId: autoSpace, actor: who });
-        // Scoped cancel of the whole series converges the head too — it
-        // carries the Google RRULE, so Google sees the series change even
-        // when the named row is a later occurrence.
+        // A scoped cancellation converges through the series head alone —
+        // it carries the Google RRULE. A later occurrence key has no link
+        // on Google, so for scope!=single only the head key is pushed,
+        // exactly like the reschedule path (backlog:573a1e85942f).
+        let autoPushKey = appointment.sourceKey;
         if (scope !== 'single' && appointment.seriesKey) {
           const siblings = await appointments.listWhere({ seriesKey: appointment.seriesKey });
           const autoHead = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
-          if (autoHead && autoHead.sourceKey !== appointment.sourceKey && autoHead.status === CANCELLED_STATE) {
-            await calendarSync.pushAppointment(linked, autoHead.sourceKey, { spaceId: autoSpace, actor: who });
-          }
+          if (autoHead) autoPushKey = autoHead.sourceKey;
         }
+        push = await calendarSync.pushAppointment(linked, autoPushKey, { spaceId: autoSpace, actor: who });
       }
     } catch (error) {
       const code = typeof error?.code === 'string' && error.code !== ''
