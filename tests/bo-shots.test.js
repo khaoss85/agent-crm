@@ -23,7 +23,7 @@ import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import { formatMinor } from '../packages/analytics/src/dashboard.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,31 +79,37 @@ test('the screen registry is the fourteen delivered screens plus the componenti 
 });
 
 test('every harness module parses (top-level await included)', () => {
-  for (const name of BO_SCREENS) {
-    if (name === 'login') continue;
-    const page = harnessHtml(name, publicDir);
-    const code = page.split('<script type="module">')[1].split('</script>')[0];
-    assert.ok(code.includes('document.title'), `${name}: the harness finishes with a ready marker`);
-    const dir = mkdtempSync(join(tmpdir(), 'bo-shots-parse-'));
-    const file = join(dir, `${name}.mjs`);
-    writeFileSync(file, code);
-    const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
-    assert.equal(checked.status, 0, `${name}: harness module parses (${(checked.stderr ?? '').slice(-300)})`);
-  }
-  {
-    const login = harnessHtml('login', publicDir);
-    const modules = login.split('<script type="module">').slice(1)
-      .map((part) => part.split('</script>')[0]);
-    assert.equal(modules.length, 2, 'login serves its enhancement plus the harness probe');
-    for (const [index, code] of modules.entries()) {
-      const dir = mkdtempSync(join(tmpdir(), 'bo-shots-parse-login-'));
-      const file = join(dir, `login-${index}.mjs`);
+  // One directory for the whole test, removed at the end: a directory per
+  // module left one `bo-shots-parse-*` directory in /tmp per screen, two
+  // more for login, on every run (backlog:fb1eb44d).
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-parse-'));
+  try {
+    for (const name of BO_SCREENS) {
+      if (name === 'login') continue;
+      const page = harnessHtml(name, publicDir);
+      const code = page.split('<script type="module">')[1].split('</script>')[0];
+      assert.ok(code.includes('document.title'), `${name}: the harness finishes with a ready marker`);
+      const file = join(dir, `${name}.mjs`);
       writeFileSync(file, code);
       const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
-      assert.equal(checked.status, 0, `login module ${index} parses (${(checked.stderr ?? '').slice(-300)})`);
+      assert.equal(checked.status, 0, `${name}: harness module parses (${(checked.stderr ?? '').slice(-300)})`);
     }
+    {
+      const login = harnessHtml('login', publicDir);
+      const modules = login.split('<script type="module">').slice(1)
+        .map((part) => part.split('</script>')[0]);
+      assert.equal(modules.length, 2, 'login serves its enhancement plus the harness probe');
+      for (const [index, code] of modules.entries()) {
+        const file = join(dir, `login-${index}.mjs`);
+        writeFileSync(file, code);
+        const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
+        assert.equal(checked.status, 0, `login module ${index} parses (${(checked.stderr ?? '').slice(-300)})`);
+      }
+    }
+    assert.throws(() => harnessHtml('nope', publicDir), /no harness for screen/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  assert.throws(() => harnessHtml('nope', publicDir), /no harness for screen/);
 });
 
 test('every harness page serves its real module or the real login markup', () => {
