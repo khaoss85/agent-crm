@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -216,6 +216,45 @@ test('a gate killed mid-run leaves no record: its red stands and nothing is retr
     assert.equal(existsSync(join(dir, 'busy.json.candidate')), false, 'the leftover candidate is cleared');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the retry re-acquires with the gate’s lane: a cure lane keeps its main-red name', () => {
+  // Cure lane (backlog:55ca4e0cb76d): the busy retry is the second, often
+  // longer queue wait, so it must not drop back to the normal rank. A stub
+  // `scripts/ci-heavy.sh` on a scratch cwd records the name the retry asked
+  // for, instead of taking any lock; the stub exits before running the
+  // inner touched-tests command.
+  for (const [lane, want] of [
+    ['fast-main-red-cure', 'fast-main-red-cure-retry'],
+    ['fast', 'fast-retry'],
+    ['', 'fast-retry'],
+    ['fast;touch pwned', 'fast-retry'],
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-busy-'));
+    try {
+      mkdirSync(join(dir, 'scripts'), { recursive: true });
+      writeFileSync(join(dir, 'scripts', 'ci-heavy.sh'), '#!/bin/bash\necho \"$1\" > \"$HEAVY_NAME_FILE\"\nexit 0\n');
+      chmodSync(join(dir, 'scripts', 'ci-heavy.sh'), 0o755);
+      setup(dir, 10);
+      const env = {
+        ...process.env,
+        CI_TOUCHED_BUSY_FILE: join(dir, 'busy.json'),
+        CI_LOADAVG_FILE: join(dir, 'loadavg'),
+        CI_BUSY_POLL_SEC: '1',
+        CI_BUSY_WAIT_SEC: '2',
+        BASE_REF: 'main',
+        HEAVY_NAME_FILE: join(dir, 'heavy-name.txt'),
+      };
+      if (lane === '') delete env.CI_FAST_HEAVY_NAME;
+      else env.CI_FAST_HEAVY_NAME = lane;
+      const run = spawnSync('bash', [retryScript], { cwd: dir, encoding: 'utf8', env, timeout: 60_000 });
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      assert.equal(readFileSync(join(dir, 'heavy-name.txt'), 'utf8').trim(), want, `lane ${lane || '<unset>'} retries as ${want}`);
+      assert.match(run.stdout, new RegExp(`heavy-name=${want}`), 'the retry heavy name is visible in the log');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 
