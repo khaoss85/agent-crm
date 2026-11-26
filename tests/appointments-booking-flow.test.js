@@ -1132,6 +1132,42 @@ test('the phrase returns a day field when the sentence names no time (backlog:65
   assert.equal(service.rows.length, 0, 'a draft never writes');
 });
 
+// backlog:3aabaea07bfe (live 18/11: «trova 30 minuti con khaoss85 per Prova
+// verifica 40 NoteInvio» drafted the customer name as the serviceKey and left
+// the customer empty): the draft carries the stated customer, and an invalid
+// one refuses the draft instead of storing a guess.
+test('the phrase carries the stated customer and refuses an invalid one (backlog:3aabaea07bfe)', async () => {
+  const service = fakeAppointments();
+  let seen = null;
+  const withText = (text) => capabilityFor({
+    service,
+    phraseLlm: {
+      async complete(request) {
+        seen = request;
+        return { text, dryRun: false };
+      },
+    },
+  });
+  const named = await withText('{"teamMemberId": "coach-guido", "customer": "Ada Rossi", "durationMinutes": 30}').parseBookingPhrase({
+    spaceId: 'spazio-prova', phrase: 'trova 30 minuti con Guido per Ada Rossi',
+  });
+  assert.equal(named.draft.customer, 'Ada Rossi');
+  assert.equal(named.draft.serviceKey, undefined, 'no service invented for the customer');
+  assert.match(seen.messages[0].content, /«per»/, 'the system prompt names the customer slot after «per»');
+  assert.match(seen.messages[0].content, /never the service/, 'the customer is never the service');
+  assert.equal(service.rows.length, 0, 'a draft never writes');
+  for (const text of ['{"customer": ""}', '{"customer": "   "}', '{"customer": 42}']) {
+    await assert.rejects(
+      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'qualcosa' }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+        return true;
+      },
+      `customer must be refused: ${text}`,
+    );
+  }
+});
+
 test('the phrase names the Rome weekday and the next-occurrence rule (backlog:d1e4d90e)', async () => {
   const service = fakeAppointments();
   let seen = null;
