@@ -5297,6 +5297,32 @@ export function createCalendarioView(deps) {
    * claim is the manual form the operator sees, with the slot's person and
    * times. The source key binds member, slot and customer, so a retry or a
    * double click replays instead of double-booking.
+   * @param {{teamMemberId?: unknown, startsAt?: unknown, endsAt?: unknown}} [slotFill]
+   */
+  function reopenManual(slotFill) {
+    if (slotFill) {
+      const fillMember = typeof slotFill.teamMemberId === 'string' ? slotFill.teamMemberId : '';
+      const fillDate = romeDayKey(slotFill.startsAt);
+      const fillStartMin = romeMinutes(slotFill.startsAt);
+      const fillEndMin = romeMinutes(slotFill.endsAt);
+      const manual = { ...(state.manual ?? {}) };
+      if (fillMember !== '') manual.teamMemberId = fillMember;
+      if (typeof fillDate === 'string' && fillDate !== '') manual.date = fillDate;
+      if (fillStartMin !== null) manual.start = minutesLabel(fillStartMin);
+      if (fillEndMin !== null) manual.end = minutesLabel(fillEndMin);
+      state.manual = manual;
+    }
+    if (!state.manualOpen) {
+      state.manualOpen = true;
+      ensureManualDefaults();
+    }
+  }
+
+  /**
+   * A proposal Conferma (row or ghost) books through confirmBooking: the
+   * claim is the manual form the operator sees, with the slot's person and
+   * times. The source key binds member, slot and customer, so a retry or a
+   * double click replays instead of double-booking.
    * @param {{teamMemberId?: unknown, startsAt?: unknown, endsAt?: unknown}} slot
    */
   async function confirmSlot(slot) {
@@ -5339,6 +5365,12 @@ export function createCalendarioView(deps) {
       state.aiNote = state.servicesMode === 'failed'
         ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco.'
         : 'Scegli il servizio dal listino nel modulo «Nuovo appuntamento», poi conferma.';
+      // The note names the form: reopen it even when shut, and keep the
+      // missing-data note there too.
+      state.bookingNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : 'Mancano dei dati: servizio. Sceglilo dal listino e conferma.';
+      reopenManual({ teamMemberId: member, startsAt, endsAt });
       renderAll();
       return;
     }
@@ -5349,6 +5381,8 @@ export function createCalendarioView(deps) {
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
       state.aiNote = CONFIRM_SERVICE_NOTE;
+      state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      reopenManual({ teamMemberId: member, startsAt, endsAt });
       renderAll();
       return;
     }
@@ -5381,11 +5415,14 @@ export function createCalendarioView(deps) {
         // The cause is the service field: say it there, and point at it here.
         state.serviceError = refusal;
         state.aiNote = CONFIRM_SERVICE_NOTE;
+        state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+        reopenManual({ teamMemberId: member, startsAt, endsAt });
       } else {
         state.aiNote = humanWriteError(error, {
           failed: CONFIRM_FORM_NOTE,
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
+        reopenManual({ teamMemberId: member, startsAt, endsAt });
       }
     }
     renderAll();
