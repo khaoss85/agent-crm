@@ -658,8 +658,16 @@ export function offerCustomer(offer) {
   }
   const company = text(offer?.companyName);
   const companyId = text(offer?.companyId);
-  const reserved = company !== null && company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
-  if (company === null || reserved || readableName(company.replace(/\([^)]*\)/g, ' ')) === null) return null;
+  if (company === null) return null;
+  // The core placeholder flag (backlog:ac65e448fcb4): a real company named
+  // «Senza azienda» stays a customer. The name check below is only the
+  // legacy fallback for rows without the flag — never the rule.
+  if (offer?.companyPlaceholder === true || offer?.companyPlaceholder === 1) return null;
+  if (offer?.companyPlaceholder !== false && offer?.companyPlaceholder !== 0) {
+    const reserved = company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+    if (reserved) return null;
+  }
+  if (readableName(company.replace(/\([^)]*\)/g, ' ')) === null) return null;
   return { name: company, href: companyId !== null ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null };
 }
 

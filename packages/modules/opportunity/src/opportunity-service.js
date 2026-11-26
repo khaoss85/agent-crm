@@ -742,6 +742,10 @@ export class OpportunityService {
     const contact = row.contact_id ? this.contacts.get(row.contact_id) : null;
     const map = (resolvedCompany, resolvedContact) => mapOpportunityRow({
       ...row, company_name: resolvedCompany.name,
+      // The «no company» flag (backlog:ac65e448fcb4): Pipeline, cmdk and
+      // labels name the customer from this, never from the company name —
+      // a real company keeps false whatever its name is.
+      company_placeholder: resolvedCompany.placeholder === true || resolvedCompany.placeholder === 1,
       contact_name: resolvedContact ? `${resolvedContact.firstName} ${resolvedContact.lastName}` : null,
     });
     if (isSyncStorage(this.database)) return map(company, contact);
@@ -771,6 +775,7 @@ function mapOpportunityRow(row) {
     id: row.id,
     companyId: row.company_id,
     companyName: row.company_name ?? null,
+    companyPlaceholder: row.company_placeholder === true || row.company_placeholder === 1,
     contactId: row.contact_id,
     contactName: row.contact_name ?? null,
     name: row.name,
