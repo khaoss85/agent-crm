@@ -164,6 +164,24 @@ test('acceptance: an opt-out halts the agent, on consent and on the message itse
   assert.deepEqual(REPLIES_HALT_REASONS, ['opted-out', 'consecutive-cap']);
 });
 
+test('verifier: an opt-out on an unsupported channel still halts the agent', async () => {
+  const consent = await planReply({
+    inbound: inbound({ channel: 'tiktok', connectedChannels: ['tiktok'], consent: 'opted-out' }),
+    draftText: fakeDraftText(),
+  });
+  assert.equal(consent.status, 'halted');
+  assert.equal(consent.reason, 'opted-out');
+  const words = await planReply({
+    inbound: inbound({
+      channel: 'tiktok', connectedChannels: ['tiktok'],
+      text: 'Non scrivetemi più, basta messaggi.',
+    }),
+    draftText: fakeDraftText(),
+  });
+  assert.equal(words.status, 'halted');
+  assert.equal(words.reason, 'opted-out');
+});
+
 test('bare sentiment is not an opt-out: the answer still comes', async () => {
   assert.equal(carriesOptOut('non mi piace questo pacchetto'), false);
   const outcome = await planReply({
