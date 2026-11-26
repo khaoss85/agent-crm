@@ -11,6 +11,7 @@ import {
   applyCustomerListQuery,
   matchesSearch,
   parseCustomerListQuery,
+  searchMatchFields,
   searchNeedle,
   shapeCustomerRow,
 } from '../packages/customer-data/src/customers.js';
@@ -500,6 +501,71 @@ test('120f299445a6: a q search over many messages visits rows once, never once p
   // pass per row. The bound is generous on purpose: it fails the fan-out
   // by an order of magnitude and passes the bucketed read by one.
   assert.ok(fieldReads < 1_000_000, `row touches stay O(rows), got ${fieldReads}`);
+});
+
+test('f6b9d189: searchMatchFields names the fields a text match sits on', () => {
+  // The live case: «anna» in the appointment form listed Massimiliano
+  // Magrini — the match sat on his company, a field the form never shows.
+  const magrini = shapeCustomerRow({
+    contact: {
+      id: 'c-magrini', companyId: 'co-anna', firstName: 'Massimiliano', lastName: 'Magrini',
+      email: 'massimiliano.magrini@example.it',
+    },
+    company: { id: 'co-anna', name: 'Pizzeria Anna' },
+  }, {});
+  assert.deepEqual(hits([magrini], 'anna'), ['Massimiliano Magrini'], 'the row matches today');
+  assert.deepEqual(searchMatchFields(magrini, 'anna'), ['company'], 'only the company explains it');
+  const anna = row('Anna', 'Bianchi', { email: 'anna@example.it' });
+  assert.deepEqual(searchMatchFields(anna, 'anna'), ['name', 'email'], 'name first, in field order');
+  const mailOnly = row('Mario', 'Rossi', { email: 'mario.annabella@example.it' });
+  assert.deepEqual(searchMatchFields(mailOnly, 'anna'), ['email'], 'the email explains it when the name does not');
+  const telOnly = shapeCustomerRow({
+    contact: { id: 'c-tel', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: null },
+    company: null,
+  }, {
+    identitiesBySubject: new Map([['contact:c-tel', [{ system: 'whatsapp', externalId: '+393331234567' }]]]),
+  });
+  assert.deepEqual(searchMatchFields(telOnly, '333'), ['phone'], 'digits blame the held phone');
+  assert.deepEqual(searchMatchFields(telOnly, '33'), [], 'below the digit floor nothing explains it');
+  const adaOnly = row('Ada', 'Rossi', { email: 'ada@example.it' });
+  assert.deepEqual(searchMatchFields(adaOnly, 'Ada 333'), ['name', 'email'], 'the name and email explain the text half without a held phone');
+  const both = shapeCustomerRow({
+    contact: { id: 'c-both', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: null },
+    company: null,
+  }, {
+    identitiesBySubject: new Map([['contact:c-both', [{ system: 'whatsapp', externalId: '+393331234567' }]]]),
+  });
+  assert.deepEqual(searchMatchFields(both, 'Ada 333'), ['name', 'phone'], 'text and digits blame their own fields');
+  const split = row('Ada', 'Bianchi', { email: 'rossi@example.it' });
+  assert.deepEqual(hits([split], 'Ada rossi'), ['Ada Bianchi'], 'the words span the name and the email');
+  assert.deepEqual(searchMatchFields(split, 'Ada rossi'), ['name', 'email'], 'review #985 P2: spanning words blame both fields');
+  assert.deepEqual(searchMatchFields(anna, 'whatsapp'), [], 'a channel-only query matches on the channel, never on text');
+  assert.deepEqual(searchMatchFields(anna, ''), [], 'no needle, no explanation');
+  // Review #985 P2: «pizzeria 07» lists «Ada 07» of «Pizzeria» through the
+  // mixed branch, so the digit word visibly sitting in the name must blame
+  // the name — otherwise the form drops the row as company-only.
+  const ada07 = shapeCustomerRow({
+    contact: { id: 'c-ada07', companyId: 'co-piz', firstName: 'Ada', lastName: '07', email: null },
+    company: { id: 'co-piz', name: 'Pizzeria' },
+  }, {});
+  assert.deepEqual(hits([ada07], 'pizzeria 07'), ['Ada 07'], 'the mixed needle lists the row by its visible words');
+  assert.deepEqual(searchMatchFields(ada07, 'pizzeria 07'), ['name', 'company'], 'the digit word blames the name it visibly sits in');
+  assert.deepEqual(searchMatchFields(ada07, '07'), ['name'], 'below the floor digits read as words (backlog:f6b9d189 owner 20/11: «40» finds «Prova verifica 40 NoteInvio»)');
+});
+
+test('f6b9d189: the list response carries searchMatch on every item', async () => {
+  const modules = boundedModules([
+    { id: 'c-anna', companyId: null, firstName: 'Anna', lastName: 'Bianchi', email: 'anna@example.it' },
+  ], []);
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { q: 'anna', pageSize: '10' },
+  );
+  assert.deepEqual(page.items.map((item) => item.name), ['Anna Bianchi']);
+  assert.deepEqual(page.items[0].searchMatch, ['name', 'email']);
+  // Review #985 P2: adding the key must keep the frozen items/rows contract.
+  assert.ok(Object.isFrozen(page.items), 'the items array stays frozen');
+  assert.ok(Object.isFrozen(page.items[0]), 'each row stays frozen with its searchMatch');
 });
 
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {

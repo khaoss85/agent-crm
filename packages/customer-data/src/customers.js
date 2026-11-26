@@ -140,6 +140,9 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // conversation whose last message is a person's, never answered after —
   // notifications (core/sender-kind.js) never wait. Newest waiting first.
   { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
+  // «Archiviati» (voce 91c92940274c): i contatti archiviati spariscono da
+  // viste e conteggi e si ritrovano solo qui. Mai gli eliminati.
+  { id: 'archiviati', label: 'Archiviati', filters: Object.freeze({ archiviati: true }) },
 ]);
 
 /**
@@ -347,8 +350,10 @@ export const SEARCH_INFIX_MIN_CHARS = 4;
  * Digits in a query name a phone number, not words (backlog:7d82fd84,
  * review #678 giro-2 P3): the numeric words joined match as one substring
  * of the digits of a held phone, so «333» finds «+39333123456» while «ada»
- * still never matches inside «Canada». Fewer digits match nothing, so a
- * one- or two-digit query does not match every phone on the page.
+ * still never matches inside «Canada». Below the floor digits read as
+ * words instead (backlog:f6b9d189: «40» finds «Prova verifica 40
+ * NoteInvio»), still never on the held phone, so a one- or two-digit query
+ * does not match every phone on the page.
  */
 export const PHONE_SEARCH_MIN_DIGITS = 3;
 
@@ -406,6 +411,22 @@ export function searchRank(parts, needle, phone = '') {
       && phoneDigitsOf(phoneValue).includes(digits)) {
       return 1;
     }
+    // backlog:f6b9d189 (owner 20/11: «40» must find «Prova verifica 40
+    // NoteInvio»): below the phone floor digits are words, not a number —
+    // judge them by word start on the shown text (never on the held phone,
+    // so «39» still matches no Italian phone, review agent-crm#707).
+    if (digits.length > 0 && digits.length < PHONE_SEARCH_MIN_DIGITS) {
+      let rank = 0;
+      for (const wanted of numeric) {
+        if (textWords.some((word) => word.startsWith(wanted))) continue;
+        if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+          rank = 1;
+          continue;
+        }
+        return -1;
+      }
+      return rank;
+    }
     return -1;
   }
   // A mixed needle (text plus digits, like «verifica 07/11») first tries
@@ -461,6 +482,84 @@ function searchPartsOf(row) {
   return [row?.name, row?.email, row?.company?.name, row?.phone?.value];
 }
 
+/**
+ * Whether a digit word visibly sits in a shown field (backlog:f6b9d189
+ * review #985 P2): the same word-start/infix rule `searchRank` uses for
+ * mixed needles, so «07» in «Ada 07» keeps the row. Never used for a
+ * pure-digit needle, which names ONLY the held phone.
+ * @param {unknown} value the field text
+ * @param {string} word one folded digit word of the needle
+ */
+function digitWordHitInField(value, word) {
+  const words = searchWords(value);
+  if (words.some((candidate) => candidate.startsWith(word))) return true;
+  return word.length >= SEARCH_INFIX_MIN_CHARS && words.some((candidate) => candidate.includes(word));
+}
+
+/**
+ * Which fields of a shaped list row explain a text match (backlog:f6b9d189:
+ * the appointment form's «anna» listed Massimiliano Magrini with no visible
+ * reason — the match sat on a field the form never shows). A subset of
+ * `['name', 'email', 'company', 'phone']`, frozen, in that order; empty when
+ * the needle carries no text (a channel-only query matches on the channel,
+ * never on a visible field). Every text word keeps the `searchRank` word
+ * rule and blames each field it sits in, so a word the row matches globally
+ * (even on another field than its siblings, like «Ada» on the name and
+ * «rossi» on the email) is always blamed on at least one field; the joined
+ * digits keep the held-phone rule with its floor, and the digit words of a
+ * mixed needle also blame the shown fields they visibly sit in (review
+ * #985 P2). Pure, so the endpoint and the admin panel share it.
+ * @param {any} row a shaped list row
+ * @param {unknown} q the raw `q` query text
+ */
+export function searchMatchFields(row, q) {
+  const needle = searchNeedle(q ?? '');
+  if (needle.length === 0) return Object.freeze([]);
+  const phoneValue = typeof row?.phone?.value === 'string' ? row.phone.value : '';
+  const text = needle.filter((word) => !/^[0-9]+$/.test(word));
+  const numericWords = needle.filter((word) => /^[0-9]+$/.test(word));
+  const digits = numericWords.join('');
+  // Digit words of a mixed needle also read the shown fields by the word
+  // rules above (review #985 P2: «pizzeria 07» lists «Ada 07» of «Pizzeria»
+  // through the mixed branch of searchRank, so «07» must blame the name or
+  // the row is dropped as company-only). A pure-digit needle at or above
+  // the phone floor still names ONLY the held phone below, never the shown
+  // fields; below the floor it reads the shown words (backlog:f6b9d189).
+  const digitWords = text.length > 0 ? needle.filter((word) => /^[0-9]+$/.test(word)) : [];
+  const hits = [];
+  if (text.length > 0) {
+    const fields = [
+      ['name', row?.name],
+      ['email', row?.email],
+      ['company', row?.company?.name],
+    ];
+    for (const [key, value] of fields) {
+      if (typeof value !== 'string' || value === '') continue;
+      if (text.some((word) => searchRank([value], [word], '') >= 0)
+        || digitWords.some((word) => digitWordHitInField(value, word))) hits.push(key);
+    }
+  }
+  // backlog:f6b9d189 (owner 20/11 «40»): the same short-digit fallback
+  // searchRank applies above — blame the shown fields the digits visibly sit
+  // in, so the picker can keep the row with its motive.
+  if (text.length === 0 && digits !== '' && digits.length < PHONE_SEARCH_MIN_DIGITS) {
+    const fields = [
+      ['name', row?.name],
+      ['email', row?.email],
+      ['company', row?.company?.name],
+    ];
+    for (const [key, value] of fields) {
+      if (typeof value !== 'string' || value === '') continue;
+      if (numericWords.some((word) => digitWordHitInField(value, word))) hits.push(key);
+    }
+  }
+  if (digits !== '' && digits.length >= PHONE_SEARCH_MIN_DIGITS
+    && phoneDigitsOf(phoneValue).includes(digits)) {
+    hits.push('phone');
+  }
+  return Object.freeze(hits);
+}
+
 /** All the words (canonical + aliases) that name one channel. */
 function channelAliases(channel) {
   return {
@@ -478,6 +577,18 @@ function channelAliases(channel) {
  */
 export function viewFilters(view) {
   return { ...(view?.filters ?? {}) };
+}
+
+/**
+ * Voce 91c92940274c: un contatto eliminato non si mostra in nessuna vista
+ * — né in Tutti né in Archiviati. La riga resta per audit e sync (la
+ * lettura `get` la vede ancora), ma la lista non la dipinge mai. Unica
+ * fonte in memoria per questa regola: la usano il filtro di ogni vista e
+ * il test a tabella che tiene ogni caso dei due giri di review.
+ * @param {{deletedAt?: unknown}} row a shaped customer row
+ */
+export function isDeletedCustomerRow(row) {
+  return row?.deletedAt != null;
 }
 
 /**
@@ -528,6 +639,16 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
     // «Da rispondere»: only rows with a conversation waiting for the team.
     if (viewExtra.daRispondere === true && !((row?.awaitingReplyCount ?? 0) > 0)) return false;
+    // Voce 91c92940274c (review P1 su #1077, giro 2 + giro 1 su 1954bb5d):
+    // un'unica fonte per la visibilità di una riga — lo strato SQL
+    // (contacts.list/scan escludono deleted_at) e questo strato in memoria
+    // applicano la stessa regola, così un percorso che aggira la lista
+    // (il top-up da identità telefonica esatta) non fa rientrare le
+    // tombstone. Il giro 1 curava solo lo strato SQL: la cura generale è
+    // questa, con il test a tabella che tiene ogni caso di entrambi i giri.
+    if (isDeletedCustomerRow(row)) return false;
+    if (viewExtra.archiviati === true && !row?.archivedAt) return false;
+    if (viewExtra.archiviati !== true && row?.archivedAt) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -711,6 +832,10 @@ export function shapeCustomerRow(subject, reads = {}) {
     // while neither reads like a call, which carries no text. When the empty
     // message carried a file, the row names it like the Oggi inbox does
     // ('Allegato', see apps/admin/public/admin-oggi.js).
+    // Voce 91c92940274c: la vista «Archiviati» filtra su questa marca, e
+    // le tombstone restano fuori da ogni vista (isDeletedCustomerRow).
+    archivedAt: contact?.archivedAt ?? null,
+    deletedAt: contact?.deletedAt ?? null,
     lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
       ?? (isMessageActivity(activity)
         ? (activity.hasAttachment === true ? 'Allegato' : MESSAGE_NO_TEXT) : null),

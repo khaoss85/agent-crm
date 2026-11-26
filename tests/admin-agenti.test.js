@@ -12,6 +12,7 @@ import {
   DA_FARE_UNAVAILABLE_NOTE,
   assignmentStatusLabel,
   PHRASE_UNCLEAR_NOTE,
+  PHRASE_ONCE_FALLBACK_NOTE,
   buildAgentCards,
   buildCatalogItems,
   buildDaFare,
@@ -146,6 +147,8 @@ test('Team rows: nothing when there are no agents, an «Agente» badge beside ea
   assert.equal(members.length, 2);
   assert.ok(textOf(members[0]).includes('Riaggancio'));
   assert.ok(textOf(members[0]).includes('Agente'));
+  const statusLink = members[0].findAll('a')[0];
+  assert.equal(statusLink.getAttribute('aria-label'), 'Stato di Riaggancio: Attivo', 'the status link identifies its agent to assistive technology');
   assert.equal(rows.findAll('img').length, 0, 'a hostile name stays text');
   assert.equal(members.some((node) => node.classList.contains('bo-spazi-member')), false, 'agents never count as people');
 });
@@ -286,7 +289,7 @@ test('Aggiungi adds a catalogue agent through one keyed POST and the team shows 
   assert.equal(mount.querySelector('button[data-slug="pulizia-contatti"]'), null, 'the tile now says Nel tuo team');
 });
 
-test('talking to an agent: a scheduled phrase becomes an assignment, an unclear one asks before «una volta, adesso»', async () => {
+test('talking to an agent: a phrase with no schedule runs once at once, with no extra press (restyle 19/11)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = driveClient({ unclearFirst: true });
@@ -298,19 +301,17 @@ test('talking to an agent: a scheduled phrase becomes an assignment, an unclear 
   input.dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
-  let posts = client.calls.filter((call) => call.path === '/api/agents/assign');
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.plan, undefined, 'the screen never picks a plan on its own');
-  assert.ok(textOf(mount).includes(PHRASE_UNCLEAR_NOTE));
-  findButton(mount, 'once').dispatch('click', {});
-  await flush();
-  posts = client.calls.filter((call) => call.path === '/api/agents/assign');
-  assert.equal(posts.length, 2);
+  const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 2, 'the unclear answer is followed by the «una volta» write, no press');
+  assert.equal(posts[0].body.plan, undefined, 'the first write lets the server read the phrase');
   assert.deepEqual(posts[1].body.plan, { cadence: 'once', runAt: NOW });
   assert.equal(posts[1].body.phrase, 'occupati dei lead WhatsApp non contattati');
   assert.notEqual(posts[0].key, posts[1].key, 'a different body takes a new key');
   const text = textOf(mount);
+  assert.ok(!text.includes(PHRASE_UNCLEAR_NOTE), 'no question left on screen');
+  assert.equal(findButton(mount, 'once'), null);
   assert.ok(text.includes('Incarico dato a Riaggancio: una volta.'));
+  assert.ok(text.includes(PHRASE_ONCE_FALLBACK_NOTE), 'the outcome says how to make it repeat');
   assert.ok(text.includes('«occupati dei lead WhatsApp non contattati»'));
 });
 
@@ -536,7 +537,10 @@ test('review #661 giro 2 P2: after a space switch the screen never writes to the
 test('review #661 giro 2 P2: switching space re-renders Agenti and Sequenze like the other space-scoped screens', () => {
   for (const view of ['agenti', 'sequenze', 'customer-card', 'sync']) assert.equal(rerendersOnSpaceSwitch(view), true, view);
   assert.equal(rerendersOnSpaceSwitch('dashboard', { mounted: true }), true);
-  assert.equal(rerendersOnSpaceSwitch('dashboard'), false);
+  // Voce 5fc6709109fa (contract change: the acceptance requires Oggi to
+  // show the new space without leaving the page): the dashboard re-renders
+  // on every shell — unmounted it is the framework demo, a no-op repaint.
+  assert.equal(rerendersOnSpaceSwitch('dashboard'), true);
   assert.equal(rerendersOnSpaceSwitch('reporting'), false);
 });
 
@@ -998,4 +1002,80 @@ test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {
   assert.equal(assignmentStatusLabel(done, []), 'Fatto', 'senza proposte resta Fatto');
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-other', sourceKey: 'r-2', outcome: 'proposed' }]), 'Fatto', 'la proposta di un altro non conta');
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-done', sourceKey: 'r-3', outcome: 'applied' }]), 'Fatto', 'un giro applicato non è da approvare');
+});
+
+test('review #1072 P1: a failed «una volta» retry leaves no fallback note on the next incarico', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const drive = driveClient();
+  let assignCalls = 0;
+  const client = {
+    calls: drive.calls,
+    request: async (path, options = {}) => {
+      if (path === '/api/agents/assign') {
+        assignCalls += 1;
+        // 1st: no schedule in the phrase; 2nd (the «una volta» retry): fails.
+        if (assignCalls === 1) throw Object.assign(new Error('unclear'), { code: 'AGENT_PHRASE_UNCLEAR', status: 422 });
+        if (assignCalls === 2) throw Object.assign(new Error('down'), { status: 503 });
+      }
+      return drive.request(path, options);
+    },
+  };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const talk = () => mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk().value = 'occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(assignCalls, 2, 'the unclear phrase was retried once and failed');
+  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE));
+  talk().value = 'ogni lunedì occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(assignCalls, 3);
+  assert.ok(textOf(mount).includes('Incarico dato a Riaggancio'), 'the scheduled incarico lands');
+  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE), 'no stale «parte una volta» note on a scheduled incarico');
+});
+
+test('review #1072 giro 2 P1: typing during «Invio…» never changes what the «una volta» retry sends', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const drive = driveClient();
+  let assignCalls = 0;
+  const sent = [];
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = {
+    calls: drive.calls,
+    request: async (path, options = {}) => {
+      if (path === '/api/agents/assign') {
+        assignCalls += 1;
+        sent.push(typeof options.body === 'string' ? JSON.parse(options.body) : options.body);
+        if (assignCalls === 1) {
+          await gate;
+          throw Object.assign(new Error('unclear'), { code: 'AGENT_PHRASE_UNCLEAR', status: 422 });
+        }
+      }
+      return drive.request(path, options);
+    },
+  };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const talk = () => mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk().value = 'occupati dei lead';
+  talk().dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  // While «Invio…» waits, the operator starts the next incarico.
+  talk().value = 'ogni lunedì manda il report';
+  talk().dispatch('input', {});
+  release();
+  await flush();
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].phrase, 'occupati dei lead', 'the retry sends the words of the failed attempt');
+  assert.equal(talk().value, 'ogni lunedì manda il report', 'the new words stay in the field');
 });

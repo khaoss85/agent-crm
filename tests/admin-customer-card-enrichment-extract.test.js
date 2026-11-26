@@ -224,8 +224,9 @@ test('e5e3e886: with no messages the button sends nothing and says where the AI 
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
   assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
     'the facts are still re-read, like main (arbitrato #853 P1)');
-  assert.ok(toasts.includes('Nessun dato nuovo'), 'unchanged facts read as nothing new, like main');
-  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')), 'the button says the AI starts from messages');
+  assert.equal(toasts.length, 1, 'one outcome per click, never covered by a second toast');
+  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')), 'the single outcome says the AI starts from messages');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'unchanged facts with no messages never read «Nessun dato nuovo»');
 });
 
 test('e5e3e886 arbitrato #853 P1: with no messages and changed facts the button says «Dati aggiornati»', async () => {
@@ -239,7 +240,7 @@ test('e5e3e886 arbitrato #853 P1: with no messages and changed facts the button 
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
   assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
     'the GET leaves even with no messages');
-  assert.ok(toasts.includes('Dati aggiornati'), 'changed facts read as updated, like main');
+  assert.deepEqual(toasts, ['Dati aggiornati'], 'changed facts read as one updated outcome, like main');
   assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the changed facts are on screen');
 });
 
@@ -296,7 +297,7 @@ test('e5e3e886 review #853 P2: a repaint while the run flies starts no second ru
   assert.ok(mount.textContent.includes('fonte: messaggio'), 'the proposal cites its source');
 });
 
-test('e5e3e886 seguito 17/11: with no messages the button never reads «Estraggo…» and says at once there is nothing to extract', async () => {
+test('e5e3e886 seguito 17/11: with no messages the button never reads «Estraggo…» and lands one outcome', async () => {
   const client = fakeClient({
     timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } },
   });
@@ -304,14 +305,17 @@ test('e5e3e886 seguito 17/11: with no messages the button never reads «Estraggo
   const refresh = byAction(mount, 'refresh-enrichment');
   assert.ok(refresh, 'the «Aggiorna» button exists');
   const clicked = refresh.listeners.click[0]();
+  await flush();
   assert.ok(!String(refresh.textContent).includes('Estraggo'),
     'the button never promises an extraction it does not start (live: stuck on «Estraggo…» with no request)');
-  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')),
-    'the button says at once there is nothing to extract');
+  assert.equal(refresh.textContent, 'Aggiorna', 'the button is never held while the re-read flies');
   await clicked;
   await flush();
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
-  assert.ok(toasts.includes('Nessun dato nuovo'), 'unchanged facts still read as nothing new, like main');
+  assert.equal(toasts.length, 1, 'one outcome per click');
+  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')),
+    'the single outcome says there is nothing to extract');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'no second toast covers the warning');
 });
 
 test('e5e3e886 seguito 17/11: a run that answers nothing refuses in time instead of spinning forever', async () => {
@@ -495,6 +499,76 @@ test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 no-messages re-read flies singl
   assert.equal(writes.length, 0, 'no run starts with no source to read');
 });
 
+test('e5e3e886 VERIFIER_BACK 2026-11-18: no-message reload with a repaint never shows Estraggo', async () => {
+  // VERIFIER_BACK 2026-11-18 (returns: 2, sha 5f5472b73d80): live NON PASSA —
+  // «senza messaggi mai Estraggo NO»: with no messages the button says at
+  // once there is nothing to extract, yet a repaint while its re-read flies
+  // paints «Estraggo…» and the stuck state survives the landing. Red before
+  // the cure (the no-message re-read holds the shared extract flight, so the
+  // flying indicator reads «Estraggo…» and the landing paints under it);
+  // green after (the flight is tagged and released before the landing
+  // paints, and only a real extract run ever reads «Estraggo…»).
+  const emptyTimeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } };
+  let enrichedReads = 0;
+  const pending = [];
+  const reads = [];
+  const writes = [];
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        writes.push({ path, method });
+        return { ok: true };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return emptyTimeline;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        // Only the Aggiorna re-read hangs; the repaint's own read answers at
+        // once so the repaint itself lands.
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED_AFTER;
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const first = byAction(mount, 'refresh-enrichment');
+  assert.ok(first, 'the «Aggiorna» button exists');
+  const running = first.listeners.click[0]();
+  await flush();
+  assert.equal(enrichedReads, 2, 'the first «Aggiorna» starts the re-read');
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no-message click never promises an extraction run');
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'the repaint while the no-message re-read flies shows no «Estraggo…»');
+  pending.forEach((resolve) => resolve(ENRICHED_AFTER));
+  await running;
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no «Estraggo…» survives the no-message landing');
+  assert.deepEqual(toasts, ['Dati aggiornati'], 'the landed re-read toasts its single outcome');
+  assert.equal(writes.length, 0, 'no run starts with no source to read');
+});
+
 test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 fast run clears its default 60s timer', async () => {
   const created = [];
   const cleared = [];
@@ -568,4 +642,70 @@ test('e5e3e886: the run sources are messages only, capped, with channel and hand
     detail: 'instagram:guido.presti',
   }, 'the first usable message names its channel and handle');
   assert.ok(Object.isFrozen(sources) && sources.every((source) => Object.isFrozen(source)), 'sources are frozen');
+});
+
+test('e5e3e886 seguito 18/11: no-message click shows one outcome and never holds the button', async () => {
+  // VERIFIER_BACK 2026-11-18 (returns: 3, sha e094ad01449d): live 18/11
+  // 21:1xZ NON PASSA — senza messaggi l'avviso giusto («Non ci sono
+  // messaggi…») viene coperto dopo 0,2 s da «Nessun dato nuovo» e il bottone
+  // resta su «Aggiorno…» per 3,4 s. Red before the cure (the warning leaves
+  // at once and a second «Nessun dato nuovo» covers it while the button
+  // stays «Aggiorno…» under uiBusy); green after (the button stays
+  // «Aggiorna» and a single outcome lands with the re-read).
+  const emptyTimeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } };
+  let enrichedReads = 0;
+  const pending = [];
+  const reads = [];
+  const writes = [];
+  const client = {
+    reads,
+    writes,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        writes.push({ path, method });
+        return { ok: true };
+      }
+      reads.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return emptyTimeline;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        enrichedReads += 1;
+        if (enrichedReads === 1) return ENRICHED;
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED;
+      }
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/catalog/products?active=true') return { products: [] };
+      if (path === '/api/profile') return { member: { name: 'Elena Rinaldi' } };
+      throw Object.assign(new Error(`unexpected request ${path}`), { status: 404 });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({
+    doc, mount, client, spaceId: 'presti',
+    toast: (text) => { toasts.push(text); },
+  });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  const clicked = refresh.listeners.click[0]();
+  await flush();
+  assert.equal(refresh.textContent, 'Aggiorna', 'the button is back at once, never held «Aggiorno…» while the re-read flies');
+  assert.equal(toasts.length, 0, 'no outcome yet while the re-read flies: a single outcome lands with it');
+  pending.forEach((resolve) => resolve(ENRICHED));
+  await clicked;
+  await flush();
+  assert.equal(writes.length, 0, 'no run starts with no source to read');
+  assert.equal(toasts.length, 1, 'one outcome per click, never covered by a second toast');
+  assert.ok(toasts[0].includes('Non ci sono messaggi'), 'the single outcome says the AI starts from messages');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'unchanged facts with no messages never read «Nessun dato nuovo»');
+  assert.equal(byAction(mount, 'refresh-enrichment').textContent, 'Aggiorna', 'the repainted button reads «Aggiorna»');
 });

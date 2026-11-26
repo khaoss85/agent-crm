@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, findStage, isOpenOfferStage, normalizeActor } from '../../core/index.js';
 import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
@@ -12,7 +12,7 @@ import {
   CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery, awaitingReplyFor, channelWordsIn, filterCustomerRows,
-  matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchNeedle, shapeCustomerRow,
+  matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchMatchFields, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -57,7 +57,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null, pipelines = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -387,7 +387,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names, interactions }, request);
+      return listCustomerRecords({ modules, core, names, interactions, pipelines }, request);
     },
 
     /**
@@ -822,7 +822,7 @@ function summarizeSectionRows(read, rows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null, pipelines = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -833,7 +833,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   if (!companiesSvc || typeof companiesSvc.list !== 'function') {
     throw new AppError('the customer list needs the host company records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  let contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  // Voce 91c92940274c: la vista «Archiviati» legge solo gli archiviati
+  // (mai gli eliminati); le altre viste non li vedono mai.
+  const wantArchived = query.view?.filters?.archiviati === true;
+  let contacts = wantArchived
+    ? await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT, includeArchived: true, archivedOnly: true })
+    : await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
   let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
   const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
   // backlog:d128847d21fc: the scan holds the newest records only, so a
@@ -859,7 +864,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
     && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
-    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE });
+    // Voce 91c92940274c (review P1 su #1077, giro 2): la scansione di
+    // ricerca della vista «Archiviati» chiede solo archiviati (predicato in
+    // SQL), come la list sopra — senza archivedOnly gli attivi affamano la
+    // pagina oltre il tetto e gli archiviati vecchi non tornano mai.
+    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE, ...(wantArchived ? { includeArchived: true, archivedOnly: true } : {}) });
     const scannedCompaniesAll = await companiesSvc.scan({
       limit: Math.max(
         CUSTOMER_SEARCH_COMPANY_RESERVE,
@@ -879,6 +888,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
           CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE,
           CUSTOMER_SEARCH_SCAN_LIMIT - scannedCompaniesAll.length,
         ),
+        ...(wantArchived ? { includeArchived: true, archivedOnly: true } : {}),
       });
     }
     const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle, query.spaceId, query.q ?? '');
@@ -1087,8 +1097,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       if (!service) return [];
       try {
         const rows = typeof service.listWhere === 'function'
-          ? await service.listWhere({ channel: 'email' })
-          : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
+          ? await service.listWhere(query.spaceId ? { channel: 'email', spaceId: query.spaceId } : { channel: 'email' })
+          : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email' && (!query.spaceId || row?.spaceId === query.spaceId));
         return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
       } catch (error) {
         // Degraded, never silent (review Muse #821): the cause, never data.
@@ -1304,6 +1314,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // 503): every table below is bucketed once by customer key, so each
   // subject gathers only its own candidates instead of scanning every
   // table once per subject. The deciding predicate is unchanged.
+  // backlog:1adf95307b31: the composed pipeline for opportunities, read
+  // once — the shared closed/won rule with Reporting resolves a row's
+  // pipeline stage through its type (Pagato is won). Null without a
+  // composed pipeline: the canonical stages decide.
+  const opportunityPipeline = typeof pipelines?.forModule === 'function'
+    ? pipelines.forModule('opportunity')
+    : null;
   const opportunityIndex = indexRowsByCustomer(opportunities.rows);
   const orderIndex = indexRowsByCustomer(evidenceReads.orders.rows);
   const contractIndex = indexRowsByCustomer(evidenceReads.contracts.rows);
@@ -1369,7 +1386,27 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // lost never count. A customer with only won offers (or no open offer at
     // all) reads «—», never «0 €». Mixed currencies never sum into one naked
     // number: each currency keeps its own subtotal with its own code.
-    const openOffers = myOffers.filter((row) => row?.stage !== 'won' && row?.stage !== 'lost');
+    // The open rule is the shared one with Reporting
+    // (packages/core/src/pipeline-registry.js): a row moved to Pagato keeps
+    // the canonical stage but names the paid pipeline stage, and Pagato is
+    // won — so a pipeline-stage row on the composed pipeline reads through
+    // its type, anything else through the canonical stage.
+    const openOffers = myOffers.filter((row) => {
+      const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
+      // Review giro 1 (agent-crm#1038, P2): a stage key belongs to the
+      // pipeline that defines it — only a row filed under the composed
+      // pipeline (pipelineKey names it) reads through its types, anything
+      // else through the canonical stage. A row with a pipeline stage but
+      // no pipeline key is not on any pipeline, so the canonical stage
+      // decides for it too.
+      const rowPipeline = typeof row?.pipelineKey === 'string' && row.pipelineKey !== '' ? row.pipelineKey : null;
+      if (key !== null && opportunityPipeline !== null
+        && rowPipeline === opportunityPipeline.name
+        && findStage(opportunityPipeline, key) !== null) {
+        return isOpenOfferStage(opportunityPipeline, key);
+      }
+      return isOpenOfferStage(null, row?.stage);
+    });
     const openValue = openOffers
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
     const totalsByCurrency = new Map();
@@ -1540,7 +1577,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // dei messaggi è esatta e completa; la vista rifiuta (409) altrimenti,
     // quindi questa base non descrive mai una lettura parziale.
     teamCorrespondents: serializeCorrespondents(repliesReadable ? correspondents : null),
-    items: page.items,
+    // backlog:f6b9d189: every item names the fields that explain the text
+    // match (`searchMatchFields`), so a picker can drop what it cannot show
+    // and print the reason beside the rest. Clienti ignores the key. The
+    // frozen items/rows contract holds: a new frozen array of frozen rows
+    // (review #985 P2).
+    items: Object.freeze(page.items.map((item) => Object.freeze({ ...item, searchMatch: searchMatchFields(item, query.q ?? '') }))),
     total: page.total,
     page: page.page,
     pageSize: page.pageSize,

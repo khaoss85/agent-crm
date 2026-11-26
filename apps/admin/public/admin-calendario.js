@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from '
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { buildTeamRows, duplicateTeamHints, isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
@@ -204,6 +204,37 @@ export function missingBookingFields(values, hasCustomerPick) {
   if (read('start') === '') missing.push('inizio');
   if (read('end') === '') missing.push('fine');
   return missing;
+}
+
+/**
+ * backlog:9ff9a9ee1fea — the place fails closed in Italian before any
+ * request, like the missing fields above: a link without its label never
+ * leaves the form (the detail hangs the link on the label), and a link the
+ * server would refuse never leaves either. Null when the place is fine.
+ * Pure and DOM-free so it is unit-tested without a browser.
+ * @param {unknown} value
+ */
+export function isWebLink(value) {
+  if (typeof value !== 'string') return false;
+  const link = value.trim();
+  const lower = link.toLowerCase();
+  const schemeLen = lower.startsWith('https://') ? 8 : lower.startsWith('http://') ? 7 : 0;
+  if (schemeLen === 0) return false;
+  // A bare scheme ('https://' with no host) is not a meeting link: the
+  // popover would paint a clickable anchor to nowhere and the write would
+  // fail late. The host carries at least a dotted name, no whitespace.
+  const host = link.slice(schemeLen);
+  if (host === '' || host.includes('.') === false) return false;
+  return /^\S+$/.test(host);
+}
+
+export function placeRefusal(claim) {
+  const place = typeof claim?.location === 'string' ? claim.location.trim() : '';
+  const link = typeof claim?.locationUrl === 'string' ? claim.locationUrl.trim() : '';
+  if (link === '') return null;
+  if (place === '') return 'Scrivi il luogo («Online») accanto al link: un link da solo non dice dove ci si vede.';
+  if (!isWebLink(link)) return 'Il link della riunione deve iniziare con http(s)://, come un indirizzo web.';
+  return null;
 }
 
 /** Week label for the nav ("19 – 25 ott 2026"), null when unparsable. */
@@ -969,11 +1000,23 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:afa97ffe5a4d (production 18/11: 502 LLM_PROVIDER_FAILED, even
+  // after the retry) — the assistant is not answering: say so in Italian
+  // and offer the manual form (aiBlockOf 'down' paints «Compila a mano»
+  // beside this sentence).
+  if (isProviderFailure(error)) {
+    return 'L’assistente non risponde: riprova tra poco, oppure compila l’appuntamento a mano.';
+  }
   // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
   // event: the slot is held, the reminder would strand, or the booking is
   // closed and moves nowhere. The event stays where it was.
   if (code === 'APPOINTMENTS_OVERLAP') {
     return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
+  }
+  // backlog:0f2ae629e09b — la serie non si conferma con il calendario
+  // collegato (la spinta coprirebbe solo la testa): niente è stato scritto.
+  if (code === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+    return 'Con Google Calendar collegato le ricorrenze arrivano presto: conferma un appuntamento alla volta, senza ripetizione.';
   }
   if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
     return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
@@ -1142,6 +1185,329 @@ function customerHintCompany(item, sibs) {
 }
 
 /**
+ * Fold for the form-side visible-match checks: lowercase without accents,
+ * the same folding the server `searchNeedle` uses
+ * (`packages/customer-data/src/customers.js`), so the form drops exactly
+ * the rows whose match it cannot show.
+ * @param {unknown} value
+ */
+function foldCustomerText(value) {
+  return String(value ?? '').toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '');
+}
+
+/** The folded words of a text: letters and digits, every other mark splits. @param {unknown} value */
+function customerTextWords(value) {
+  return foldCustomerText(value).split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
+}
+
+/**
+ * Words the server `searchNeedle` never blames a field for
+ * (`packages/customer-data/src/customers.js`: channel names and their
+ * aliases, the «di»/«su» glue, the leading «clienti di» phrase). The admin
+ * bundle has no bundler, so the lists are mirrored here instead of
+ * imported: a query of only these words matches on the channel, never on
+ * text, and the row already passed the channel filter.
+ */
+const CUSTOMER_CHANNEL_BY_WORD = {
+  whatsapp: 'whatsapp', wa: 'whatsapp', instagram: 'instagram', ig: 'instagram',
+  facebook: 'facebook', messenger: 'facebook', fb: 'facebook', tiktok: 'tiktok',
+  tik: 'tiktok', email: 'email', mail: 'email', gmail: 'email', telefono: 'phone',
+  phone: 'phone', tel: 'phone', sms: 'sms', voce: 'voice',
+};
+const CUSTOMER_CHANNEL_ALIASES = {
+  whatsapp: ['wa'], instagram: ['ig'], facebook: ['messenger', 'fb'],
+  tiktok: ['tik'], email: ['mail', 'gmail'], phone: ['telefono', 'tel'],
+  sms: [], voice: ['voce'],
+};
+const CUSTOMER_QUERY_GLUE_WORDS = new Set(['di', 'su']);
+
+/**
+ * The server-equivalent needle of a typed query: folded words minus the
+ * channel words (only the words of a detected channel, like the server)
+ * and the glue, split into text words, mixed-needle digit words and joined
+ * digits. Pure, so the form and its tests share it.
+ * @param {unknown} query the typed search text
+ */
+function splitCustomerNeedle(query) {
+  const text = String(query ?? '');
+  const stripped = text.replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, '');
+  const rawWords = text.toLowerCase().split(/[^a-zà-öø-ÿ]+/i).filter((word) => word !== '');
+  const found = new Set();
+  for (const word of rawWords) {
+    const channel = CUSTOMER_CHANNEL_BY_WORD[word];
+    if (channel) found.add(channel);
+  }
+  const channelWords = new Set();
+  for (const channel of found) {
+    channelWords.add(channel);
+    for (const alias of CUSTOMER_CHANNEL_ALIASES[channel] ?? []) channelWords.add(alias);
+  }
+  const words = customerTextWords(stripped)
+    .filter((word) => !channelWords.has(word) && !CUSTOMER_QUERY_GLUE_WORDS.has(word));
+  const textWords = words.filter((word) => !/^[0-9]+$/.test(word));
+  const numericWords = words.filter((word) => /^[0-9]+$/.test(word));
+  const digits = numericWords.join('');
+  // backlog:f6b9d189 (owner 20/11 «40»): below the phone floor (mirrored
+  // from the server `PHONE_SEARCH_MIN_DIGITS`) digits are words, not a
+  // number — they read the shown fields like text, never the held phone.
+  const shortDigitWords = textWords.length === 0 && digits !== '' && digits.length < 3 ? numericWords : [];
+  return {
+    textWords: [...textWords, ...shortDigitWords],
+    // Digit words of a mixed needle also blame the shown fields (the same
+    // rule the server `searchMatchFields` applies); a pure-digit needle at
+    // or above the floor still names ONLY the held phone below, never the
+    // shown fields.
+    digitWords: textWords.length > 0 ? numericWords : [],
+    digits,
+  };
+}
+
+/**
+ * Whether a folded needle word visibly sits in a shown field: the same
+ * word-start/infix rule `searchRank` uses (an infix needs at least 4
+ * characters, `SEARCH_INFIX_MIN_CHARS`), so «anna» never matches inside
+ * «Canada» but still finds «Giovanna».
+ * @param {string[]} fieldWords the folded words of the shown field
+ * @param {string} word one folded needle word
+ */
+function customerWordHitIn(fieldWords, word) {
+  if (fieldWords.some((candidate) => candidate.startsWith(word))) return true;
+  return word.length >= 4 && fieldWords.some((candidate) => candidate.includes(word));
+}
+
+/**
+ * Whether the needle visibly sits in one shown field value, by the same
+ * text rule the server blames fields with (a digit word of a mixed needle
+ * counts, like review #985 P2).
+ * @param {unknown} fieldValue the shown name, email or company
+ * @param {string[]} textWords the folded text words of the query
+ * @param {string[]} digitWords the folded digit words of a mixed query
+ */
+function customerFieldShows(fieldValue, textWords, digitWords) {
+  if (typeof fieldValue !== 'string' || fieldValue === '') return false;
+  const words = customerTextWords(fieldValue);
+  return textWords.some((word) => customerWordHitIn(words, word))
+    || digitWords.some((word) => customerWordHitIn(words, word));
+}
+
+/**
+ * Fold with an index map back to the original string (folding only drops
+ * combining marks, never reorders): `origEndOf(foldedEnd)` is the
+ * end-exclusive original index, so the shown motive keeps the typed
+ * accents. @param {unknown} value
+ */
+function foldCustomerTextMapped(value) {
+  const chars = [...String(value ?? '').toLowerCase()];
+  let folded = '';
+  const map = [];
+  chars.forEach((ch, i) => {
+    const piece = ch.normalize('NFD').replace(/\p{M}+/gu, '');
+    for (let k = 0; k < piece.length; k += 1) map.push(i);
+    folded += piece;
+  });
+  return { folded, origEndOf: (foldedEnd) => (foldedEnd <= 0 ? 0 : (map[foldedEnd - 1] ?? 0) + 1) };
+}
+
+/**
+ * The end-exclusive index where a folded needle word sits in a folded
+ * field, honoring the word-start/infix rule (-1 when it does not sit
+ * there). Word start wins, like the server rank.
+ * @param {string} folded the folded field text
+ * @param {string} word one folded needle word
+ */
+function customerWordEndIn(folded, word) {
+  const atStart = new RegExp(`(^|[^\\p{L}\\p{N}])${word}`, 'u').exec(folded);
+  if (atStart) return atStart.index + atStart[0].length;
+  if (word.length >= 4) {
+    const inside = folded.indexOf(word);
+    if (inside >= 0) return inside + word.length;
+  }
+  return -1;
+}
+
+/**
+ * backlog:f6b9d189 — the email motive anchored on the searched words: the
+ * smallest prefix still holding the end of a matched word
+ * («mario.anna…@example.it» for «anna»), else a trailing window of at most
+ * ten characters. When the match runs to the end of the local part, only
+ * the matched word reads («…ova40…@esempio.it» for «ova40» on «prova40»),
+ * never the whole local part on its own: the window always ends with «…»
+ * (or is the short prefix the homonym hints already print), and the domain
+ * stays whole. Null when no searched word sits in the
+ * address — the row then has no visible email correspondence.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {string[]} textWords the folded text words of the query
+ * @param {string[]} digitWords the folded digit words of a mixed query
+ */
+function customerAnchoredEmail(item, textWords, digitWords) {
+  const split = customerHintSplitEmail(item);
+  if (split === null) return null;
+  const { folded, origEndOf } = foldCustomerTextMapped(split.local);
+  const winner = [...textWords, ...digitWords]
+    .find((word) => customerWordEndIn(folded, word) >= 0) ?? null;
+  const end = winner === null ? -1 : customerWordEndIn(folded, winner);
+  if (end >= 0) {
+    const origEnd = origEndOf(end);
+    if (origEnd < split.local.length) {
+      if (origEnd <= 12) return `${split.local.slice(0, origEnd)}…@${split.domain}`;
+      return `…${split.local.slice(Math.max(0, origEnd - 10), origEnd)}…@${split.domain}`;
+    }
+    // The match closes the local part («ova40» on «prova40»): a plain
+    // prefix would publish the whole local part, so only the matched word
+    // reads, with «…» on both sides — the piece, never the rest.
+    const start = origEndOf(Math.max(0, end - winner.length));
+    return `…${split.local.slice(start, origEnd)}…@${split.domain}`;
+  }
+  // The blame can sit on the domain («e» in «bea@example.com»): the motive
+  // then falls back to the minimal prefix, whose whole domain stays
+  // visible — the correspondence still reads. Otherwise the row has no
+  // visible email correspondence.
+  const domainWords = customerTextWords(split.domain);
+  if ([...textWords, ...digitWords].some((word) => customerWordHitIn(domainWords, word))) {
+    return customerHintEmail(item, []);
+  }
+  return null;
+}
+
+/**
+ * backlog:f6b9d189 — the phone motive anchored on the searched digits: the
+ * tail when it holds the digits («tel. …4567», the homonym shape), else a
+ * window holding the whole matched run plus its neighbours
+ * («tel. 3933312…» for «333», «tel. …00000188…» for «000 001»), so phones
+ * sharing a run still read apart. Same partial class as the homonym tails,
+ * never the whole number (a window covering it falls back to the tail).
+ * Null below the digit floor or when the held phone cannot show the digits
+ * (fewer than four digits have no showable tail) — the row then has no
+ * visible phone correspondence.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {string} digits the joined digit words of the query
+ */
+function customerAnchoredPhone(item, digits) {
+  if (digits === '' || digits.length < 3) return null;
+  const held = customerHintDigits(item);
+  if (held.length < 4 || !held.includes(digits)) return null;
+  const tail = held.slice(-4);
+  if (tail.includes(digits)) return `tel. …${tail}`;
+  const at = held.indexOf(digits);
+  const start = Math.max(0, at - 2);
+  const end = Math.min(held.length, at + Math.max(digits.length, 4) + 2);
+  if (start === 0 && end === held.length) return `tel. …${tail}`;
+  const cut = `${start > 0 ? '…' : ''}${held.slice(start, end)}${end < held.length ? '…' : ''}`;
+  return `tel. ${cut}`;
+}
+
+/**
+ * backlog:f6b9d189 — which shown fields explain a text query, by the same
+ * rules the server `searchMatchFields` uses (word-start/infix on name,
+ * email and company; joined digits on the held phone with its floor). The
+ * form uses it only when the server sent no `searchMatch` (an older
+ * server): every row then still needs a visible correspondence, and the
+ * company blame — a field the form never shows — drops the row.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} query the typed search text
+ */
+export function customerLocalBlame(item, query = '') {
+  const { textWords, digitWords, digits } = splitCustomerNeedle(query);
+  const hits = [];
+  if (textWords.length > 0) {
+    const fields = [
+      ['name', item?.name],
+      ['email', item?.email],
+      ['company', item?.company?.name],
+    ];
+    for (const [key, value] of fields) {
+      if (customerFieldShows(value, textWords, digitWords)) hits.push(key);
+    }
+  }
+  if (digits !== '' && digits.length >= 3 && customerHintDigits(item).includes(digits)) hits.push('phone');
+  return hits;
+}
+
+/**
+ * backlog:f6b9d189 — whether the shown name explains a name blame: the
+ * blame must name the field AND every searched text word must visibly sit
+ * in the name. One word is not enough («esempio.dan» on «Daniele …» read
+ * bare while «esempio» matched only the hidden domain): the row then needs
+ * a motive from another field. Digit words belong to the held phone, never
+ * to the bare name. A name blame the name cannot show (or a channel-only
+ * query, which blames nothing) explains nothing — the row then needs a
+ * motive from another field or leaves the box.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} match the explained fields, if the server sent them
+ * @param {unknown} query the typed search text
+ */
+export function customerNameExplains(item, match, query = '') {
+  if (!Array.isArray(match) || !match.includes('name')) return false;
+  if (typeof item?.name !== 'string' || item.name === '') return false;
+  const { textWords } = splitCustomerNeedle(query);
+  if (textWords.length === 0) return false;
+  const words = customerTextWords(item.name);
+  return textWords.every((word) => customerWordHitIn(words, word));
+}
+
+/**
+ * backlog:f6b9d189 — whether a customer suggestion stays listed for a
+ * query: only when a blamed field is visible — the shown name holds the
+ * words, or the anchored email/phone motive can print them. A blame on
+ * the company (a field the form never shows) or a blame no motive can
+ * print leaves the box, and so does a row an older server matched through
+ * an unshown field. A channel-only query keeps its rows: the channel
+ * filter already chose them. Pure, so the form and its tests share it.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} match the explained fields, if the server sent them
+ * @param {unknown} query the typed search text
+ */
+export function customerResultVisible(item, match, query = '') {
+  const { textWords, digitWords, digits } = splitCustomerNeedle(query);
+  if (textWords.length === 0 && digits === '') return true;
+  const blame = Array.isArray(match) ? match : customerLocalBlame(item, query);
+  if (!blame.some((field) => field === 'name' || field === 'email' || field === 'phone')) return false;
+  if (blame.includes('name') && customerFieldShows(item?.name, textWords, digitWords)) return true;
+  if (blame.includes('email') && customerAnchoredEmail(item, textWords, digitWords) !== null) return true;
+  if (blame.includes('phone') && customerAnchoredPhone(item, digits) !== null) return true;
+  return false;
+}
+
+/**
+ * backlog:f6b9d189 — the visible reason a customer suggestion is listed
+ * when the name itself does not explain it. Without a query it prints the
+ * homonym shapes (the partial email, else the phone tail — never the whole
+ * address or number). With the typed query it prints the motive anchored
+ * on the searched words («mario.anna…@example.it» for «anna»,
+ * «tel. …3331…» for «333»), so the correspondence is visible. Null when
+ * neither matched field can be shown — the row then leaves the
+ * suggestions, never unexplained. `match` is the item's `searchMatch`
+ * from the server (or the form-side blame for an older server).
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} match the explained fields, if the server sent them
+ * @param {unknown} [query] the typed search text, when the motive must show it
+ */
+export function customerMatchReason(item, match, query = '') {
+  if (!Array.isArray(match)) return null;
+  if (String(query ?? '').trim() === '') {
+    if (match.includes('email')) {
+      const mail = customerHintEmail(item, []);
+      if (mail !== null) return mail;
+    }
+    if (match.includes('phone')) {
+      const phone = customerHintPhone(item, []);
+      if (phone !== null) return phone;
+    }
+    return null;
+  }
+  const { textWords, digitWords, digits } = splitCustomerNeedle(query);
+  if (match.includes('email')) {
+    const mail = customerAnchoredEmail(item, textWords, digitWords);
+    if (mail !== null) return mail;
+  }
+  if (match.includes('phone')) {
+    const phone = customerAnchoredPhone(item, digits);
+    if (phone !== null) return phone;
+  }
+  return null;
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
  * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
@@ -1149,42 +1515,107 @@ function customerHintCompany(item, sibs) {
  * @param {any} row
  */
 export function isMovableAppointment(row) {
+  // A masked «Occupato» row (backlog:9aa5c073) is someone else's private
+  // booking: it never moves, opens no edit form and offers no cancellation
+  // to this viewer — the server masked it, the grid keeps it still.
+  if (row?.masked === true) return false;
   const status = String(row?.status ?? 'booked');
   return status === 'booked' || status === 'confirmed';
 }
 
 /**
- * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
- * 'off' (AI switched off or not configured for the space) or 'cap' (the
- * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
- * other refusal.
+ * backlog:afa97ffe5a4d — whether the phrase POST met the AI provider
+ * failing (production 18/11: 502 LLM_PROVIDER_FAILED), not the pilot
+ * refusing: the POST retries once, then the card says the assistant is
+ * not answering and offers the manual form. Pure and DOM-free,
+ * unit-tested without a browser.
  * @param {unknown} error
- * @returns {'off'|'cap'|null}
+ */
+export function isProviderFailure(error) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  return /** @type {any} */ (record).code === 'LLM_PROVIDER_FAILED';
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space), 'cap' (the
+ * daily AI spend ceiling, 429) or 'down' (the provider failed, even after
+ * the retry — the next phrase may still work). All three offer
+ * «Compila a mano»; null for any other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|'down'|null}
  */
 export function aiBlockOf(error) {
   const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
   if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
+  if (isProviderFailure(error)) return 'down';
   return null;
 }
 
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
+ * An exact identity wins; then the visible person name (case-insensitive,
+ * without the painted homonym ordinal).
+ * backlog:a16726b5ea76 (follow-up, live 18/11: «daniele pelleri»,
+ * «Daniele Pelleri» and «daniele pelleri (2)» all answered «… non è nel
+ * team» while «khaoss85» worked) — the person holds several identities
+ * the roster does not join into one row (same cause as the
+ * persona-identificativi family): the match is by visible name, without
+ * case and without the « (N)» suffix, and rows showing the same name are
+ * searched together. The search stays fail-closed (personFreeSlots offers
+ * only steps free under EVERY identity), so a stranger or a homonym never
+ * books as the wrong human: proposals spanning several distinct rows are
+ * never directly bookable — the operator picks the person in the
+ * «Nuovo appuntamento» form (review accordo-muse-review #1047 P1).
+ * Strangers stay out — the caller sends them down the «non capisco»
+ * path. Only the painted shape is stripped (« (2)»: one space, digits,
+ * end); «Marco(2)» or «Marco  (2)» stay part of the searched name.
+ * A literal roster name wins before any stripping, so a real
+ * «Marco Rossi (2)» is not folded into «Marco Rossi» (review #1017
+ * round 1, P2 regression) — but the generic «Membro del team» fallback
+ * names nobody (review #1017 round 1, P2).
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ * @returns {Array<object>} the matched person rows, in painted order
  */
-export function resolveDraftMemberIds(draftMember, named, members) {
+export function matchDraftMemberRows(draftMember, named, members) {
   if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
-  if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
-  if (byName.length === 1) return [...byName[0].ids];
+  if (exact) return [exact];
+  const fold = (text) => String(text).trim().toLowerCase();
+  const stripOrdinal = (text) => fold(text).replace(/ \(\d+\)$/, '');
+  // A row without a person name only lends its painted label when the
+  // label is a real signal (slug words like «Marco Rossi»); the generic
+  // fallback (with or without a painted ordinal) matches nothing.
+  const matchable = (row) => row.name !== null || stripOrdinal(row.label) !== 'membro del team';
+  const namesOf = (row) => [row.name, row.label].filter((name) => typeof name === 'string');
+  const wanted = fold(draftMember);
+  // The raw step reads person names only, never painted labels: a literal
+  // roster name («Marco Rossi (2)») still finds its own row before any
+  // stripping (review #1017 giro 1, P2 regression).
+  const raw = rows.filter((row) => matchable(row)
+    && typeof row.name === 'string' && fold(row.name) === wanted);
+  if (raw.length >= 1) return raw;
+  const stripped = stripOrdinal(draftMember);
+  if (stripped === '') return [];
+  const byName = rows.filter((row) => matchable(row)
+    && namesOf(row).some((name) => stripOrdinal(name) === stripped));
+  if (byName.length >= 1) return byName;
   return [];
+}
+
+/**
+ * backlog:a16726b5ea76 — the booking identities of the rows
+ * matchDraftMemberRows finds, without doubles: one human split over
+ * several identities searches them all together. The union is for the
+ * search only — booking as one of them stays with the operator whenever
+ * the rows are several (see the phrase flow and confirmSlot).
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  return [...new Set(matchDraftMemberRows(draftMember, named, members).flatMap((row) => row.ids))];
 }
 
 /**
@@ -1580,6 +2011,8 @@ export function createCalendarioView(deps) {
     pendingEventId: null,
     /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
     pendingEventMember: null,
+    /** Booked start the highlight falls back to when the confirm answer carries no id (production bridge). @type {string|null} */
+    pendingEventStart: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1598,6 +2031,8 @@ export function createCalendarioView(deps) {
     cancelNote: '',
     /** The optional reason the operator typed, kept across repaints. */
     cancelReason: '',
+    /** backlog:0f2ae629e09b — the recurrence rule the manual form books: null is «Non si ripete». @type {any} */
+    manualRecurrence: null,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -1620,7 +2055,7 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
-    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    /** The last phrase refusal blocked the AI ('off', 'cap' or 'down'): the card offers «Compila a mano». @type {'off'|'cap'|'down'|null} */
     aiBlocked: null,
     /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
     phraseNoDraft: false,
@@ -1666,6 +2101,8 @@ export function createCalendarioView(deps) {
     customerQuery: '',
     /** Latest customer search results (`GET /api/customer-data/customers` items). @type {Array<any>} */
     customerItems: [],
+    /** Server-side total of the latest search (pages beyond the first may still be unread). @type {number} */
+    customerServerTotal: 0,
     /** Customer search failure in the operator's own words, or null. @type {string|null} */
     customerError: null,
     /** The last customer search answer was read in part (complete:false). */
@@ -1810,6 +2247,28 @@ export function createCalendarioView(deps) {
         // The explicit request beats a retained «hide this person»
         // (review Muse #792): the asked event's member shows again.
         else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
+      }
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carried no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person. The local copy rides until the server week carries a row
+      // with the same time, which the highlight then adopts by id. A
+      // cancelled server row with the same time retires everything: the
+      // server stays authoritative, like the id handshake above.
+      else if (state.pendingEventStart !== null && state.pendingEventMember !== null) {
+        carryBookedRow();
+        const match = pendingTimeRow();
+        if (match !== null && typeof match.id === 'string' && match.id !== '') {
+          state.selectedId = match.id;
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(match.teamMemberId ?? ''));
+        } else if (match === null && cancelledTimeRow()) {
+          state.pendingEventStart = null;
+          state.pendingEventMember = null;
+          state.confirmed = null;
+          state.selectedId = null;
+        }
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
@@ -2070,6 +2529,39 @@ export function createCalendarioView(deps) {
       }
     }
     return null;
+  }
+
+  /**
+   * backlog:134f3ed7 (seguito 18/11) — the non-cancelled row with the
+   * just-booked time and person, for confirms whose answer carries no id
+   * (production bridge). Only the grid highlight and the reload handshake
+   * read it — never the detail selection, so no popover opens uninvited.
+   */
+  function pendingTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** A cancelled server row with the just-booked time and person: the booking is gone, so the fallback retires. */
+  function cancelledTimeRow() {
+    if (state.pendingEventStart === null || state.pendingEventMember === null || !state.week) return false;
+    for (const group of state.week?.members ?? []) {
+      if (group?.teamMemberId !== state.pendingEventMember) continue;
+      for (const row of group?.appointments ?? []) {
+        if (!isCancelledRow(row)) continue;
+        if (String(row?.startsAt ?? '') === state.pendingEventStart) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -2519,6 +3011,13 @@ export function createCalendarioView(deps) {
       }));
       return panel;
     }
+    // backlog:6563edf41aab: the same duplicate warning Spazi e accessi
+    // paints, from the same roster rows through the same hints — «Daniele
+    // Pelleri (1)» and «daniele pelleri (2)» stay two toggles until the
+    // pilot merges them, but never again without an explanation.
+    for (const hint of duplicateTeamHints(buildTeamRows(Array.isArray(state.members) ? state.members : []))) {
+      panel.appendChild(el(doc, 'p', { className: 'bo-muted cal-team-duplicate', text: `Possibile doppione: ${hint.text}` }));
+    }
     for (const row of rows) {
       const toggle = el(doc, 'button', {
         className: 'secondary small',
@@ -2729,6 +3228,7 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    state.manualRecurrence = null;
     // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): the typed
     // marks go with the values, or the next opening reads the proposed
     // date as «written» and raises a false unsaved-text warning.
@@ -3282,13 +3782,21 @@ export function createCalendarioView(deps) {
       for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
-        const ghost = el(doc, 'button', {
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows paints as a marker, never as a
+        // booking button — the click would book the wrong human.
+        const choiceOnly = slot?.personChoiceRequired === true;
+        const ghost = el(doc, choiceOnly ? 'div' : 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
+          attrs: choiceOnly
+            ? { style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`, 'aria-disabled': 'true' }
+            : { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
-        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        if (!choiceOnly) {
+          holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+          ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+        }
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3340,9 +3848,14 @@ export function createCalendarioView(deps) {
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
       const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+      // spanning several rows is never confirmed from the card — the
+      // operator picks the person in the form.
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
+        text: slot?.personChoiceRequired === true
+          ? `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dal modulo «Nuovo appuntamento» dopo aver scelto la persona.`
+          : `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
       }));
     }
     return panel;
@@ -3389,7 +3902,11 @@ export function createCalendarioView(deps) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
+    const timeFallback = state.selectedId === null && state.pendingEventStart !== null
+      && state.pendingEventMember !== null
+      && String(row?.teamMemberId ?? '') === state.pendingEventMember
+      && String(row?.startsAt ?? '') === state.pendingEventStart;
+    const selected = (state.selectedId !== null && String(row?.id ?? '') === state.selectedId) || timeFallback;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
@@ -3412,46 +3929,42 @@ export function createCalendarioView(deps) {
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     const origin = originOf(row);
-    if (durationMin < 45) {
-      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
-      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
-      // The origin badge stays readable on the single line when the foot
-      // below stays hidden (15-min blocks), so nothing paints half-cut.
-      // At 30+ min the foot carries avatar and badges.
-      if (durationMin < 30) {
-        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
-      }
-    } else {
-      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    }
-    const foot = el(doc, 'span', { className: 'cal-day-foot' });
-    // Initials decorate (the tint already encodes the member); the WA badge
-    // stays readable because it names the booking origin.
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+    // backlog:667f1f1c: below 60 min no row paints under the title rows —
+    // the verifier saw the initials dot half-cut in a 43px block. Badges
+    // (origin, cancelled) ride the line that already paints; the foot with
+    // the initials dot paints only where it fits whole (60+ min).
+    const badgeNodes = [];
     // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    if (origin === 'whatsapp') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-    } else if (origin === 'google') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-    } else if (origin === 'link') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-    }
+    if (origin === 'whatsapp') badgeNodes.push(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    else if (origin === 'google') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    else if (origin === 'link') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
-    if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    if (cancelled) badgeNodes.push(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    const lineBadges = () => {
+      const wrap = el(doc, 'span', { className: 'cal-line-badges' });
+      for (const badge of badgeNodes) wrap.appendChild(badge);
+      return wrap;
+    };
+    if (durationMin < 45) {
+      // A short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      if (badgeNodes.length > 0) item.appendChild(lineBadges());
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      if (durationMin < 60 && badgeNodes.length > 0) item.appendChild(lineBadges());
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
     }
-    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
-    // block has room — 15-min blocks already carry origin and status on
-    // their single line, so the foot never paints half-cut.
-    if (durationMin >= 30) item.appendChild(foot);
+    if (durationMin >= 60) {
+      const foot = el(doc, 'span', { className: 'cal-day-foot' });
+      // Initials decorate (the tint already encodes the member).
+      foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+      if (badgeNodes.length > 0) foot.appendChild(lineBadges());
+      item.appendChild(foot);
+    }
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
@@ -3489,6 +4002,9 @@ export function createCalendarioView(deps) {
    * name; the free notes move to the detail card.
    */
   function titleOf(row) {
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the grid reads only «Occupato» — never the service, never the customer.
+    if (row?.masked === true) return 'Occupato';
     const service = serviceLabel(row?.serviceKey, state.services);
     const customer = displayNameOf(row, subjectKeyOf(row));
     return customer ? `${service} · ${customer}` : service;
@@ -3658,6 +4174,20 @@ export function createCalendarioView(deps) {
       className: 'cal-pop-when',
       text: `${day} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`,
     }));
+    // A masked row (backlog:9aa5c073) is someone else's private booking:
+    // the card reads «Occupato», the time and the team person — never the
+    // customer, the service, the note or the origin. No edit, no
+    // cancellation: isMovableAppointment already shut those tools above.
+    if (row?.masked === true) {
+      const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
+      if (typeof member === 'string' && member !== '') {
+        const person = el(doc, 'p', { className: 'cal-pop-row cal-pop-person', attrs: { 'data-role': 'event-member' } });
+        person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
+        person.appendChild(el(doc, 'span', { text: member }));
+        pop.appendChild(person);
+      }
+      return pop;
+    }
     // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
     // refusal, beside the event it belongs to. It clears on the next
     // selection change (the click handler above).
@@ -3701,6 +4231,26 @@ export function createCalendarioView(deps) {
       person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
       person.appendChild(el(doc, 'span', { text: member }));
       pop.appendChild(person);
+    }
+    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
+    // detail: the label paints as text, and the meeting link hangs on it
+    // so it stays readable aloud. Only an http(s) link becomes clickable —
+    // anything else paints as plain text, never a scriptable address.
+    const place = typeof row?.location === 'string' ? row.location.trim() : '';
+    if (place !== '') {
+      const placeUrl = typeof row?.locationUrl === 'string' ? row.locationUrl.trim() : '';
+      const placeRow = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-location' } });
+      if (isWebLink(placeUrl)) {
+        placeRow.appendChild(el(doc, 'span', { text: 'Luogo: ' }));
+        placeRow.appendChild(el(doc, 'a', {
+          className: 'cal-pop-link',
+          text: place,
+          attrs: { href: placeUrl, target: '_blank', rel: 'noopener', title: placeUrl },
+        }));
+      } else {
+        placeRow.textContent = `Luogo: ${place}`;
+      }
+      pop.appendChild(placeRow);
     }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
     if (notes !== '') pop.appendChild(el(doc, 'p', { className: 'cal-pop-row cal-pop-note', text: `Nota: ${notes}` }));
@@ -4083,10 +4633,15 @@ export function createCalendarioView(deps) {
       for (const slot of state.proposals.slice(0, 24)) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
-        const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
-        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
-        item.appendChild(confirm);
+        // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a
+        // slot spanning several rows offers no direct Conferma — booking
+        // as the first identity could hit the wrong human.
+        if (slot?.personChoiceRequired !== true) {
+          const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
+          holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+          confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
+          item.appendChild(confirm);
+        }
         list.appendChild(item);
       }
       panel.appendChild(list);
@@ -4151,15 +4706,35 @@ export function createCalendarioView(deps) {
   async function phraseAnswer({ resumeId = null, seq }) {
     let requestId = resumeId;
     if (requestId === null) {
+      // backlog:afa97ffe5a4d (production 18/11: the phrase POST met a 502
+      // LLM_PROVIDER_FAILED and the card gave up): a provider error retries
+      // the same POST once — the pilot's provider hiccups, the sentence is
+      // still there, so the operator never retypes it.
+      // Codex P2 on #1062: the retry resends the phrase (and space) that
+      // asked — never a later edit of the still-enabled field — and never
+      // after a newer submission owned the card.
+      const sentPhrase = state.phrase;
+      const sentSpace = readSpace();
+      const postPhrase = () => client.request('/api/appointments/phrase', {
+        method: 'POST',
+        body: { spaceId: sentSpace, phrase: sentPhrase },
+      });
+      let failed;
       try {
-        return await client.request('/api/appointments/phrase', {
-          method: 'POST',
-          body: { spaceId: readSpace(), phrase: state.phrase },
-        });
+        return await postPhrase();
       } catch (error) {
-        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
-        if (requestId === null) throw error;
+        failed = error;
       }
+      if (isProviderFailure(failed)) {
+        if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+        try {
+          return await postPhrase();
+        } catch (error) {
+          failed = error;
+        }
+      }
+      requestId = pendingRequestId(failed, 'BO_PHRASE_PENDING');
+      if (requestId === null) throw failed;
     }
     // A route away (or a newer search) during the POST owns the mount now:
     // never paint the waiting card over it (review #664, backlog:607f33ee).
@@ -4274,7 +4849,10 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
-        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
+        // known team does not hold was never «in the team» — the phrase did
+        // not name a person we know, so it says so instead of refusing them.
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it. The outsider name never fills
         // «Persona del team» (production after #735): the field stays empty,
@@ -4293,6 +4871,15 @@ export function createCalendarioView(deps) {
       // person: offer a step only when every identity reports it free, so a
       // booking under one identity never double-books their other one.
       const kept = personFreeSlots(groups, searchIds, member);
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // visible name can span several distinct rows — one human over split
+      // identities, or true homonyms the roster cannot tell apart. The
+      // proposals are real steps free under every identity, but no slot
+      // may book directly as the wrong human: the operator picks the
+      // person in the «Nuovo appuntamento» form.
+      const needsPersonChoice = matchDraftMemberRows(
+        member, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      if (needsPersonChoice) for (const slot of kept) slot.personChoiceRequired = true;
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin
@@ -4335,7 +4922,13 @@ export function createCalendarioView(deps) {
       // a free 30-minute step stays 20, never the search size).
       const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
-      state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): with
+      // several rows the recognition stands (the draft and its free steps),
+      // but the booking waits for the operator's pick — never a direct
+      // Conferma as the first identity.
+      state.draftNote = needsPersonChoice
+        ? 'Bozza pronta: con questo nome ci sono più persone, scegli nel modulo «Nuovo appuntamento» e conferma da lì.'
+        : 'Bozza pronta: controlla i campi nel modulo e conferma.';
       let takenNote = '';
       if (Number.isFinite(timedAt) && !exact) {
         const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
@@ -4391,12 +4984,21 @@ export function createCalendarioView(deps) {
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
-      const ids = resolveDraftMemberIds(
-        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
-        parseMemberFilter(state.memberFilter),
-        state.members,
-      );
-      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      const memberText = typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '';
+      const ids = resolveDraftMemberIds(memberText, parseMemberFilter(state.memberFilter), state.members);
+      const multiRow = matchDraftMemberRows(memberText, parseMemberFilter(state.memberFilter), state.members).length > 1;
+      // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): the
+      // raw drafted name is nobody's identity — with several rows it must
+      // not land in the person field (it would book the name itself). The
+      // operator picks the person on the menu instead.
+      const fillFor = (base) => {
+        if (ids.length === 1) return { ...base, teamMemberId: ids[0] };
+        if (!multiRow) return base;
+        const rest = { ...base };
+        delete rest.teamMemberId;
+        return rest;
+      };
+      let fill = fillFor(state.draft);
       // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
       // every opening proposes a time, so the first free step of the drafted
       // day rides into the form — a real free slot, never an invented
@@ -4409,7 +5011,7 @@ export function createCalendarioView(deps) {
           : null;
         if (first) {
           state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
-          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+          fill = fillFor(state.draft);
         }
       }
       fillManual(fill);
@@ -4514,6 +5116,12 @@ export function createCalendarioView(deps) {
    * page and shows five rows at most. Late answers paint the live results
    * box only — never a full re-render, so the operator keeps typing without
    * losing focus. Stale answers lose the token race and paint nothing.
+   * backlog:f6b9d189 (owner 20/11, regression on #1067: «pr» read «Nessun
+   * cliente» while the server found 19 — the first page held company-only
+   * rows the form hides, and the second page was never asked): when the
+   * visible filter empties the page, the search asks for the next pages
+   * until five visible rows or no more pages, never «nessun cliente» while
+   * the server still has rows to read.
    * @param {unknown} query
    */
   async function searchCustomers(query) {
@@ -4530,27 +5138,47 @@ export function createCalendarioView(deps) {
     // The space the search asked in: an answer never paints in another one.
     const askedSpace = readSpace();
     try {
-      const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
       const spaceId = askedSpace;
-      if (spaceId) params.set('spaceId', spaceId);
-      const controller = typeof AbortController === 'function' ? new AbortController() : null;
-      customerAbort = controller;
-      const answer = await client.request(
-        `/api/customer-data/customers?${params.toString()}`,
-        controller ? { signal: controller.signal } : {},
-      );
-      if (customerAbort === controller) customerAbort = null;
-      if (token !== customerSeq || readSpace() !== askedSpace) return;
-      state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      const read = [];
+      let page = 1;
+      let pages = 1;
+      let partial = false;
+      let serverTotal = 0;
+      // At most five pages of ten: bounded, sequential, same read-only list.
+      for (; page <= Math.min(pages, 5); page += 1) {
+        const params = new URLSearchParams({ q, page: String(page), pageSize: '10' });
+        if (spaceId) params.set('spaceId', spaceId);
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        customerAbort = controller;
+        const answer = await client.request(
+          `/api/customer-data/customers?${params.toString()}`,
+          controller ? { signal: controller.signal } : {},
+        );
+        if (customerAbort === controller) customerAbort = null;
+        if (token !== customerSeq || readSpace() !== askedSpace) return;
+        if (Array.isArray(answer?.items)) read.push(...answer.items);
+        if (answer?.complete === false) partial = true;
+        const answeredTotal = Number(answer?.total ?? 0);
+        if (Number.isFinite(answeredTotal) && answeredTotal > serverTotal) serverTotal = answeredTotal;
+        const totalPages = Number(answer?.pages ?? 1);
+        pages = Number.isFinite(totalPages) && totalPages >= 1 ? Math.floor(totalPages) : 1;
+        const visible = read.filter((item) => customerResultVisible(
+          item, Array.isArray(item?.searchMatch) ? item.searchMatch : null, q,
+        ));
+        if (visible.length >= 5) break;
+      }
+      state.customerItems = read;
+      state.customerServerTotal = serverTotal;
       // backlog:d128847d21fc: a list the server read only in part says so,
       // never a flat «nessun cliente».
-      state.customerPartial = answer?.complete === false;
+      state.customerPartial = partial;
       state.customerError = null;
     } catch (error) {
       // An aborted request belongs to a search a newer keystroke replaced.
       if (token !== customerSeq || error?.name === 'AbortError' || readSpace() !== askedSpace) return;
       state.customerPartial = false;
       state.customerItems = [];
+      state.customerServerTotal = 0;
       state.customerError = humanReadError(error, {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
       });
@@ -4573,6 +5201,13 @@ export function createCalendarioView(deps) {
    * carrying the name and nothing else — ids and resources never reach the
    * screen. A click picks the customer and rebuilds the form around the
    * pick, so the claim below books exactly the shown name.
+   * backlog:f6b9d189: only results the form can explain stay listed —
+   * a blamed field that is visible: the searched words sit in the shown
+   * name, or the anchored email/phone motive prints them beside it. A
+   * blame the form never shows (its company, or a name blame the name
+   * cannot show) leaves the box: «anna» no longer lists a Massimiliano
+   * Magrini matched through his company, and a row an older server
+   * matched through an unshown field leaves it too.
    * @param {any} box
    */
   function paintCustomerResults(box) {
@@ -4583,10 +5218,20 @@ export function createCalendarioView(deps) {
       return;
     }
     if (String(state.customerQuery ?? '').trim().length < 2) return;
-    if (state.customerItems.length === 0) {
+    const query = String(state.customerQuery ?? '');
+    // backlog:f6b9d189 (owner 20/11 «pr»): the search may have read several
+    // pages — the box still shows five rows at most.
+    const explained = state.customerItems.filter((item) => customerResultVisible(
+      item, Array.isArray(item?.searchMatch) ? item.searchMatch : null, query,
+    )).slice(0, 5);
+    if (explained.length === 0) {
+      // The server found rows but none the form can explain (company-only
+      // matches): honest about the read rows, never a flat «nessun cliente»
+      // while the server has more.
+      const readAny = state.customerItems.length > 0 || (state.customerServerTotal ?? 0) > 0;
       box.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: state.customerPartial
+        text: (state.customerPartial || readAny)
           ? 'Nessun cliente corrisponde tra quelli letti: l’elenco è parziale. Prova con nome o cognome.'
           : 'Nessun cliente corrisponde. Prova con un altro nome.',
       }));
@@ -4606,11 +5251,20 @@ export function createCalendarioView(deps) {
     // a partial email or phone beside each homonym, never a guess.
     const nameOf = (item) => (typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome');
     const seen = new Map();
-    for (const item of state.customerItems) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
-    for (const item of state.customerItems) {
+    for (const item of explained) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
+    for (const item of explained) {
       const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
-      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item, state.customerItems) : null;
+      const match = Array.isArray(item?.searchMatch) ? item.searchMatch : customerLocalBlame(item, query);
+      // backlog:f6b9d189 (owner 20/11 «-note@»/«.dan» nascosti nei puntini):
+      // when the name does not explain the query the anchored motive wins
+      // even between homonyms — the disambiguator («pr…@») would hide the
+      // matched piece. It falls back to the disambiguator only when no
+      // motive can print it.
+      const motive = customerNameExplains(item, match, query) ? null : customerMatchReason(item, match, query);
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1
+        ? (motive ?? customerHint(item, explained))
+        : motive;
       if (hint !== null) {
         pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
       }
@@ -4659,6 +5313,17 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:a16726b5ea76 (review accordo-muse-review #1047 P1): a slot
+    // spanning several rows never books here — even a crafted call lands
+    // on this refusal, and the operator picks the person in the form.
+    if (slot?.personChoiceRequired === true) {
+      state.aiNote = 'Con questo nome ci sono più persone: scegli nel modulo «Nuovo appuntamento» e conferma da lì.';
+      renderAll();
+      return;
+    }
+    // Team visibility (backlog:9aa5c073): the slot Conferma books the claim
+    // the operator sees — the live select value, like the manual Conferma.
+    const slotVisibility = manualValue('visibility');
     const claim = bookingClaim({
       spaceId: readSpace(),
       customer: pickedCustomer(),
@@ -4668,6 +5333,9 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
+      visibility: slotVisibility === '' ? undefined : slotVisibility,
+      location: manualValue('location') === '' ? null : manualValue('location'),
+      locationUrl: manualValue('locationUrl') === '' ? null : manualValue('locationUrl'),
     });
     state.confirmed = null;
     state.serviceError = '';
@@ -4685,6 +5353,14 @@ export function createCalendarioView(deps) {
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
       state.aiNote = CONFIRM_SERVICE_NOTE;
+      renderAll();
+      return;
+    }
+    // backlog:9ff9a9ee1fea — a link without its place label never leaves
+    // the row either: the detail hangs the link on the label.
+    const slotPlace = placeRefusal(claim);
+    if (slotPlace !== null) {
+      state.aiNote = slotPlace;
       renderAll();
       return;
     }
@@ -4747,12 +5423,27 @@ export function createCalendarioView(deps) {
     const booked = state.confirmed;
     const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
     const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
-    if (id === null || member === null) return;
+    if (member === null) return;
     if (!state.week || !Array.isArray(state.week.members)) return;
     const day = romeDayKey(booked?.startsAt);
     if (!day || !state.weekKeys.includes(day)) return;
     const group = state.week.members.find((entry) => entry?.teamMemberId === member);
     if (!group || !Array.isArray(group.appointments)) return;
+    if (id === null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the booked time rides instead. A server row
+      // with the same time already there wins, booked or cancelled — never
+      // a duplicate, never a phantom over a cancellation.
+      const start = typeof booked?.startsAt === 'string' && booked.startsAt !== '' ? booked.startsAt : null;
+      if (start === null) return;
+      if (group.appointments.some((row) => String(row?.startsAt ?? '') === start)) return;
+      const appointments = [...group.appointments, booked];
+      state.week = {
+        ...state.week,
+        members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+      };
+      return;
+    }
     const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
     // backlog:134f3ed7 (arbitrato 17/11, review Muse #1001 giro 2) — the
     // reloaded server week is authoritative: when the id is already there
@@ -4774,6 +5465,7 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    state.manualRecurrence = null;
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
@@ -4796,6 +5488,7 @@ export function createCalendarioView(deps) {
     const member = typeof appointment?.teamMemberId === 'string' && appointment.teamMemberId !== '' ? appointment.teamMemberId : null;
     state.pendingEventId = id;
     state.pendingEventMember = member;
+    state.pendingEventStart = typeof appointment?.startsAt === 'string' && appointment.startsAt !== '' ? appointment.startsAt : null;
     const day = romeDayKey(appointment?.startsAt);
     if (day && !state.weekKeys.includes(day)) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
@@ -4806,6 +5499,12 @@ export function createCalendarioView(deps) {
     // grid shows it before the reload lands. The reload reconciles.
     if (id !== null) {
       state.selectedId = id;
+      carryBookedRow();
+    } else if (member !== null && state.pendingEventStart !== null) {
+      // backlog:134f3ed7 (seguito 18/11) — the confirm answer carries no id
+      // (production bridge): the highlight falls back to the booked time and
+      // person until the reload adopts the server row with the same time.
+      state.selectedId = null;
       carryBookedRow();
     }
   }
@@ -4837,9 +5536,10 @@ export function createCalendarioView(deps) {
   /**
    * backlog:6e6750ff8163 — every field of «Nuovo appuntamento» carries its
    * visible label (Cliente, Persona del team, Servizio, Prezzo, Giorno,
-   * Inizio, Fine, Note): a placeholder alone vanishes as soon as the field
-   * holds a value («1.00» read as nothing). The label wraps its control, so
-   * a click on the words focuses the field and screen readers name it.
+   * Inizio, Fine, Luogo, Link riunione, Note): a placeholder alone vanishes
+   * as soon as the field holds a value («1.00» read as nothing). The label
+   * wraps its control, so a click on the words focuses the field and screen
+   * readers name it.
    * @param {string} label @param {any} control @param {{wide?: boolean}} [options]
    */
   function fieldBox(label, control, { wide = false } = {}) {
@@ -5121,6 +5821,131 @@ export function createCalendarioView(deps) {
     return select;
   }
 
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» choices of the manual form:
+   * «Non si ripete» first, then the options computed from the chosen day.
+   * The form paints from a YYYY-MM-DD Rome day, so the weekday and the
+   * month position come straight from that day. No regex literals here
+   * (backlog:b545aca18b8f: the pilot serves the /bo client through a pass
+   * that cuts `//`, so a literal holding it breaks the whole shell).
+   * @param {string} dayKey
+   */
+  function recurrenceChoiceLabels(dayKey) {
+    const weekdays = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+    const raw = String(dayKey ?? '');
+    const parts = raw.split('-');
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const date = Number(parts[2]);
+    const ok = parts.length === 3 && raw.length === 10
+      && Number.isSafeInteger(year) && Number.isSafeInteger(month) && Number.isSafeInteger(date)
+      && month >= 1 && month <= 12 && date >= 1 && date <= 31
+      && !Number.isNaN(Date.parse(`${raw}T12:00:00Z`));
+    if (!ok) {
+      return [
+        { value: 'none', label: 'Non si ripete' },
+        { value: 'daily', label: 'Ogni giorno' },
+        { value: 'weekly', label: 'Ogni settimana' },
+        { value: 'monthly', label: 'Ogni mese' },
+      ];
+    }
+    const weekday = new Date(Date.UTC(year, month - 1, date)).getUTCDay();
+    const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const nth = Math.floor((date - 1 - ((weekday - firstWeekday + 7) % 7)) / 7) + 1;
+    return [
+      { value: 'none', label: 'Non si ripete' },
+      { value: 'daily', label: 'Ogni giorno' },
+      { value: 'weekly', label: `Ogni settimana di ${weekdays[weekday]}` },
+      { value: 'monthly', label: `Ogni mese il ${nth}° ${weekdays[weekday]}` },
+    ];
+  }
+
+  /**
+   * backlog:0f2ae629e09b — how many appointments one honest click books.
+   * DECISION (to be confirmed): the manual form has no end picker yet (the
+   * count/until control is a follow-up), so every series the form sends
+   * ends after 12 occurrences — bounded, and the row below «Si ripete»
+   * says so. The server refuses an open-ended rule naming `recurrence`.
+   */
+  const MANUAL_RECURRENCE_DEFAULT_COUNT = 12;
+  /**
+   * backlog:0f2ae629e09b — the recurrence rule the manual form will book.
+   * Null is «Non si ripete»; anything else is the validated kind plus its
+   * end, so the claim can never fan out to hundreds of rows. With a
+   * linked Google Calendar the form never sends a series.
+   */
+  function recurrenceRuleFromState() {
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // la serie non si conferma — il form non ne manda mai una.
+    if (state.calendar?.connected === true) return null;
+    const rec = state.manualRecurrence;
+    if (rec === null || rec === undefined || typeof rec !== 'object') return null;
+    const kind = String(rec.kind ?? 'none');
+    if (kind === '' || kind === 'none') return null;
+    return { kind, count: MANUAL_RECURRENCE_DEFAULT_COUNT };
+  }
+
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» row of the manual form: the
+   * four choices with the labels computed from the chosen day.
+   * @param {any} form
+   */
+  function renderRecurrenceChoice(form) {
+    const rec = state.manualRecurrence !== null && typeof state.manualRecurrence === 'object'
+      ? state.manualRecurrence : { kind: 'none' };
+    const dayKey = String(state.manual?.date ?? '');
+    const wrap = uiSelect(doc, {
+      name: 'recurrence', value: String(rec.kind ?? 'none'), options: recurrenceChoiceLabels(dayKey),
+    });
+    const select = wrap.querySelector('select') ?? wrap;
+    // Explicit: the fake DOM in tests has no first-option default, and the
+    // claim reads this node — the painted choice and the node agree.
+    select.value = String(rec.kind ?? 'none');
+    const trackKind = () => {
+      state.manualRecurrence = { kind: String(select.value ?? 'none') };
+      state.manualTyped.add('recurrence');
+      state.bookingNote = '';
+      renderAll();
+    };
+    select.addEventListener('input', trackKind);
+    select.addEventListener('change', trackKind);
+    form.appendChild(fieldBox('Si ripete', wrap, { wide: true }));
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // le ricorrenze arrivano presto — «Si ripete» resta su «Non si ripete»
+    // e disattivato, con la riga che dice perché.
+    if (state.calendar?.connected === true) {
+      state.manualRecurrence = { kind: 'none' };
+      select.value = 'none';
+      select.setAttribute('disabled', 'disabled');
+      const note = el(doc, 'div', { attrs: { 'data-role': 'recurrence-linked-note' } });
+      note.textContent = 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.';
+      form.appendChild(note);
+      return select;
+    }
+    // backlog:0f2ae629e09b — the end one click books is painted, not just
+    // sent: the operator sees how many appointments «Si ripete» creates
+    // before pressing Conferma. No end picker yet (follow-up).
+    if (String(select.value ?? 'none') !== 'none') {
+      const endNote = el(doc, 'div', { attrs: { 'data-role': 'recurrence-end-note' } });
+      endNote.textContent = 'La serie crea ' + String(MANUAL_RECURRENCE_DEFAULT_COUNT) + ' appuntamenti.';
+      form.appendChild(endNote);
+    }
+    // The labels follow the chosen day: a day picked after the choice
+    // renames «Ogni settimana di …» in place, without losing the choice.
+    const dayInput = form.querySelector?.('input[name="date"]') ?? null;
+    if (dayInput && typeof dayInput.addEventListener === 'function') {
+      dayInput.addEventListener('input', () => {
+        const labels = recurrenceChoiceLabels(String(dayInput.value ?? ''));
+        const options = select.findAll ? select.findAll('option') : [...(select.childNodes ?? [])].filter((node) => node.tagName === 'OPTION');
+        for (const option of options) {
+          const hit = labels.find((entry) => entry.value === option.getAttribute('value'));
+          if (hit) option.textContent = hit.label;
+        }
+      });
+    }
+    return select;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM inside its hidden popover, so a draft can still
@@ -5160,10 +5985,15 @@ export function createCalendarioView(deps) {
     inputs.serviceKey = renderServiceChoice(form, priceInput);
     form.appendChild(fieldBox('Prezzo (€)', priceInput, { wide: true }));
     inputs.price = priceInput;
+    // backlog:9ff9a9ee1fea — the place, like the Google Calendar event
+    // form: a free address, or «Online» with the meeting link beside it.
+    // Both ride the claim and the detail; a link never travels alone.
     const fields = [
       ['date', 'date', 'Giorno', ''],
       ['start', 'time', 'Inizio', ''],
       ['end', 'time', 'Fine', ''],
+      ['location', 'text', 'Luogo', 'Indirizzo oppure Online'],
+      ['locationUrl', 'text', 'Link riunione', 'Solo se Online: https://…'],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
     // backlog:1e3393038b8b — the grid block follows the edited end time: a
@@ -5190,6 +6020,7 @@ export function createCalendarioView(deps) {
         pick.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
       }
     };
+    let linkBox = null;
     for (const [name, type, label, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
@@ -5203,10 +6034,53 @@ export function createCalendarioView(deps) {
         if (name === 'date' || name === 'start' || name === 'end') followManualPick();
       });
       inputs[name] = input;
-      // Giorno and Note take the row; Inizio and Fine sit side by side, so
-      // no date ever gets cut on the 340 px popover.
-      form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
+      // Giorno, Luogo, Link and Note take the row; Inizio and Fine sit side
+      // by side, so no date ever gets cut on the 340 px popover.
+      const box = fieldBox(label, input, { wide: name !== 'start' && name !== 'end' });
+      if (name === 'locationUrl') linkBox = box;
+      form.appendChild(box);
     }
+    // backlog:0f2ae629e09b — «Si ripete» rides below the day and times, so
+    // its labels are computed from the chosen day (see above).
+    renderRecurrenceChoice(form);
+    // Team visibility (backlog:9aa5c073), like Google Calendar: «Predefinita
+    // / Pubblico / Privato». Predefinita is the team default (everyone
+    // reads everything); Privato reads as «Occupato» for everyone but the
+    // creator and the administrators. The select owns the claim value, like
+    // the service menu: the claim reads the live node, never a copy.
+    const visibilityWrap = uiSelect(doc, {
+      name: 'visibility',
+      value: 'default',
+      options: [
+        { value: 'default', label: 'Predefinita' },
+        { value: 'public', label: 'Pubblico' },
+        { value: 'private', label: 'Privato' },
+      ],
+    });
+    const visibilitySelect = visibilityWrap.querySelector('select') ?? visibilityWrap;
+    if (typeof state.manual?.visibility === 'string' && state.manual.visibility !== '') {
+      visibilitySelect.value = state.manual.visibility;
+    }
+    const trackVisibility = () => {
+      state.manual = { ...(state.manual ?? {}), visibility: String(visibilitySelect.value ?? '') };
+      state.manualTyped.add('visibility');
+    };
+    visibilitySelect.addEventListener('input', trackVisibility);
+    visibilitySelect.addEventListener('change', trackVisibility);
+    form.appendChild(fieldBox('Visibilità', visibilityWrap, { wide: true }));
+    inputs.visibility = visibilitySelect;
+    // Restyle 19/11 (ece111d80305, regola AI-native: meno campi): «Link
+    // riunione» shows only when the place says Online, or a link is
+    // already there — an in-person booking never sees an empty extra field.
+    const syncLinkBox = () => {
+      if (linkBox === null) return;
+      const place = String(inputs.location?.value ?? '');
+      const link = String(inputs.locationUrl?.value ?? '');
+      if (/online/i.test(place) || link.trim() !== '') linkBox.removeAttribute('hidden');
+      else linkBox.setAttribute('hidden', '');
+    };
+    inputs.location?.addEventListener?.('input', syncLinkBox);
+    syncLinkBox();
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
@@ -5282,6 +6156,12 @@ export function createCalendarioView(deps) {
         } else inputs.serviceKey.value = rawService;
       }
       if (draft.notes) inputs.notes.value = String(draft.notes);
+      // backlog:9ff9a9ee1fea — a proposal draft round-trips the place the
+      // server validated, like the note: confirming from it stores the same
+      // place the draft described.
+      if (draft.location) inputs.location.value = String(draft.location);
+      if (draft.locationUrl) inputs.locationUrl.value = String(draft.locationUrl);
+      syncLinkBox();
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
       const dayKey = draftDayKey(draft);
@@ -5308,6 +6188,8 @@ export function createCalendarioView(deps) {
       if (dayKey) wrote.date = absorbed.date;
       if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
       if (draft.notes) wrote.notes = absorbed.notes;
+      if (draft.location) wrote.location = absorbed.location;
+      if (draft.locationUrl) wrote.locationUrl = absorbed.locationUrl;
       state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
@@ -5372,6 +6254,12 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        // backlog:0f2ae629e09b — «Non si ripete» is null; anything else is
+        // the validated rule the series books.
+        recurrence: recurrenceRuleFromState(),
+        visibility: read('visibility'),
+        location: read('location') === '' ? null : read('location'),
+        locationUrl: read('locationUrl') === '' ? null : read('locationUrl'),
       }),
     };
   }
@@ -5542,6 +6430,15 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:9ff9a9ee1fea — a link without its place label never leaves
+    // the form, on Proponi or Conferma alike: the detail hangs the link on
+    // the label, and a bare url would paint as an unreadable link.
+    const placeStop = placeRefusal(claim);
+    if (placeStop !== null) {
+      state.bookingNote = placeStop;
+      renderAll();
+      return;
+    }
     // The queued write can take a while on the pilot: the stale «Bozza
     // pronta» never stays on screen while Conferma is in flight.
     state.bookingNote = confirm ? 'Prenotazione in corso…' : 'Controllo lo slot…';
@@ -5578,6 +6475,20 @@ export function createCalendarioView(deps) {
         console.warn('bo-calendario booking refused:', String(error?.code ?? 'unknown'), `spaceId=${readSpace()}`);
         state.serviceError = calendarRefusalText(error) ?? '';
         state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+        // backlog:0f2ae629e09b — la serie non si conferma con Google
+        // collegato: il server non ha scritto niente, la frase dice cosa fare.
+        state.bookingNote = calendarRefusalText(error) ?? 'Con Google Calendar collegato le ricorrenze arrivano presto.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_OVERLAP' && claim?.recurrence) {
+        // backlog:0f2ae629e09b — a series is checked occurrence by
+        // occurrence: the refusal names which one is busy, never a bare
+        // «riprova più tardi».
+        const details = error?.details ?? {};
+        const total = Number(details.occurrenceCount ?? 0);
+        const at = Number(details.occurrenceIndex ?? 0) + 1;
+        state.bookingNote = Number.isFinite(total) && total > 0
+          ? `L'occorrenza ${at} di ${total} è occupata per questa persona: scegli un altro orario o annulla l'appuntamento che la occupa, poi riprova.`
+          : 'Una delle occorrenze è occupata per questa persona: scegli un altro orario, poi riprova.';
       } else {
         state.bookingNote = humanWriteError(error, {
           failed: 'Prenotazione non riuscita. Riprova più tardi.',
@@ -5630,6 +6541,7 @@ export function createCalendarioView(deps) {
       state.selection = null;
       state.manualOpen = false;
       state.manual = null;
+      state.manualRecurrence = null;
       // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): leaving
       // and returning drops the typed marks too, never a stale «written».
       state.manualTyped.clear();
@@ -5647,6 +6559,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = null;
       state.pendingEventMember = null;
+      state.pendingEventStart = null;
       resetPopSteps();
       state.moveNote = '';
       cancelCustomerSearch();
@@ -5666,6 +6579,7 @@ export function createCalendarioView(deps) {
       state.selectedId = null;
       state.pendingEventId = askedEvent.id;
       state.pendingEventMember = askedEvent.member ?? null;
+      state.pendingEventStart = null;
     }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {
@@ -5691,6 +6605,10 @@ export function createCalendarioView(deps) {
     void ensureServices();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
+    // backlog:f9cf5e4616c2: the event Oggi asked for scopes the entry load
+    // when no member is named (roster refused or empty) — like
+    // reloadAfterBooking below — so its week reads instead of staying empty.
+    else if (state.pendingEventMember !== null) await loadWeek([state.pendingEventMember]);
   }
 
   return { render, invalidate };
@@ -5705,13 +6623,22 @@ export function createCalendarioView(deps) {
  * a start there is no source key yet (the server refuses the claim).
  * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
  *   teamMemberId: string, serviceKey: string, priceCents: number | null,
- *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null,
+ *   visibility?: string, location?: string | null, locationUrl?: string | null,
+ *   recurrence?: { kind: string } | null}} input
  */
 export function bookingClaim(input) {
   const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
   const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
     ? input.customer.resource : 'contact';
   const member = input.teamMemberId;
+  // backlog:9ff9a9ee1fea — the place rides every claim (manual form,
+  // phrase Conferma, scheda window): trimmed here so every caller sends
+  // the same shape the server validates. An absent place omits the keys
+  // entirely, so the wire shape without a place is the one from before
+  // (the /bo bridge refuses fields it does not know: revert #1021).
+  const location = typeof input.location === 'string' && input.location.trim() !== '' ? input.location.trim() : null;
+  const locationUrl = typeof input.locationUrl === 'string' && input.locationUrl.trim() !== '' ? input.locationUrl.trim() : null;
   return {
     spaceId: input.spaceId,
     subject: { resource, id, owner: 'host' },
@@ -5722,6 +6649,15 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    // backlog:0f2ae629e09b — «Non si ripete» rides null; a series rides
+    // the validated rule the server expands.
+    recurrence: input.recurrence ?? null,
+    // Team visibility (backlog:9aa5c073): the live select value, or absent
+    // when the form never painted one — the server reads absent as the team
+    // default and refuses anything outside default/public/private.
+    visibility: input.visibility === '' || input.visibility == null ? undefined : input.visibility,
+    ...(location === null ? {} : { location }),
+    ...(locationUrl === null ? {} : { locationUrl }),
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,

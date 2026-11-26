@@ -175,6 +175,22 @@ test('776cf3469e64: Nome svuotato dopo la riga live — Crea dice che il nome ma
   assert.equal(mount.querySelector('input[name="agent-name"]').getAttribute('aria-invalid'), 'true', 'il campo Nome resta segnato');
 });
 
+test('776cf3469e64: Nome svuotato dopo il rifiuto di Crea — la riga dice che il nome manca, mai il doppione', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  fillPanel(mount, { name: 'Riaggancio' });
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE, 'Crea rifiuta il doppione');
+  type(mount, 'agent-name', '');
+  assert.match(mount.textContent, /Dagli un nome/, 'il Nome vuoto dice che il nome manca');
+  assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'il doppione di prima non copre il Nome vuoto');
+  assert.equal(mount.querySelector('input[name="agent-name"]').getAttribute('aria-invalid'), 'true', 'il campo Nome resta segnato');
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client).length, 0, 'niente POST con il Nome vuoto');
+});
+
 test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio clic; la card compare «in attesa del motore»', async () => {
   const { mount, client } = await paintedView();
   button(mount, 'new-agent').dispatch('click', {});
@@ -196,7 +212,11 @@ test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio
   const status = card.querySelector('.bo-agent-status');
   assert.equal(status.textContent, AGENT_NO_ENGINE_LABEL);
   assert.ok(status.classList.contains('bo-agent-status-waiting'));
-  assert.ok(card.textContent.includes(AGENT_NO_ENGINE_NOTE));
+  // Restyle 19/11: the «solo il catalogo» note once for «I tuoi agenti»,
+  // not on every waiting card; the «entrato nel tuo team» line on the card.
+  assert.ok(!card.textContent.includes(AGENT_NO_ENGINE_NOTE), 'la nota non si ripete nella card');
+  assert.equal(mount.textContent.split(AGENT_NO_ENGINE_NOTE).length - 1, 1, 'la nota compare una volta sola');
+  assert.ok(card.textContent.includes('Auguri è entrato nel tuo team.'), 'l’esito sta sulla card nuova');
   assert.ok(card.textContent.includes('10 €'), 'il tetto si legge sulla card nella forma unica (backlog:93e26f3d2cdc)');
   assert.ok(!card.textContent.includes('10,00 €'), 'mai la forma con i centesimi quando sono zero');
   const catalogCard = mount.querySelector(`article[data-agent="${RIAGGANCIO.sourceKey}"]`);

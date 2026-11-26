@@ -64,7 +64,7 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], components = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -88,6 +88,7 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       if (path.startsWith('/api/modules/quote/records/')) return quoteRecord;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
       if (path.startsWith('/api/modules/offer/records')) return { items: entries };
+      if (path.startsWith('/api/modules/price-component/records')) return { items: components };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
       if (path.startsWith('/api/modules/quote/records')) return { items: [quoteRecord] };
       if (path.startsWith('/api/modules/price-book/records')) return { items: [{ id: 'pb1', name: 'Standard EUR', currency: 'EUR', active: true }] };
@@ -231,7 +232,8 @@ test('pending approval shows human decision controls; approved and rejected show
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
   // The commercial view never invents a signature surface on its own: without
   // the ADR-017 schema block it degrades to a statement, not a control.
-  assert.ok(approved.textContent.includes('La firma non è attiva in questo progetto.'));
+  // backlog:bfc070243427: plain words, never «progetto» — and what to do.
+  assert.ok(approved.textContent.includes('La firma non è attiva qui. Per accenderla chiedi al titolare.'));
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 
@@ -247,7 +249,8 @@ test('version history lists immutable versions with their policy decision', asyn
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('Richiede approvazione'));
-  assert.ok(rows[1].textContent.includes('standard-sales-discount@1'), 'the row names the policy that decided it');
+  assert.ok(rows[1].textContent.includes('Standard sales discount (v1)'), 'the row names the policy that decided it, in words');
+  assert.ok(!rows[1].textContent.includes('standard-sales-discount@1'), 'no raw rule id in the row');
   assert.ok(rows[1].textContent.includes('una tantum 5.000' + NBSP + '€'), 'versions show grouped periods');
   assert.ok(rows[1].textContent.includes('3.200' + NBSP + '€ ogni 1 mese'), 'recurring period shown per version');
 });
@@ -275,8 +278,9 @@ test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total
   const text = mount.textContent;
   assert.ok(text.includes('3.200' + NBSP + '€'), 'the valued recurring group leads the hero');
   assert.ok(!text.includes('una tantum 0'), 'the hero never shows a zero one-time total');
-  assert.ok(text.includes('standard-sales-discount@1'), 'the history row names the deciding policy');
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
+  assert.ok(text.includes('Standard sales discount (v1)'), 'the history row names the deciding policy in readable words');
+  assert.ok(!text.includes('standard-sales-discount@1'), 'no raw name@version id on screen');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
 });
 
 test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
@@ -316,7 +320,7 @@ test('8dc6d4a456e1: a version with no valued group paints a dash like the header
   const mount = createMount();
   await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
   const text = mount.textContent;
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · —'), 'no value reads as a dash, like the header');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · Standard sales discount (v1) · —'), 'no value reads as a dash, like the header');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {
@@ -422,7 +426,9 @@ test('quote routes parse canonically; hostile routes are invalid', () => {
   // A trailing slash normalizes to the list view, exactly as module routes do.
   assert.deepEqual(parseModuleRoute('#/quotes/'), { view: 'quotes' });
   assert.deepEqual(parseModuleRoute('#/quotes/q1'), { view: 'quote-detail', quoteId: 'q1' });
-  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/%zz']) {
+  // backlog:bfc070243427: the list origin rides the route.
+  assert.deepEqual(parseModuleRoute('#/quotes/q1/lista'), { view: 'quote-detail', quoteId: 'q1', from: 'quotes' });
+  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/a/lista/x', '#/quotes/%zz']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
   assert.equal(parseModuleRoute('#/modules/quote').view, 'list', 'module routes unchanged');
@@ -647,7 +653,8 @@ test('47b89e19: each row shows stato, importo and the linked offer like the offe
   assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
   const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.ok(open, 'the open link uses the offer-page component');
-  assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  // backlog:bfc070243427: the row names the list as the detail's origin.
+  assert.equal(open.getAttribute('href'), '#/quotes/q1/lista');
   const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.equal(opens.length, 1, 'one quote link per row');
   const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
@@ -676,7 +683,7 @@ test('47b89e19: opening a quote from the list stays in the router, without a rel
     link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
     assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
   }
-  assert.deepEqual(navigated, ['#/quotes/q1', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
+  assert.deepEqual(navigated, ['#/quotes/q1/lista', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
 });
 
 test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', async () => {
@@ -807,6 +814,129 @@ test('b9b7912320f8: a flat-fee line reads «Quota fissa» with its quantity lock
   assert.ok(!flat.textContent.includes('Quantità 2'), 'never a quantity that changes nothing');
   assert.equal(flat.__quantity.disabled, true, 'the flat quantity is locked');
   assert.ok(flat.textContent.includes('la quantità non cambia il prezzo'), 'the lock explains itself');
+});
+
+test('b9b7912320f8: the add-line panel locks quantity at 1 for a flat-fee offer', async () => {
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const trialComponents = [
+    { id: 'pc9', offerId: 'o9', componentKey: 'trial', label: 'Lezione di prova', pricingModel: 'flat_fee', chargeType: 'one_time', tierCount: 0 },
+  ];
+  const client = stubClient({ lines: [], entries: [trialEntry, ENTRY], components: trialComponents });
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  await addPanel.__flatSync;
+  assert.equal(addPanel.__entry.value, 'o9', 'the flat-fee offer is selected');
+  assert.equal(addPanel.__quantity.disabled, true, '«Aggiungi riga» offers no quantity for a flat fee');
+  assert.equal(addPanel.__quantity.value, '1', 'a flat fee stays at 1');
+  assert.ok(addPanel.textContent.includes('Quota fissa'), 'the lock explains itself');
+  // A hostile quantity typed into the locked field never leaves the panel.
+  addPanel.__quantity.value = '2';
+  await addPanel.__add();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(JSON.parse(posts[posts.length - 1].body).quantity, 1, 'the write keeps quantity 1');
+  // Back to a mixed offer: the quantity is editable again (the write above
+  // re-rendered the page, so the fresh panel is queried again).
+  const fresh = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  fresh.__entry.value = 'o1';
+  fresh.__entry.dispatch('change');
+  await fresh.__flatSync;
+  assert.equal(fresh.__quantity.disabled, false, 'a mixed offer keeps its quantity');
+});
+
+test('b9b7912320f8: adding a line waits for the selected offer model (no stale flat flag)', async () => {
+  // VERIFIER_BACK repro: with a slow component read, switching to a flat-fee
+  // offer and adding at once sent the previous flag (quantity 5 on a flat
+  // fee). The write now awaits the in-flight model read.
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const trialComponents = [
+    { id: 'pc9', offerId: 'o9', componentKey: 'trial', label: 'Lezione di prova', pricingModel: 'flat_fee', chargeType: 'one_time', tierCount: 0 },
+  ];
+  const releaseQueue = [];
+  const inner = stubClient({ lines: [], entries: [ENTRY, trialEntry], components: trialComponents });
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-component/records')) {
+        return new Promise((resolve) => { releaseQueue.push(() => resolve(inner.request(path, options))); });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  // The panel opens on the mixed offer; switch to the flat fee and add
+  // before either component read answers.
+  addPanel.__entry.value = 'o9';
+  addPanel.__entry.dispatch('change');
+  addPanel.__quantity.value = '5';
+  const adding = addPanel.__add();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  while (releaseQueue.length > 0) releaseQueue.shift()();
+  await adding;
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.ok(posts.length > 0, 'the line was sent');
+  assert.equal(JSON.parse(posts[0].body).quantity, 1, 'a flat fee is added with quantity 1 even when its read was still in flight');
+  assert.equal(JSON.parse(posts[0].body).offerId, 'o9', 'the selected offer is the one sent');
+});
+
+test('b9b7912320f8: a failed component read keeps the quantity editable and logs safe fields', async () => {
+  const trialEntry = {
+    id: 'o9',
+    priceBookId: 'pb1',
+    logicalKey: 'fixture:offer:trial',
+    name: 'Lezione di prova',
+    currency: 'EUR',
+    componentCount: 1,
+    active: true,
+    quoteEligible: true,
+  };
+  const inner = stubClient({ lines: [], entries: [trialEntry, ENTRY] });
+  const failure = Object.assign(new Error('boom'), { code: 'UPSTREAM', status: 503 });
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-component/records')) throw failure;
+      return inner.request(path, options);
+    },
+  };
+  const warnings = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const mount = createMount();
+    await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+    const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+    await addPanel.__flatSync;
+    assert.equal(addPanel.__quantity.disabled, false, 'a failed lookup never blocks adding the line');
+    const logged = warnings.find((args) => args[0] === '[bo] lettura fallita');
+    assert.ok(logged, 'the failure is logged');
+    assert.equal(logged[1]?.code, 'UPSTREAM', 'the log carries the error code');
+    assert.equal(logged[1]?.status, 503, 'the log carries the status');
+    assert.equal(logged[1]?.offerId, 'o9', 'the log carries the offer id');
+    assert.ok(!JSON.stringify(logged).includes('boom'), 'no error message that could carry personal data');
+  } finally {
+    console.warn = origWarn;
+  }
 });
 
 test('d56122ee2844: the detail paints a skeleton at once and reads in parallel', async () => {
@@ -1054,4 +1184,39 @@ test('3234cc917e0a: the list link paints even without a customer to go back to',
   const list = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
   assert.ok(list, 'the list link stays when back and offer links are missing');
   assert.equal(list.getAttribute('href'), '#/quotes');
+});
+
+// backlog:195568752d35 (verifica Mac 18/11, #/quotes/… sul live): the exit
+// row read «Apri l’offerta →Tutti i preventivi» — stuck together, purple and
+// underlined instead of green like the other links. The row paints the way
+// back, the offer and the list back to back (so the styles.css gap hooks
+// apply) with the shared accent top-link style.
+test('195568752d35: the detail exit row separates the offer and list links with the same style', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    entries: [ENTRY],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1', { from: 'quotes' });
+  const links = mount.findAll('a');
+  const back = links.find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  const offer = links.find((node) => node.getAttribute('data-action') === 'quote-open-offer');
+  const list = links.find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(back && offer && list, 'the exit row names the way back, the offer and the list');
+  assert.equal(offer.getAttribute('class'), 'quote-offer-link', 'the offer link keeps its style hook');
+  assert.equal(offer.textContent, 'Apri l’offerta →', 'the offer link keeps its label');
+  assert.equal(list.textContent, 'Tutti i preventivi', 'the list link names the list');
+  assert.equal(back.nextSibling, offer, 'the offer follows the way back with no node between (the CSS gap applies)');
+  assert.equal(offer.nextSibling, list, 'the list follows the offer with no node between (the CSS gap applies)');
+  assert.match(list.getAttribute('class') ?? '', /^quote-(offer|list)-link$/, 'the list link shares the accent top-link style, never the browser default');
+
+  const noOffer = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: noOffer, client: stubClient() }).renderQuoteDetail('q1', { from: 'quotes' });
+  const noOfferLinks = noOffer.findAll('a');
+  const noOfferBack = noOfferLinks.find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  const noOfferList = noOfferLinks.find((node) => (node.getAttribute('class') ?? '') === 'quote-list-link');
+  assert.ok(noOfferBack && noOfferList, 'the exit row stays even when the offer is unreadable');
+  assert.equal(noOfferBack.nextSibling, noOfferList, 'the list still follows the way back with no node between');
 });

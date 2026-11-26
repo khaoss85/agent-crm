@@ -2,6 +2,7 @@
 
 import { elFor, uiBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
+import { discountRuleLabel } from './admin-labels.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -228,11 +229,12 @@ export function createQuoteView(deps) {
 
   /**
    * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
-   * decided it (`name@version` from the version record), never nothing.
+   * decided it, never nothing. backlog:bfc070243427: the name reads as words
+   * (`discountRuleLabel`), never the raw `name@version` id.
    */
   const policyTag = (version) => (
     typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
-      ? `${version.policy}@${version.policyVersion}`
+      ? discountRuleLabel(version.policy, version.policyVersion)
       : null
   );
 
@@ -266,18 +268,34 @@ export function createQuoteView(deps) {
    * missing or unreadable step yields null, never a failed detail — righe,
    * totale, stato and storia render with or without the way back. Returns
    * the link together with the opportunity name for the Italian heading.
-   * @param {any} quote
+   * backlog:bfc070243427: opened from the quotes list (`from: 'quotes'`)
+   * the way back is «← Preventivi» to the list — never the scheda.
+   * @param {any} quote @param {unknown} [from] the router origin, if any
    */
-  async function resolveCardBackLink(quote) {
+  async function resolveCardBackLink(quote, from = null) {
+    const fromList = from === 'quotes';
+    // backlog:bfc070243427 (seguito): from the offer the way back is the
+    // offer page, never the scheda. DECISION (to be confirmed): the label
+    // stays the generic «← Offerta», like «← Preventivi» — short beside the
+    // other two top links.
+    const fromOffer = typeof from === 'object' && from !== null && typeof from.offer === 'string' && from.offer !== '' ? from.offer : null;
+    const listBack = () => linkTo('#/quotes', '← Preventivi', 'quote-back');
+    const offerBack = () => linkTo(`#/offerte/${encodeURIComponent(fromOffer)}`, '← Offerta', 'quote-back');
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    if (opportunityId === null) return { back: null, opportunityName: null, customerName: null };
+    // From the list (or the offer) the way back never depends on a read: it
+    // is the list (or the offer).
+    if (opportunityId === null) {
+      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
+      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
+    }
     let opportunity;
     try {
       // backlog:a2ea75f705fd: the core offer route — the generic records
       // surface never serves core modules and answered 404 here.
       opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
-      return { back: null, opportunityName: null, customerName: null };
+      if (fromOffer !== null) return { back: offerBack(), opportunityName: null, customerName: null };
+      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
@@ -285,6 +303,25 @@ export function createQuoteView(deps) {
     // never a bare anchor (see linkTo).
     const offer = linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`, 'Apri l’offerta →', 'quote-offer-link');
     offer.setAttribute('data-action', 'quote-open-offer');
+    // backlog:bfc070243427 (seguito): the offer the quote was opened from
+    // stays the way back — an offer id that is not this quote's offer is
+    // ignored, so a hand-typed hash cannot point «←» at an unrelated deal.
+    // The title still names the customer when the offer knows them, like
+    // from the list; only the way back changes.
+    if (fromOffer !== null && fromOffer === opportunityId) {
+      const fromOfferContactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
+      const fromOfferRawName = fromOfferContactId !== null ? opportunity?.contactName : opportunity?.companyName;
+      const fromOfferCustomerName = typeof fromOfferRawName === 'string' && fromOfferRawName.trim() !== '' ? fromOfferRawName.trim() : null;
+      return { back: offerBack(), offer, opportunityName, customerName: fromOfferCustomerName };
+    }
+    if (fromList) {
+      // The title still names the customer when the offer knows them; only
+      // the way back changes.
+      const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
+      const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
+      const customerName = typeof rawName === 'string' && rawName.trim() !== '' ? rawName.trim() : null;
+      return { back: listBack(), offer, opportunityName, customerName };
+    }
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
@@ -344,7 +381,8 @@ export function createQuoteView(deps) {
     }
     if (token !== renderToken) return;
     if (!commercialBlock(schema)) {
-      status.textContent = 'La gestione commerciale non è attiva in questo progetto.';
+      // backlog:bfc070243427: plain words, never «progetto».
+      status.textContent = 'La parte commerciale non è attiva qui.';
       return;
     }
     status.textContent = quotes.truncated
@@ -373,7 +411,9 @@ export function createQuoteView(deps) {
       head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
       head.appendChild(el('h4', 'offer-quote-total',
         quoteTotalSummary(parseTotals(quote.totalsJson), quote.currency)));
-      head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}`, 'Apri il preventivo', 'offer-quote-open'));
+      // backlog:bfc070243427: the row opens the detail with the list as its
+      // origin, so «←» up there goes back to the list it came from.
+      head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}/lista`, 'Apri il preventivo', 'offer-quote-open'));
       row.appendChild(head);
       // backlog:cf270ae1f808: ogni riga dice cliente e data, oltre a stato
       // e importo — il cliente arriva dal carico delle offerte, la data dal
@@ -450,6 +490,10 @@ export function createQuoteView(deps) {
 
   async function renderQuoteDetail(quoteId, options = {}) {
     const token = ++renderToken;
+    // backlog:bfc070243427 (seguito): the entry origin rides every re-read —
+    // a mutation from the list (or the offer) must not drop it back to the
+    // scheda. Review muse giro 2 (P2): withBusy re-rendered keep-only.
+    const entryFrom = options !== null && typeof options === 'object' ? options.from ?? null : null;
     // backlog:d56122ee2844: dopo una scrittura la pagina resta visibile —
     // la vecchia pittura resta finché i nuovi dati non arrivano. L'ingresso
     // dal router mostra sempre lo scheletro: il router pre-dipinge la sua
@@ -491,7 +535,9 @@ export function createQuoteView(deps) {
         fetchLinked('quote-line', 'quoteId', quote.id),
         bookRead,
         fetchLinked('quote-version', 'quoteId', quote.id),
-        resolveCardBackLink(quote),
+        // backlog:bfc070243427: the entry origin rides along, like the
+        // offer page's scheda origin.
+        resolveCardBackLink(quote, entryFrom),
       ]);
       restRead.catch(() => {});
       const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
@@ -663,7 +709,7 @@ export function createQuoteView(deps) {
       errorLine.textContent = '';
       try {
         await fn();
-        await renderQuoteDetail(quoteId, { keep: true }); // re-render from server state
+        await renderQuoteDetail(quoteId, { keep: true, from: entryFrom }); // re-render from server state
       } catch (error) {
         // La rilettura keep:true fallita ha già scritto il messaggio onesto
         // in riga prima di rilanciare: non coprirlo con il testo grezzo.
@@ -778,23 +824,80 @@ export function createQuoteView(deps) {
       quantityInput.value = '1';
       const discountInput = percentInput('0');
       const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Lo sconto è in percentuale, es. 10 o 7,5.');
+      const flatNote = el('small', 'muted', 'Quota fissa: la quantità non cambia il prezzo.');
+      flatNote.setAttribute('hidden', '');
+      // backlog:b9b7912320f8 (seguito): anche l'«Aggiungi riga» conosce il
+      // modello dell'offerta scelta — per una di sole quote fisse la quantità
+      // resta 1, bloccata con la stessa spiegazione delle righe salvate.
+      let addFlatOnly = false;
+      const syncAddQuantity = async () => {
+        const selectedId = entrySelect.value;
+        let flat = false;
+        if (typeof selectedId === 'string' && selectedId !== '') {
+          try {
+            const answer = await fetchLinked('price-component', 'offerId', selectedId);
+            const rows = (answer.rows ?? []).filter((component) => component.offerId === selectedId);
+            flat = rows.length > 0
+              && rows.every((component) => component?.pricingModel === 'flat_fee' && Number(component?.tierCount ?? 0) === 0);
+          } catch (error) {
+            // A failed component read must stay diagnosable: log the safe
+            // fields (code/status plus the price book and offer ids, never a
+            // message that could carry personal data), like AGENTS.md asks —
+            // the panel then falls back to an editable quantity.
+            const record = error !== null && typeof error === 'object' ? error : {};
+            const code = typeof /** @type {{code?: unknown}} */ (record).code === 'string'
+              ? /** @type {{code?: unknown}} */ (record).code
+              : 'UNKNOWN';
+            const status = typeof /** @type {{status?: unknown}} */ (record).status === 'number'
+              ? /** @type {{status?: unknown}} */ (record).status
+              : null;
+            if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+              console.warn('[bo] lettura fallita', { code, status, priceBookId: quote.priceBookId ?? null, offerId: selectedId });
+            }
+            flat = false;
+          }
+        }
+        if (token !== renderToken || entrySelect.value !== selectedId) return;
+        addFlatOnly = flat;
+        quantityInput.disabled = flat;
+        if (flat) {
+          quantityInput.value = '1';
+          quantityInput.setAttribute('title', 'Quota fissa: la quantità non cambia il prezzo');
+          flatNote.removeAttribute('hidden');
+        } else {
+          quantityInput.removeAttribute('title');
+          flatNote.setAttribute('hidden', '');
+        }
+      };
+      entrySelect.addEventListener('change', () => {
+        addPanel.__flatSync = syncAddQuantity();
+      });
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
-      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
-        offerId: entrySelect.value,
-        quantity: Number(quantityInput.value),
-        discountBps: discountFrom(discountInput),
-        expectedRevision: quote.draftRevision,
-      }))));
+      // backlog:b9b7912320f8 (review P1 TOCTOU): the write must use the
+      // model of the offer selected NOW, never the previous one — a pending
+      // component read from an earlier selection must settle first.
+      const sendAddLine = () => withBusy(async () => {
+        await addPanel.__flatSync;
+        return act('add-line', {
+          offerId: entrySelect.value,
+          quantity: addFlatOnly ? 1 : Number(quantityInput.value),
+          discountBps: discountFrom(discountInput),
+          expectedRevision: quote.draftRevision,
+        });
+      });
+      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', sendAddLine));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
       addPanel.appendChild(labelled('Sconto (%)', discountInput));
       addPanel.appendChild(hint);
+      addPanel.appendChild(flatNote);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
+      addPanel.__add = sendAddLine;
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
       addPanel.__discount = discountInput;
+      addPanel.__flatSync = syncAddQuantity();
       side.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
@@ -924,7 +1027,9 @@ export function createQuoteView(deps) {
     panel.appendChild(el('h3', undefined, 'Firma'));
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
-      panel.appendChild(el('p', 'muted', 'La firma non è attiva in questo progetto.'));
+      // backlog:bfc070243427: plain words, never «progetto» — and what to
+      // do, like the AI-off lines («Per accenderla chiedi al titolare»).
+      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui. Per accenderla chiedi al titolare.'));
       return;
     }
     let envelopes;

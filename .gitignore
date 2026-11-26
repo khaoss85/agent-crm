@@ -1,4 +1,5 @@
 node_modules/
+/.ci-npm-cache/
 .env
 .env.*
 !.env.example

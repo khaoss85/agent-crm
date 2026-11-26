@@ -6,7 +6,7 @@
 // Ref "02 Personalizzazione" del prototipo: schede Skill/Connettori/
 // Pacchetti, viste I tuoi/Scopri, ricerca, filtri e ordinamento, card con
 // "Prova" e +/✓, tabella degli stati, stato vuoto Pacchetti,
-// "Sviluppa per Accordo".
+// Catalogo orientato al titolare; le istruzioni per sviluppatori restano fuori.
 //
 // La schermata riusa quello che esiste già e non duplica nulla:
 // - il catalogo unità (pacchetti + skill) lo pubblica il server su
@@ -59,7 +59,7 @@ export function isPersonalizzazioneTab(tab) {
  * @param {unknown} tab
  */
 export function bannerFor(tab) {
-  if (tab === 'skill') return 'Le skill insegnano all\u2019AI come lavorare nel tuo studio: la Prova non scrive nulla.';
+  if (tab === 'skill') return 'Scegli le skill disponibili per il tuo lavoro: la Prova non scrive nulla.';
   // backlog:34672b9f5a1f: the prototype's Connettori shows no line under
   // the toolbar — the hero carries the message — so the tab has no banner.
   if (tab === 'connettori') return '';
@@ -92,6 +92,17 @@ export function unitStatus({ entry, row } = {}) {
 }
 
 /**
+ * Restyle 0e9f723da891: project prerequisites identify coding-agent
+ * instructions, not runtime automations for the space owner. Use catalog
+ * metadata, never a blacklist of names. Their activation rows and the
+ * server catalog remain untouched.
+ * @param {any} entry
+ */
+function isCustomerUnit(entry) {
+  return entry?.kind !== 'skill' || !['repository', 'generated-project', 'any-project'].includes(entry?.requires?.tier);
+}
+
+/**
  * Filter and sort one tab. `view` is the prototype's I tuoi/Scopri filter;
  * `query` matches label, blurb and unit name case-insensitively; `sort` is
  * `nome` or `stato` (active first, then name).
@@ -104,6 +115,8 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   for (const entry of Array.isArray(units) ? units : []) {
     if (!entry || typeof entry.name !== 'string' || entry.kind !== kind) continue;
     const row = active.get(entry.name) ?? null;
+    // Existing activations must retain their deactivation path.
+    if (!isCustomerUnit(entry) && !(mine && row)) continue;
     if (mine && !row) continue;
     if (!mine && row) continue;
     if (needle !== '') {
@@ -998,6 +1011,23 @@ export function createPersonalizzazioneView(deps) {
     const units = state.units ?? [];
     const rows = state.rows ?? [];
     const known = activeByUnit({ units, rows });
+    // An empty business catalog is not a failed search and offers no
+    // fake activation. The next step opens the real agents already in UI.
+    if (state.tab === 'skill' && !units.some((entry) => entry?.kind === 'skill'
+      && (isCustomerUnit(entry) || (state.view === 'tuoi' && known.has(entry.name))))) {
+      const empty = el(doc, 'div', { cls: 'bo-perso-empty' });
+      empty.appendChild(el(doc, 'p', { text: 'Non ci sono skill disponibili per questo spazio.', cls: 'empty-title' }));
+      empty.appendChild(el(doc, 'p', { text: 'Puoi vedere le attività disponibili nella pagina Agenti.', cls: 'empty' }));
+      const agents = el(doc, 'button', {
+        text: 'Vai agli agenti', cls: 'ui-btn ui-btn-secondary ui-btn-small',
+        attrs: { type: 'button', 'data-action': 'perso-agents' },
+      });
+      agents.addEventListener('click', () => go('#/agenti'));
+      empty.appendChild(agents);
+      box.appendChild(empty);
+      mount.appendChild(box);
+      return;
+    }
     const items = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort });
     if (items.length === 0) {
       const emptyTitle = state.view === 'tuoi'
@@ -1008,8 +1038,24 @@ export function createPersonalizzazioneView(deps) {
           ? 'Le skill insegnano all\u2019AI come lavorare nel tuo studio.'
           : 'Un pacchetto mette insieme capacità del framework per il tuo settore.')
         : 'Prova a cambiare ricerca o scheda.';
-      box.appendChild(el(doc, 'p', { text: emptyTitle, cls: 'empty-title' }));
-      box.appendChild(el(doc, 'p', { text: emptySub, cls: 'empty' }));
+      // Restyle 19/11: the empty «I tuoi» is a state with a way forward —
+      // one button to the catalogue — not two lines of text.
+      const empty = el(doc, 'div', { cls: 'bo-perso-empty' });
+      empty.appendChild(el(doc, 'p', { text: emptyTitle, cls: 'empty-title' }));
+      empty.appendChild(el(doc, 'p', { text: emptySub, cls: 'empty' }));
+      if (state.view === 'tuoi') {
+        const browse = el(doc, 'button', {
+          text: state.tab === 'skill' ? 'Scopri le skill' : 'Scopri i pacchetti',
+          cls: 'ui-btn ui-btn-secondary ui-btn-small',
+          attrs: { type: 'button', 'data-action': 'perso-browse' },
+        });
+        browse.addEventListener('click', () => {
+          state.view = 'scopri';
+          render();
+        });
+        empty.appendChild(browse);
+      }
+      box.appendChild(empty);
       mount.appendChild(box);
       return;
     }
@@ -1021,7 +1067,7 @@ export function createPersonalizzazioneView(deps) {
 
   /** @param {any} box @param {Array<{entry: any, row: any}>} items */
   function renderMineTable(box, items) {
-    const table = el(doc, 'table', { cls: 'mine' });
+    const table = el(doc, 'table', { cls: 'mine bo-perso-mine' });
     const head = el(doc, 'tr');
     head.appendChild(el(doc, 'th', { text: state.tab === 'skill' ? 'Skill AI' : 'Pacchetto' }));
     head.appendChild(el(doc, 'th', { text: 'Stato' }));
@@ -1029,10 +1075,20 @@ export function createPersonalizzazioneView(deps) {
     table.appendChild(head);
     for (const { entry, row } of items) {
       const line = el(doc, 'tr');
-      line.appendChild(el(doc, 'td', { text: String(entry.label ?? entry.name) }));
-      line.appendChild(el(doc, 'td', { text: unitStatus({ entry, row }) === 'attiva' ? 'Attiva ✓' : 'Da attivare' }));
-      const cell = el(doc, 'td');
-      const toggle = el(doc, 'button', { text: 'Disattiva', attrs: { type: 'button' } });
+      const nameCell = el(doc, 'td', { text: String(entry.label ?? entry.name) });
+      if (!isCustomerUnit(entry)) {
+        nameCell.appendChild(el(doc, 'p', {
+          cls: 'muted',
+          text: 'Attivata in precedenza per lo sviluppo: non è un’automazione per il tuo lavoro. Puoi disattivarla.',
+        }));
+      }
+      line.appendChild(nameCell);
+      const on = unitStatus({ entry, row }) === 'attiva';
+      const stateCell = el(doc, 'td');
+      stateCell.appendChild(el(doc, 'span', { cls: on ? 'bo-perso-state' : 'bo-perso-state is-off', text: on ? 'Attiva ✓' : 'Da attivare' }));
+      line.appendChild(stateCell);
+      const cell = el(doc, 'td', { cls: 'bo-perso-mine-action' });
+      const toggle = el(doc, 'button', { text: 'Disattiva', cls: 'ui-btn ui-btn-secondary ui-btn-small', attrs: { type: 'button' } });
       toggle.disabled = state.busy;
       if (busyOn('/api/space-packages/deactivate', entry.name)) uiMarkBusy(toggle, 'Disattivo…');
       toggle.addEventListener('click', async () => {
@@ -1056,12 +1112,27 @@ export function createPersonalizzazioneView(deps) {
 
   /** @param {any} box @param {Array<{entry: any, row: any}>} items */
   function renderDiscoverCards(box, items) {
+    // Restyle 19/11 (Dan: «non si capisce cosa fanno»): a grid of compact
+    // cards — name with its state, one line of what it does, then the one
+    // clear action «Attiva» (green, it changes the space), «Prova» as the
+    // quiet look-before (it writes nothing) and «Dettagli» as a text link.
+    const grid = el(doc, 'div', { cls: 'bo-perso-grid' });
+    box.appendChild(grid);
+    box = grid;
     for (const { entry, row } of items) {
-      const card = el(doc, 'article', { cls: 'card', attrs: { 'data-unit': entry.name } });
-      card.appendChild(el(doc, 'h3', { text: String(entry.label ?? entry.name) }));
+      const active = unitStatus({ entry, row }) === 'attiva';
+      const card = el(doc, 'article', { cls: active ? 'card bo-perso-card is-active' : 'card bo-perso-card', attrs: { 'data-unit': entry.name } });
+      const head = el(doc, 'div', { cls: 'bo-perso-card-head' });
+      head.appendChild(el(doc, 'h3', { text: String(entry.label ?? entry.name) }));
+      if (active) head.appendChild(el(doc, 'span', { cls: 'bo-perso-state', text: 'Attiva ✓' }));
+      card.appendChild(head);
       if (entry.blurb) card.appendChild(el(doc, 'p', { text: String(entry.blurb), cls: 'muted' }));
       const actions = el(doc, 'div', { cls: 'card-actions' });
-      const proof = el(doc, 'button', { text: 'Prova', attrs: { type: 'button' } });
+      const proof = el(doc, 'button', {
+        text: 'Prova',
+        cls: 'ui-btn ui-btn-secondary ui-btn-small bo-perso-proof',
+        attrs: { type: 'button', title: 'Mostra cosa aggiungerebbe a questo spazio, senza scrivere nulla' },
+      });
       proof.disabled = state.busy;
       proof.addEventListener('click', async () => {
         state.previewFor = entry.name;
@@ -1079,9 +1150,11 @@ export function createPersonalizzazioneView(deps) {
         }
         renderList();
       });
-      actions.appendChild(proof);
-      const active = unitStatus({ entry, row }) === 'attiva';
-      const add = el(doc, 'button', { text: active ? '✓' : '+', attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` } });
+      const add = el(doc, 'button', {
+        text: active ? 'Attiva ✓' : 'Attiva',
+        cls: active ? 'ui-btn ui-btn-secondary ui-btn-small bo-perso-add is-on' : 'ui-btn ui-btn-cta ui-btn-small bo-perso-add',
+        attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` },
+      });
       add.disabled = state.busy || active;
       if (busyOn('/api/space-packages/activate', entry.name)) uiMarkBusy(add, 'Attivo…');
       if (!active) {
@@ -1099,13 +1172,16 @@ export function createPersonalizzazioneView(deps) {
           render();
         });
       }
-      actions.appendChild(add);
+      // An active unit wears its state in the head: no disabled button twice.
+      if (!active) actions.appendChild(add);
+      actions.appendChild(proof);
       // Skill cards open the BO-F4-02 detail: the seven sections of the
       // skill, from the cycle to the copyable coding-agent prompt.
       if (state.tab === 'skill' && typeof entry.name === 'string' && entry.name.startsWith('skill:')) {
         const slug = entry.name.slice('skill:'.length);
         const detail = el(doc, 'a', {
           text: 'Dettagli',
+          cls: 'bo-perso-link',
           attrs: { href: `#/personalizzazione/skill/${slug}` },
         });
         detail.addEventListener('click', (event) => {
@@ -1117,15 +1193,6 @@ export function createPersonalizzazioneView(deps) {
       card.appendChild(actions);
       box.appendChild(card);
     }
-    const dev = el(doc, 'article', { cls: 'card dev' });
-    dev.appendChild(el(doc, 'h3', { text: 'Sviluppa per Accordo' }));
-    dev.appendChild(el(doc, 'p', { text: 'Hai un settore con esigenze sue? Impacchetta capacità esistenti.', cls: 'muted' }));
-    const go = el(doc, 'button', { text: 'Come pubblicare un pacchetto', attrs: { type: 'button' } });
-    go.addEventListener('click', () => {
-      say(PACKAGE_AUTHORING_MESSAGE);
-    });
-    dev.appendChild(go);
-    box.appendChild(dev);
   }
 
   /** @param {any} box */
@@ -1399,7 +1466,10 @@ export function createPersonalizzazioneView(deps) {
         query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
-    renderToolbar(toolRow, count);
+    const noCustomerSkills = state.tab === 'skill' && Array.isArray(state.units)
+      && !state.units.some((entry) => entry?.kind === 'skill'
+        && (isCustomerUnit(entry) || known.has(entry.name)));
+    if (!noCustomerSkills) renderToolbar(toolRow, count);
     mount.appendChild(box);
     renderList();
   }

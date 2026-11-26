@@ -217,6 +217,49 @@ test('applying registers the import and links the phones, then says so', async (
   assert.equal(mapping?.value, 'firstName');
 });
 
+test('the apply summary names which rows were skipped and why (backlog:5bbf8bc9)', async () => {
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Importazione registrata: 1 accettate, 1 scartate, 0 da decidere.'), text.slice(0, 600));
+  assert.ok(text.includes('Righe saltate: riga dati 2 (della tabella) (email non valida)'), `the skipped table data row is named with its reason, got: ${text.slice(0, 600)}`);
+  assert.ok(text.includes('le altre sono scritte'), 'written rows are never called refused');
+});
+
+test('5bbf8bc917be: the skipped row names the data row of the table, not the file line', async () => {
+  // The bad value sits in the 2nd data row (file line 3: header + 2 rows).
+  // A bare 'riga 2' reads as the file line and sends the operator to fix
+  // the wrong row while the real bad row persists.
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const text = mount.textContent;
+  assert.ok(text.includes('riga dati 2 (della tabella)'), `the skipped row is named as the table data row, got: ${text.slice(0, 600)}`);
+  assert.ok(!text.includes('riga 2 ('), `no bare file-line number remains, got: ${text.slice(0, 600)}`);
+});
+
+test('an apply that skips nothing names no skipped row', async () => {
+  const client = stubClient({
+    mainReceipts: [
+      { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+      { index: 1, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-bo' } },
+    ],
+  });
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  assert.ok(!mount.textContent.includes('Righe saltate'), 'no skipped-row line when everything was written');
+});
+
 test('a phone is never sent for a row the main import rejected', async () => {
   const csv = 'nome,email,telefono\nAda,ada@esempio.it,+39 333 1234567\nZed,zed@esempio.it,+39 333 9999999\n';
   const client = stubClient({

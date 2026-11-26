@@ -54,13 +54,28 @@ else
 fi
 
 unset CI_TOUCHED_BUSY_FILE
+# Cure lane (backlog:55ca4e0cb76d): the retry re-acquires under a fresh lock
+# with the lane the gate ran. ci-fast-step.sh exports its sanitized heavy
+# name as CI_FAST_HEAVY_NAME; the same sanitizer runs here, and a lane
+# carrying the `main-red` token (rank 0 in the server queue) keeps it with a
+# `-retry` suffix. Anything else retries as today's `fast-retry`, byte for
+# byte the command this script always ran.
+retry_lane="${CI_FAST_HEAVY_NAME:-fast-retry}"
+case "$retry_lane" in
+  ''|*[!A-Za-z0-9_-]*) retry_lane="fast-retry" ;;
+esac
+case "$retry_lane" in
+  *main-red*) retry_name="${retry_lane}-retry" ;;
+  *) retry_name="fast-retry" ;;
+esac
+echo "ci-fast-busy-retry: heavy-name=$retry_name"
 if [ -n "${CI_BUSY_RETRY_CMD:-}" ]; then
   code=0
   bash -c "$CI_BUSY_RETRY_CMD" || code=$?
 else
   : "${BASE_REF:?ci-fast-busy-retry.sh needs BASE_REF (the PR base branch short name)}"
   code=0
-  HEAVY_JOB_MAX_SEC="${HEAVY_JOB_MAX_SEC:-540}" scripts/ci-heavy.sh fast-retry -- \
+  HEAVY_JOB_MAX_SEC="${HEAVY_JOB_MAX_SEC:-540}" scripts/ci-heavy.sh "$retry_name" -- \
     bash -c 'node scripts/ci-touched-tests.js --base "origin/$BASE_REF" && npm run gtm:check' || code=$?
 fi
 if [ "$code" = 0 ]; then

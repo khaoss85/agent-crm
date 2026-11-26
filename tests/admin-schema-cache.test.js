@@ -214,6 +214,91 @@ test('c048bf6f2dd3: a half-typed field survives a schema that changes behind the
   assert.equal(still.__editInputs.value.value, '12,5', 'the half-typed value is still there');
 });
 
+// backlog:c048bf6f2dd3 (ritorno 1, EVIDENCE_LINE_NOT_PASS 2026-11-17): the
+// background renewal and its version change were not observable from the
+// browser — no schema change can be provoked there, so criteria 2 and 3
+// stayed «non provabile». The shell now stamps the identity of the copy the
+// navigation was built from on the shell root, on every navigation build
+// (boot and background change share populateNav). Red before the cure: no
+// stamp helper exists.
+test('c048bf6f2dd3: a schema copy has an identity the shell can show', async () => {
+  const cache = await import('../apps/admin/public/admin-schema-cache.js');
+  assert.equal(typeof cache.schemaStampOf, 'function', 'the stamp helper exists');
+  const one = cache.schemaStampOf({ version: '1', pipelines: [] });
+  assert.equal(one.version, '1');
+  assert.match(one.digest, /^[0-9a-f]{8}$/, 'a short hex digest');
+  assert.deepEqual(cache.schemaStampOf({ version: '1', pipelines: [] }), one, 'the same content stamps the same identity');
+  assert.notDeepEqual(
+    cache.schemaStampOf({ version: '1', pipelines: [{ name: 'sales' }] }).digest,
+    one.digest,
+    'a content change without a version bump still moves the stamp',
+  );
+  assert.deepEqual(cache.schemaStampOf(null), { version: '', digest: '' }, 'a missing value stamps empty, never throws');
+  assert.equal(cache.schemaStampOf({ version: 2 }).version, '2', 'a numeric version stamps as text');
+});
+
+// backlog:250b528ea22a: `/api/schema` answers `{ schema: { version } }` —
+// the stamp reads the nested version, so the shell root never stays empty.
+test('250b528ea22a: the stamp shows the version served under schema.version', async () => {
+  const cache = await import('../apps/admin/public/admin-schema-cache.js');
+  const envelope = { schema: { version: '0.1.0' }, generatedResourceContract: 1, pipelines: [] };
+  assert.equal(cache.schemaStampOf(envelope).version, '0.1.0', 'nested version is shown');
+  assert.match(cache.schemaStampOf(envelope).digest, /^[0-9a-f]{8}$/);
+  assert.equal(
+    cache.schemaStampOf({ version: '9', schema: { version: '0.1.0' } }).version,
+    '9',
+    'a top-level version still wins when present',
+  );
+  assert.equal(
+    cache.schemaStampOf({ schema: { version: 2 } }).version,
+    '2',
+    'a nested numeric version stamps as text',
+  );
+  const missing = cache.schemaStampOf({ pipelines: [] });
+  assert.equal(missing.version, '', 'no version anywhere stamps empty, never throws');
+  assert.match(missing.digest, /^[0-9a-f]{8}$/);
+});
+// backlog:312dd81f83ba (ritorno 1, prova del Mac 19/11 23:3xZ): al primo
+// caricamento senza copia lo schema risponde 200 in meno di 1 s, ma la
+// lettura del boot viene scartata come vecchia (READ_STALE: route() alza il
+// token dopo populateNav) e mai rifatta — la copia non nasce mai e il menu
+// mente. Red before the cure: the stale boot read rejects and no copy is
+// ever stored.
+test('312dd81f83ba: a boot schema read dropped as stale is read again and stored as the copy', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error('stale'), { code: 'READ_STALE' });
+    return { version: '1' };
+  }, { space: () => 's1' });
+  assert.deepEqual(await cached('/api/schema'), { version: '1' }, 'the stale boot read is read again with a fresh key');
+  assert.equal(calls, 2, 'exactly one retry, never a loop');
+  assert.deepEqual(await cached('/api/schema'), { version: '1' }, 'the retried schema answers from the stored copy');
+  assert.equal(calls, 2, 'no new request once the copy is stored');
+});
+
+test('312dd81f83ba: a second stale drop is not retried forever', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    throw Object.assign(new Error('stale'), { code: 'READ_STALE' });
+  }, { space: () => 's1' });
+  await assert.rejects(cached('/api/schema'), /stale/, 'a read that stays stale still rejects');
+  assert.equal(calls, 2, 'one retry, then it stops');
+});
+
+test('312dd81f83ba: a hung schema read times out and the next request starts a fresh read', async () => {
+  let calls = 0;
+  const cached = withSchemaCache(async () => {
+    calls += 1;
+    return new Promise(() => {});
+  }, { space: () => 's1', timeoutMs: 20 });
+  await assert.rejects(cached('/api/schema'), /timed out/, 'the hung boot read does not hang the wait');
+  assert.equal(calls, 1);
+  await assert.rejects(cached('/api/schema'), /timed out/, 'the timed-out flight was dropped');
+  assert.equal(calls, 2, 'the next wait starts a fresh read, never the hung flight');
+});
+
 test('c048bf6f2dd3: a failed renewal, a refused copy and a failing change say why — once each — and never break the read', async () => {
   let clock = 0;
   let fail = false;

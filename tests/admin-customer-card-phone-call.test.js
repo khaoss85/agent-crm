@@ -417,6 +417,61 @@ test('105563eea902: with a linked voice the operator declares the outcome and th
     'the save either toasts or re-reads the card');
 });
 
+test('600964e2d14e: dopo «Chiama» la scheda propone «Detta nota vocale» per quella chiamata', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const mount = await renderCard(client);
+  assert.equal(
+    button(mount, 'dictate-note')?.getAttribute('aria-expanded'), 'false',
+    'the dictation panel starts closed',
+  );
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  const save = button(mount, 'log-call');
+  assert.ok(save, 'the outcome form is offered with a linked voice');
+  mount.findAll('select')[0].value = 'completed';
+  mount.findAll('input')[0].value = '62';
+  await save.listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/calls').length, 1,
+    'the call is logged once');
+  assert.equal(
+    mount.findAll('div').find((node) => node.getAttribute('data-call') === 'open') ?? null, null,
+    'the Chiama panel closes once the call is logged',
+  );
+  const dictate = button(mount, 'dictate-note');
+  assert.ok(dictate, '«Detta nota vocale» stays on the scheda');
+  assert.equal(dictate.getAttribute('aria-expanded'), 'true', 'the dictation panel opens after the logged call');
+  const transcript = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'voiceNoteText');
+  assert.ok(transcript, 'the dictation field is ready for the operator’s words');
+  assert.equal(transcript.value, '', 'the new dictation starts empty: no words are invented');
+});
+
+test('600964e2d14e: cliente senza numero: dopo il salvataggio e la chiamata la scheda propone «Detta nota vocale»', async () => {
+  const client = stubClient({ connectors: [VOICE] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '333 123 4567';
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/phone').length, 1,
+    'the number is saved first');
+  const save = button(mount, 'log-call');
+  assert.ok(save, 'the usual Chiama flow starts on the re-read card');
+  mount.findAll('select')[0].value = 'completed';
+  mount.findAll('input')[0].value = '45';
+  await save.listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.filter((post) => post.path === '/api/customer-hub/calls').length, 1,
+    'the call on the saved number is logged');
+  assert.equal(button(mount, 'dictate-note')?.getAttribute('aria-expanded'), 'true',
+    'the dictation panel opens after the call, like with a held number');
+  assert.ok(
+    mount.findAll('textarea').some((node) => node.getAttribute('name') === 'voiceNoteText'),
+    'the dictation field is on screen',
+  );
+});
+
 test('105563eea902: a voice entry without a connectionKey is not callable: tel: fallback, no form', async () => {
   const client = stubClient({
     card: CARD_WITH_PHONE,
@@ -691,4 +746,54 @@ test('backlog:af43dffdff83: the number window says how the call really starts, n
   const severalText = phoneWindow(several).textContent;
   assert.ok(severalText.includes('Un numero nuovo lo salvo sulla scheda.'), severalText);
   assert.ok(severalText.includes(HOW_THE_CALL_STARTS));
+});
+
+// Voce 14d999de (seguito ANSWER supervisore 17/11): a 1920px la card Offerta
+// copriva Riduci/Chiudi del popover Chiama. È la trappola della #605: una
+// finestra fixed appesa alla scheda (la colonna di sinistra) resta sotto la
+// colonna di destra, che in pagina viene dopo. La cura è la stessa di Scrivi:
+// la finestra pende dalla vista (mount), e una sola finestra alla volta.
+const appointmentPanel = (mount) => mount.findAll('div')
+  .find((node) => node.getAttribute('data-appointment-panel') === 'open') ?? null;
+
+test('14d999de: the Chiama panel hangs off the view mount, never the action card', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  const panel = callPanel(mount);
+  assert.ok(panel, 'the Chiama panel opens with a linked voice');
+  assert.equal(panel.parentNode, mount, 'the fixed panel hangs off the view, above every scheda column');
+});
+
+test('14d999de: opening Chiama closes the other windows (one at a time)', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const mount = await renderCard(client);
+  button(mount, 'new-appointment').listeners.click[0]();
+  await flush();
+  assert.ok(appointmentPanel(mount), 'the appointment window opens');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel opens');
+  assert.equal(appointmentPanel(mount), null, 'the appointment window steps aside for Chiama');
+});
+
+test('14d999de: opening another window closes Chiama; a re-read keeps it like the other windows', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti' });
+  await view.renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel opens');
+  button(mount, 'new-appointment').listeners.click[0]();
+  await flush();
+  assert.equal(callPanel(mount), null, 'the appointment window closes Chiama');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the Chiama panel reopens');
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(callPanel(mount), 'a same-customer re-read keeps Chiama, like Scrivi and the offer window');
 });

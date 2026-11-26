@@ -25,6 +25,13 @@ export const OFFER_PROMPT_MAX = 500;
 export const OFFER_DRAFT_PATH = '/api/customer-hub/offers/draft';
 
 /**
+ * Voce 05dac489: the highest offer value the edit saves, in cents
+ * (1.000.000 €) — mirrors the framework's MAX_OPPORTUNITY_VALUE_CENTS.
+ * The server stays authoritative and refuses anything higher with 400.
+ */
+export const MAX_OFFER_VALUE_CENTS = 100_000_000;
+
+/**
  * Euro text to integer cents, or null. Reads the Italian form the field
  * shows («1.250,00», «350,5») and the plain one («350», «12.30»); a dotted
  * thousand without a comma («1.250») stays refused as ambiguous.
@@ -92,6 +99,19 @@ export function offerShareMessage({ offerName, url, expiresAt } = {}) {
   const day = italianDay(typeof expiresAt === 'string' ? expiresAt : null);
   const expiry = day !== null ? ` Il link scade il ${day}.` : '';
   return `Ciao, ecco ${name}: ${url.trim()}.${expiry} Aprilo senza account: vedi righe e totali, e puoi accettare o rifiutare.`;
+}
+
+/**
+ * backlog:78f79b0768ac: how a share link reads on screen — host and the first
+ * characters of the token, never the 64-character URL. The whole URL stays
+ * in the link's href and on the clipboard; this label is only for the eye.
+ * @param {string} url
+ */
+export function offerShareShortLabel(url) {
+  const text = typeof url === 'string' ? url.trim() : '';
+  const match = /^https?:\/\/([^/]+)\/q\/([0-9a-f]{64})$/.exec(text);
+  if (match === null) return 'link dell’offerta';
+  return `${match[1]}/q/${match[2].slice(0, 6)}…`;
 }
 
 /** The quantity of one chosen chip: its own field for a per-unit price, else 1. */

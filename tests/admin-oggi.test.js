@@ -31,6 +31,7 @@ import {
   buildChannelInvite,
   oggiDateLine,
   renderOggi,
+  romeHour,
   romeDayKey,
   romeDayPhrase,
   romeDayKeyShift,
@@ -67,9 +68,26 @@ test('greeting follows the hour, in Italian', () => {
   assert.equal(greetingForHour(12), 'Buon pomeriggio');
   assert.equal(greetingForHour(15), 'Buon pomeriggio');
   assert.equal(greetingForHour(18), 'Buonasera');
-  assert.equal(greetingForHour(23), 'Buonasera');
-  assert.equal(greetingForHour(0), 'Buonasera');
-  assert.equal(greetingForHour(4), 'Buonasera');
+  assert.equal(greetingForHour(21), 'Buonasera');
+  // backlog:acd136b3cd5d: the night reads «Buonanotte» (22–5), never
+  // «Buonasera» at 4 in the morning.
+  assert.equal(greetingForHour(22), 'Buonanotte');
+  assert.equal(greetingForHour(23), 'Buonanotte');
+  assert.equal(greetingForHour(0), 'Buonanotte');
+  assert.equal(greetingForHour(4), 'Buonanotte');
+  assert.equal(greetingForHour(undefined), 'Buongiorno');
+});
+
+test('romeHour reads Rome, never the device clock (backlog:acd136b3cd5d)', () => {
+  // Winter (UTC+1): 23:30Z in London is already past midnight in Rome.
+  assert.equal(romeHour(new Date('2026-01-15T23:30:00.000Z')), 0);
+  assert.equal(greetingForHour(romeHour(new Date('2026-01-15T23:30:00.000Z'))), 'Buonanotte');
+  // Summer (UTC+2): 20:30Z is 22:30 in Rome — night, though the UTC clock
+  // still reads evening.
+  assert.equal(romeHour(new Date('2026-07-15T20:30:00.000Z')), 22);
+  assert.equal(greetingForHour(romeHour(new Date('2026-07-15T10:00:00.000Z'))), 'Buon pomeriggio');
+  assert.equal(romeHour('not-a-date'), null);
+  assert.equal(romeHour(null), null);
 });
 
 test('date line is the real date, in Italian', () => {
@@ -571,7 +589,7 @@ test('57e3d1685e58: the chi line shows the contact address, never the user one',
     {},
     [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
   );
-  assert.equal(named[0].who, 'Marco Ferri', 'team name reads only without a contact address');
+  assert.equal(named[0].who, 'Vuole la scheda con i prezzi del pacchetto.', 'a known team name never reads: the notes cue does');
 });
 
 test('57e3d1685e58: the chi line prefers the contact address over a known team name', () => {
@@ -590,6 +608,31 @@ test('57e3d1685e58: the chi line prefers the contact address over a known team n
     buildTodayAgenda([appt], OGGI_NOW, {}, roster)[0].who,
     'ospite@esempio.it',
     'the contact email, never the known team name',
+  );
+});
+
+test('57e3d1685e58: the chi line never shows the coach name', () => {
+  // OWNER_ANSWER 2026-11-19 15:3xZ on backlog:57e3d1685e58 (second Mac
+  // return): under the contact the screen read the coach name instead of
+  // the contact's own channel/email. The stored label here holds the
+  // contact name, with no address in it, so the line must fall back to
+  // the notes cue — or to nothing — and never to the roster name of the
+  // slot holder.
+  const roster = [{ subject: 'op-1', displayName: 'daniele pelleri', email: 'operatore@esempio.it' }];
+  const named = {
+    ...APPT_TODAY, id: 'appt-live-40b', teamMemberId: 'op-1',
+    subjectLabel: 'Prova verifica 40', notes: 'Vuole la scheda.',
+  };
+  assert.equal(
+    buildTodayAgenda([named], OGGI_NOW, {}, roster)[0].who,
+    'Vuole la scheda.',
+    'a contact name with no address: the notes cue, never the coach name',
+  );
+  const bare = { ...named, id: 'appt-live-40c', notes: '' };
+  assert.equal(
+    buildTodayAgenda([bare], OGGI_NOW, {}, roster)[0].who,
+    null,
+    'no address and no notes: nothing, never the coach name',
   );
 });
 
@@ -796,11 +839,14 @@ test('advisor note renders verbatim, never with a doubled AI mark', () => {
   assert.ok(!notes[1].textContent.includes('✦'), 'a plain note gains no AI mark');
 });
 
-test('agenda rows carry the chi line from the team member or the notes', () => {
+test('agenda rows carry the chi line from the contact address or the notes, never the team member', () => {
   const withTeam = { ...APPT_TODAY, id: 'appt-team', teamMemberId: 'Marco' };
   const withNotesOnly = { ...APPT_TODAY, id: 'appt-notes' };
   const agenda = buildTodayAgenda([withTeam, withNotesOnly], OGGI_NOW);
-  assert.equal(agenda[0].who, 'Marco', 'team member as fallback without a contact address');
+  assert.ok(
+    agenda[0].who.includes('Vuole la scheda'),
+    'a stored team member never reads: the notes cue does',
+  );
   assert.ok(
     agenda[1].who.includes('Vuole la scheda'),
     'notes cue when no team member is stored',
@@ -821,7 +867,7 @@ test('agenda rows carry the chi line from the team member or the notes', () => {
     },
   });
   const text = mount.textContent;
-  assert.ok(text.includes('Marco'), 'chi line paints under the appointment');
+  assert.ok(!text.includes('Marco'), 'no team member name paints under the appointment');
   assert.ok(text.includes('Vuole la scheda'), 'notes cue paints under the appointment');
 });
 

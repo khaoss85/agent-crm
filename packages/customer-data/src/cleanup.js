@@ -4,7 +4,7 @@ import { AppError, normalizeActor } from '../../core/index.js';
 import { CUSTOMER_SCAN_LIMIT, PHONE_BEARING_SYSTEMS } from './customers.js';
 import { emailShape, normalizeCompanyName } from './normalize.js';
 import { isNoCompany, recordCandidatePairs } from './sender.js';
-import { contactDisplayName } from './display-name.js';
+import { companyDisplayName, contactDisplayName, isTechnicalLocalPart, labelFromEmail, readableName } from './display-name.js';
 import {
   deciding,
   optional,
@@ -18,8 +18,9 @@ import {
  *
  * A deterministic scan over the stored customer records, not a rules engine
  * and not an agent runtime: no LLM, no clock in any identity, no threshold
- * invented here. It finds duplicate suspects (same normalized name, same
- * phone digits), missing or malformed contact channels, and records with no
+ * invented here. It finds duplicate suspects (same display name ignoring
+ * case — the name the screen shows, backlog:088b639d96a2 — same phone
+ * digits), missing or malformed contact channels, and records with no
  * open next step — and it proposes corrections (merge, completion, next
  * step) as work tasks in «Da fare», through the single governed
  * `follow-up@1` path, plus deterministic `duplicate-candidate` rows for the
@@ -222,9 +223,25 @@ export function createCleanupProposals({ database, modules, policy, names, follo
     for (const subject of subjects) {
       if (subject.resource !== 'contact') continue;
       const contact = contacts.find((entry) => entry?.id === subject.id);
-      const full = `${contact?.firstName ?? ''} ${contact?.lastName ?? ''}`.trim();
-      if (full === '') continue;
-      const normalized = normalizeCompanyName(full);
+      // The name the screen shows (display-name.js), compared without
+      // capitals (backlog:088b639d96a2): «MailUp | TeamSystem» and «MAILUP»
+      // read «MailUp» and «MAILUP» — the double the Mac still sees — while
+      // the stored strings («mailup | teamsystem» vs «mailup») never meet.
+      // A contact with no usable stored name reads its email fallback
+      // («Google» for every bounce): a fallback label never pairs strangers.
+      const stored = `${contact?.firstName ?? ''} ${contact?.lastName ?? ''}`.trim();
+      if (stored === '' || readableName(stored) === null) continue;
+      const shown = contactDisplayName(contact);
+      if (shown === null) continue;
+      // A label lent by a machine address («Google» for every bounce)
+      // names nobody: when the sender's own address is technical and the
+      // shown name is just its email fallback, the subject never pairs
+      // (review rev-agent-crm-1034-4e5a7669: token-stored and materialised
+      // «Google —» strangers paired as duplicates). A real stored name
+      // still pairs: the fallback of a technical address is a domain label
+      // or null, never the person's name.
+      if (isTechnicalLocalPart(contact?.email) && shown === labelFromEmail(contact?.email)) continue;
+      const normalized = normalizeCompanyName(shown);
       if (!byName.has(normalized)) byName.set(normalized, []);
       byName.get(normalized).push(subject);
     }
@@ -237,7 +254,7 @@ export function createCleanupProposals({ database, modules, policy, names, follo
             subjectOf(sorted[i].resource, sorted[i].id, sorted[i].label),
             subjectOf(sorted[j].resource, sorted[j].id, sorted[j].label),
             'cleanup-same-name',
-            `contacts ${sorted[i].id} and ${sorted[j].id} carry the same normalized name`,
+            `contacts ${sorted[i].id} and ${sorted[j].id} read the same name ignoring case ("${sorted[i].label ?? ''}" / "${sorted[j].label ?? ''}")`,
           );
         }
       }
@@ -253,7 +270,13 @@ export function createCleanupProposals({ database, modules, policy, names, follo
       // company row — never from the label, so a real company with that
       // name still pairs.
       if (placeholderByCompanyId.get(subject.id)) continue;
-      const normalized = normalizeCompanyName(subject.label);
+      // Same display rule as the contacts above (backlog:088b639d96a2):
+      // «MailUp | TeamSystem» and «MAILUP» read the same name ignoring
+      // case. A placeholder name («Unknown (…)», «esempio.invalid») reads
+      // null: never a duplicate suspect.
+      const shown = companyDisplayName({ name: subject.label });
+      if (shown === null) continue;
+      const normalized = normalizeCompanyName(shown);
       if (!byCompanyName.has(normalized)) byCompanyName.set(normalized, []);
       byCompanyName.get(normalized).push(subject);
     }
@@ -266,7 +289,7 @@ export function createCleanupProposals({ database, modules, policy, names, follo
             subjectOf(sorted[i].resource, sorted[i].id, sorted[i].label),
             subjectOf(sorted[j].resource, sorted[j].id, sorted[j].label),
             'cleanup-same-company',
-            `companies ${sorted[i].id} and ${sorted[j].id} carry the same normalized name`,
+            `companies ${sorted[i].id} and ${sorted[j].id} read the same name ignoring case ("${sorted[i].label ?? ''}" / "${sorted[j].label ?? ''}")`,
           );
         }
       }

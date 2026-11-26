@@ -28,9 +28,13 @@
 // - writes: POST /api/spine/memberships (grant) and
 //   POST /api/spine/memberships/:subject/suspend (removal), the same store
 //   the Identity screen uses — grant names a reason, removal is two-step;
+//   a 200 paints at once (backlog:71a6574a), the refresh after it reconciles;
 // - flips: POST /api/space-permissions/set-permission, the operation that
 //   runs the package's own `set-permission` action (human-only, same codes),
 //   never a direct row write — every override row field is managed;
+// - gate: GET /api/assistant/status, the same verdict the Assistente panel
+//   and the composer read (backlog:b139d83617f3) — the master switch and the
+//   status say the same thing, so a ceiling-kept space never reads flippable;
 // - the backoffice tokens and rows of styles.css (bo-*): team and AI panels
 //   in a two-column row like prototype screen 08, single column under 700px.
 //
@@ -45,9 +49,33 @@ import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
+import { ASSISTANT_STATUS_PATH, ASSISTANT_SPACE_DISABLED_NOTICE, ASSISTANT_SPACE_DISABLED_OWNER_NOTICE, assistantGateOf } from './admin-assistant-gate.js';
 import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { subjectText, teamPeople } from './admin-labels.js';
+import {
+  SPACE_ROLE_LABELS,
+  accessLabel,
+  buildTeamRows,
+  duplicateTeamHints,
+  memberInitials,
+  nameInitials,
+  profileMemberOf,
+  spaceRoleLabel,
+} from './admin-labels.js';
+// backlog:6563edf41aab (punto (d)): the painted team rows and the duplicate
+// hints live in admin-labels.js with teamPeople, so the Impostazioni fix
+// count reads the same rows — re-exported here for the existing importers
+// (admin-calendario.js, the team tests), never a second definition.
+export {
+  SPACE_ROLE_LABELS,
+  accessLabel,
+  buildTeamRows,
+  duplicateTeamHints,
+  memberInitials,
+  nameInitials,
+  profileMemberOf,
+  spaceRoleLabel,
+};
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -111,31 +139,6 @@ export const SPAZI_AI_MASTER = Object.freeze({
 
 /** Master default, mirrored from the package — a space with no master row runs with the AI on. */
 export const SPAZI_AI_MASTER_DEFAULT = true;
-
-/**
- * Italian names for the control-plane membership roles the spine mirrors —
- * the same words the shell prints under the space name and the user
- * (admin-session.js), so one screen never calls the same role «Titolare»
- * in the sidebar and something else in the card (prototype 08: «Tu:
- * Titolare»).
- */
-export const SPACE_ROLE_LABELS = Object.freeze({
-  owner: 'Titolare',
-  operator: 'Operatore',
-  observer: 'Osservatore',
-});
-
-/**
- * Italian label for a membership role. A role the framework does not know is
- * shown as-is, never blank and never mapped to a wrong one.
- * @param {unknown} role
- */
-export function spaceRoleLabel(role) {
-  if (typeof role === 'string' && role !== '' && Object.hasOwn(SPACE_ROLE_LABELS, role)) {
-    return SPACE_ROLE_LABELS[role];
-  }
-  return typeof role === 'string' && role !== '' ? role : 'non disponibile';
-}
 
 /**
  * The statistic of one space card, in the prototype's own pattern
@@ -289,43 +292,19 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
 }
 
 /**
- * Avatar initials for a team subject: the first two alphanumeric characters,
- * uppercased. The spine store itself carries no display name; when the
- * roster arrives without the enriched displayName/email, the subject is the
- * only honest source — never a prettier invention (buildTeamRows uses the
- * person name when the roster carries one).
- * @param {unknown} subject
+ * The team builders live in admin-labels.js (see the import above): this
+ * module re-exports them, never a second definition. The invite in-flight
+ * marker stays here: only this view paints «invio in corso» while the grant
+ * 200 is out, and only this view reads it back.
  */
-export function memberInitials(subject) {
-  if (typeof subject !== 'string') return '·';
-  const clean = subject.replace(/[^0-9a-zA-Z\u00c0-\u00de\u00e0-\u00ff]/g, '');
-  if (clean === '') return '·';
-  return clean.slice(0, 2).toUpperCase();
-}
 
 /**
- * One team row per membership: avatar initials, subject, Italian role pill,
- * status. Sorted by subject so the list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
+ * Client-only marker for a membership whose grant request is still out:
+ * the row paints «invio in corso», never a status the 200 has not
+ * confirmed. The re-read (or the confirmed 200 below) replaces it with the
+ * server truth. Never sent to the server, never read from it.
  */
-const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
-
-/** Strongest role first: a person holding two subjects shows the higher one. */
-const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
-
-/** Liveliest status first: a person reads «sospeso» only when no subject is live. */
-const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
-
-/**
- * Avatar initials for a person name: the first letter of the first two
- * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
- * @param {string} name
- */
-function nameInitials(name) {
-  const words = name.split(/\s+/).map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '')).filter(Boolean);
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
-  return memberInitials(name);
-}
+const INVITE_SENDING_STATUS = 'sending';
 
 /**
  * The verified session subject from a settled `/api/spine/context` read
@@ -342,149 +321,9 @@ function selfSubjectOf(settled) {
   return null;
 }
 
-/** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
-const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
-/** @param {Array<string>} subjects */
-export function accessLabel(subjects) {
-  const kinds = [];
-  for (const subject of subjects) {
-    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
-    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
-  }
-  return kinds.length > 0 ? kinds.join(' · ') : null;
-}
-
-/**
- * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
- * carry, beside each opaque subject, the control-plane displayName, email
- * and `operatorAccountId` the pilot enriches it with — the same fields the
- * Calendario team reads. One human can hold several subjects (an adopted
- * broker member, the github one and the Google one: prod 07/11 listed
- * «Daniele Pelleri» twice with `broker+…@accordo.invalid` mailboxes).
- * Subjects merge into one row on the control-plane person key first
- * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
- * only without that key — when both the mailbox and the display name match
- * (trimmed, case-insensitive). Two explicit person keys never fold into one
- * row: the mailbox fallback joins only a group with no key of its own, or
- * the same key. A mailbox alone never merges: a shared mailbox (info@…)
- * or stale enrichment could fold a different human into the row, hide them
- * and let «Rimuovi» suspend them. A name alone never merges either: two
- * homonyms without email are two people. Nothing merges
- * in the backend: the row keeps every subject, and removal suspends each
- * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
- * the row shows the person's first real mailbox, or no email line when
- * the roster carries none — the name is then the profile displayName.
- *
- * Without enrichment the subject is the name when it reads as one, else
- * «Membro del team» — never a technical subject (production 10/11) — and
- * the status sits under it. Sorted by name, then subject, so the
- * list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
- */
-export function buildTeamRows(members = [], { selfSubject = null } = {}) {
-  // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
-  // teamPeople (admin-labels.js), the same rows the Calendario team reads.
-  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
-    subjects: row.subjects,
-    keys: row.keys,
-    live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
-    displayName: row.name,
-    email: row.email,
-    roles: row.members.map((member) => member.role),
-    statuses: row.members.map((member) => member.status),
-    self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
-  }));
-  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
-  // identity — not even the session's own name. Without a person key or a
-  // server link a same-named subject stays a row of its own, with its own
-  // «Rimuovi», told apart by its access kind (accessLabel below): one row
-  // too many beats a person hidden.
-  return people
-    .map((person) => {
-      const subject = [...person.subjects].sort()[0];
-      // No readable name or mailbox: the subject when it reads as a word,
-      // else a generic label — never a technical subject (`google|…`,
-      // `broker+…`), the same fallback the Calendario team uses.
-      const readable = person.displayName ?? person.email ?? subjectText(subject);
-      const name = readable ?? 'Membro del team';
-      const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
-      const role = known.length > 0
-        ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
-        : person.roles[0];
-      // Deterministic, whatever the store order: the liveliest status wins,
-      // and «sospeso» only when every subject of the person is suspended.
-      const other = person.statuses.findIndex((status) => status !== 'suspended');
-      const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
-        ?? (other >= 0 ? person.statuses[other] : 'suspended');
-      return {
-        subject,
-        subjects: [...person.subjects].sort(),
-        // What «Rimuovi» suspends: every subject of the person not already
-        // suspended (all of them when none is live, so a retry still asks).
-        removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
-        name,
-        email: person.email,
-        initials: person.displayName !== null
-          ? nameInitials(person.displayName)
-          : (readable !== null ? memberInitials(readable) : '·'),
-        role: spaceRoleLabel(role),
-        // The session's own person: never offered «Rimuovi» on themself.
-        self: person.self,
-        // How this person signs in, when no real mailbox names them: two
-        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
-        access: accessLabel(person.subjects),
-        status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
-      };
-    })
-    .sort((left, right) => {
-      const a = left.name.toLowerCase();
-      const b = right.name.toLowerCase();
-      if (a !== b) return a < b ? -1 : 1;
-      return left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0;
-    });
-}
-
-/**
- * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
- * rows that paint the same name with the same mailbox and access line are
- * indistinguishable on screen («Daniele Pelleri» vs «daniele pelleri», both
- * with the same avatar). One entry per colliding painted name, in team
- * order; rows told apart by mailbox or access kind stay silent, like the
- * homonyms the access line already separates. A name alone never proves one
- * person (backlog:9d06eb1e174b), so the hint names the cause and the cure —
- * it never merges or removes anything itself.
- * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
- */
-export function duplicateTeamHints(rows = []) {
-  const list = Array.isArray(rows) ? rows : [];
-  const byPaint = new Map();
-  for (const row of list) {
-    if (!row || typeof row !== 'object') continue;
-    const name = typeof row.name === 'string' ? row.name : '';
-    const email = typeof row.email === 'string' ? row.email : '';
-    const access = typeof row.access === 'string' ? row.access : '';
-    if (name === '' && email === '') continue;
-    const key = [name.toLowerCase(), email.toLowerCase(), access.toLowerCase()].join(' ');
-    byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
-  }
-  const hints = [];
-  for (const group of byPaint.values()) {
-    if (group.length < 2) continue;
-    const variants = [...new Set(group.flatMap((row) => {
-      const fromList = Array.isArray(row.subjects) ? row.subjects : [];
-      const single = typeof row.subject === 'string' ? [row.subject] : [];
-      return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
-    }))];
-    if (variants.length < 2) continue;
-    const painted = group[0].name !== '' ? group[0].name : group[0].email;
-    hints.push({
-      name: painted,
-      count: group.length,
-      text: `«${painted}» compare ${group.length} volte con lo stesso nome: se è la stessa persona con due voci, rimuovi quella vecchia con Rimuovi; se sono due persone diverse, ignoralo.`,
-    });
-  }
-  return hints;
-}
+/** The team rows and duplicate hints moved to admin-labels.js (see above): this
+ * module imports and re-exports them, so the view paints the same rows the
+ * Impostazioni count reads. */
 
 /**
  * The five switches with their effective value: the flipped row wins, the
@@ -522,6 +361,23 @@ export function masterEnabled(spaceId, overrideRows = []) {
     (row) => row && typeof row === 'object' && row.spaceId === spaceId && row.permission === SPAZI_AI_MASTER.key,
   );
   return flipped ? flipped.enabled === true : SPAZI_AI_MASTER_DEFAULT === true;
+}
+
+/**
+ * The master verdict: the stored switch corrected by the gate
+ * (backlog:b139d83617f3). The owner ceiling locks whatever the stored
+ * switch says — with the gate off and code `LLM_SPACE_DISABLED` the
+ * space reads off and unflippable, with who can enable it (a flip would
+ * be refused up there, so nothing promises «riaccendi»). Anything else
+ * follows the stored switch, and a missing, empty or unreadable gate
+ * (standalone framework, failed read) changes nothing — the stored
+ * permission is the authority there. The gate never turns a switch on.
+ * @param {{storedOn?: unknown, gate?: {enabled: boolean, code: string|null}|null}} [input]
+ * @returns {{on: boolean, locked: boolean}}
+ */
+export function aiMasterVerdict({ storedOn = true, gate = null } = {}) {
+  const locked = gate !== null && gate.enabled === false && gate.code === 'LLM_SPACE_DISABLED';
+  return { on: storedOn === true && !locked, locked };
 }
 
 /**
@@ -600,6 +456,10 @@ export function createSpaziAccessiView(deps) {
     // whether the context read that names the role is still out.
     selfSubject: null,
     contextPending: false,
+    // backlog:71a6574a: the session profile's own member (name, mailbox),
+    // read with the stats — the self row's fallback when the roster is bare.
+    /** @type {{name: string|null, email: string|null}|null} */
+    profileMember: null,
     // backlog:2de01913d276: why the role is not shown after the context read
     // failed (a 429, a refused connection, a 5xx). A failed read is never an
     // unknown role: the cards say the read failed and offer «Riprova».
@@ -617,6 +477,11 @@ export function createSpaziAccessiView(deps) {
     overrides: null,
     /** @type {string|null} why the switches are not shown */
     switchesUnavailable: null,
+    // backlog:b139d83617f3: the gate verdict behind the master switch
+    // ({enabled, code} or null when unread, failed or unshaped — the
+    // stored permission stays the authority then).
+    /** @type {{enabled: boolean, code: string|null}|null} */
+    gate: null,
     /** @type {Map<string, string>} card statistic by space id; a space with
      * an unknown count simply has no entry, never an invented row */
     stats: new Map(),
@@ -662,11 +527,13 @@ export function createSpaziAccessiView(deps) {
   // unit tests) skip the outside closer; the toggles, the voices and Escape
   // still work there.
   // Toggling a menu repaints the whole view, so the node that had keyboard
-  // focus is gone after render(): closing with Escape returns focus to the
-  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
-  // click leaves focus where the user put it.
+  // focus is gone after render(): closing returns focus to the toggle that
+  // opened the menu (backlog:dd570f6d501e) — Escape and an outside click
+  // alike, so focus never falls back to the body.
   /** Currently rendered menu nodes, rebuilt on every render. */
   const liveMenuWraps = [];
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   function focusToggle(selector) {
     if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
     const target = mount.querySelector(selector);
@@ -679,14 +546,35 @@ export function createSpaziAccessiView(deps) {
     render();
     focusToggle(refocusSelector);
   }
+  // An outside click must not repaint the whole view: render() replaces
+  // every node, including the control the user just clicked, so its focus
+  // and form state would be lost (review P2 on #753). Dismissing only
+  // removes the open menu wraps, marks both toggles collapsed and returns
+  // focus to the opener; every other node survives untouched.
+  function dismissMenus(refocusSelector = null) {
+    if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
+    state.newSpaceMenuOpen = false;
+    state.inviteMenuOpen = false;
+    for (const wrap of liveMenuWraps.splice(0)) {
+      if (wrap && wrap.parentNode && typeof wrap.parentNode.removeChild === 'function') {
+        wrap.parentNode.removeChild(wrap);
+      }
+    }
+    if (mount && typeof mount.querySelector === 'function') {
+      for (const selector of [newSpaceToggleSelector, inviteToggleSelector]) {
+        const toggle = mount.querySelector(selector);
+        if (toggle && typeof toggle.setAttribute === 'function') toggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+    lastPaint = childrenOf();
+    focusToggle(refocusSelector);
+  }
   function trackMenuWrap(node, toggleSelector = null) {
     liveMenuWraps.push(node);
     node.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
     });
   }
-  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
-  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   if (doc && typeof doc.addEventListener === 'function') {
     doc.addEventListener('click', (event) => {
       let node = event?.target ?? null;
@@ -694,7 +582,7 @@ export function createSpaziAccessiView(deps) {
         if (liveMenuWraps.includes(node)) return;
         node = node.parentNode ?? null;
       }
-      closeMenus();
+      dismissMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : state.inviteMenuOpen ? inviteToggleSelector : null);
     });
     // Codex P2 on #763: render() removes the focused toggle, so in a real
     // browser focus falls back to the body and Escape never reaches the
@@ -773,9 +661,10 @@ export function createSpaziAccessiView(deps) {
    * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
   async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null), readsClient = client) {
-    // backlog:1a96094db71d: the two reads start at once, beside the team
-    // and permission reads; only the statistic waits for the member count
-    // and the profile it formats with.
+    // Voce 785aeb28bd18: this runs in the second wave only (beginStatReads
+    // starts it after the team data lands), so the two reads below never
+    // start beside the roster. Only the statistic waits for the member
+    // count and the profile it formats with.
     const reads = Promise.allSettled([
       readsClient.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
       readsClient.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
@@ -845,12 +734,14 @@ export function createSpaziAccessiView(deps) {
   function resetLoadState(space) {
     state.myRole = null;
     state.contextPending = true;
+    state.profileMember = null;
     state.contextUnavailable = null;
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
     state.overrides = null;
     state.switchesUnavailable = null;
+    state.gate = null;
     state.stats = new Map();
     state.spaceConns = new Map();
     // backlog:2de01913d276: the statistic follows the data, never the other
@@ -874,11 +765,14 @@ export function createSpaziAccessiView(deps) {
   }
 
   /**
-   * Every read the page needs, started at once (backlog:1a96094db71d: they
-   * used to run one after the other — context, team, agents, permissions,
-   * profile, then the space cards — eight round trips of 2,5–4 s each in
-   * production). The data reads paint first; the statistic reads resolve in
-   * the second phase.
+   * The data the page paints — role, team, agents and permissions — started
+   * at once (backlog:1a96094db71d: they used to run one after the other —
+   * context, team, agents, permissions, profile, then the space cards —
+   * eight round trips of 2,5–4 s each in production). Voce 785aeb28bd18:
+   * the card statistic (profile, connectors, customers) no longer starts
+   * here — {@link beginStatReads} starts it only after this data lands, so
+   * the member step never queues behind the slow card reads (verifica Mac
+   * 19/11: 1,1–2,8 s su questa schermata, sotto 1 s sulle altre).
    * @param {string} space
    * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
    * (backlog:2de01913d276): concurrent identical GETs share one request.
@@ -894,6 +788,25 @@ export function createSpaziAccessiView(deps) {
     const switchesRead = settle(Promise.resolve().then(() => readsClient.request(
       `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
     )));
+    // backlog:b139d83617f3: the gate verdict behind the master switch — one
+    // read per load, beside the data (the skeleton covers it: no switch
+    // flips before its value is known).
+    const gateRead = settle(Promise.resolve().then(() => readsClient.request(ASSISTANT_STATUS_PATH)));
+    return { contextRead, membersRead, agentsRead, switchesRead, gateRead };
+  }
+
+  /**
+   * Voce 785aeb28bd18: the card statistic starts only after the data above
+   * landed and painted — profile, connectors and customers of the open
+   * space, never beside the roster. The statistic counts what the team list
+   * shows: rendered rows only, so a malformed membership never leaks into
+   * the card number.
+   * @param {string} space
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any> }} data the landed team reads
+   * @param {{ request: (path: string, options?: any) => Promise<any> }} [readsClient] one load reads once
+   * (backlog:2de01913d276): concurrent identical GETs share one request.
+   */
+  function beginStatReads(space, { membersRead, contextRead }, readsClient = client) {
     const ids = readSpaces()
       .filter((entry) => entry !== null && typeof entry === 'object'
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
@@ -902,8 +815,6 @@ export function createSpaziAccessiView(deps) {
     // The profile describes the session's own space: its links count on
     // that card only, never on another space's (review #782 P1).
     const profileRead = ids.length > 0 ? readProfile(readsClient) : Promise.resolve(null);
-    // The statistic counts what the team list shows: rendered rows only, so a
-    // malformed membership never leaks into the card number.
     const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
       ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));
@@ -916,13 +827,16 @@ export function createSpaziAccessiView(deps) {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null), readsClient);
       if (stat !== null) state.stats.set(id, stat);
     }));
-    return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+    // backlog:71a6574a (punto 5): the profile read resolves with the stats —
+    // refresh() and reload() enrich the self row from it when the roster
+    // leaves a bare handle. The card statistic keeps reading it too.
+    return { statsRead, profileRead };
   }
 
   /**
    * The data the page paints: role, team, agents and switches. The statistic
    * is not awaited here — it fills in with {@link loadStats}.
-   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any>, gateRead: Promise<any> }} reads
    */
   async function loadCore(reads) {
     const context = await reads.contextRead;
@@ -971,6 +885,12 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
+    // backlog:b139d83617f3: the verdict the master switch obeys. A refused
+    // read still carries the server's truth (a refusal with the ceiling
+    // code locks like a 200 with it); anything unreadable or unshaped is
+    // null and the stored permission stays the authority.
+    const gate = await reads.gateRead;
+    state.gate = gate.ok ? assistantGateOf(gate.value) : assistantGateOf(gate.error);
   }
 
   /**
@@ -989,15 +909,35 @@ export function createSpaziAccessiView(deps) {
    * the pre-two-phase `load()` the refusal paths called: same reset, same
    * reads, no render.
    */
-  async function reload() {
+  async function reload({ keepOverrides = null, keepMembers = null } = {}) {
     const space = readActiveSpace().trim();
     if (!resetLoadState(space)) return;
+    if (Array.isArray(keepOverrides)) {
+      // Same confirmed snapshot as refresh(): a write the 200 just
+      // confirmed keeps its values while the re-read is out. The GET in
+      // loadCore still replaces this with the server truth (or its error).
+      state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
+    if (Array.isArray(keepMembers)) {
+      // backlog:71a6574a review giro 3 (P1): the just-painted team stays in
+      // state while the re-read is out — any render then paints the chosen
+      // team, never «Team non disponibile.». The membership GET in loadCore
+      // still replaces this with the server truth (or its error).
+      state.members = keepMembers.map((row) => ({ ...row }));
+    }
     // backlog:2de01913d276: one load reads once — the post-write reread
     // shares one coalescing wrapper like the entry load above.
-    const reads = beginReads(space, coalesceSpaceReads(client));
+    const readsClient = coalesceSpaceReads(client);
+    const reads = beginReads(space, readsClient);
     await loadCore(reads);
-    await loadStats(reads);
+    // Voce 785aeb28bd18: the card statistic follows the data here too —
+    // never beside the roster.
+    const stats = beginStatReads(space, reads, readsClient);
+    await loadStats(stats);
     state.statsPending = false;
+    // backlog:71a6574a: the profile resolved with the stats above — the
+    // self row reads it when the roster leaves it bare. The caller paints.
+    state.profileMember = profileMemberOf(await stats.profileRead);
   }
 
   async function mutate(path, body) {
@@ -1012,6 +952,98 @@ export function createSpaziAccessiView(deps) {
   }
   let busyPath = '';
   const busyOn = (test) => state.busy && test(busyPath);
+
+  /**
+   * backlog:71a6574a (verifica Mac 11/11, punto 2): after a 200 the screen
+   * paints the write at once — state and buttons come back with the new
+   * values instead of staying grey through the re-read. Each helper applies
+   * only what the 200 just confirmed; the refresh after it reconciles with
+   * the server truth, so a wrong guess never sticks.
+   */
+  function applySwitchFlip(spaceId, key, to) {
+    if (!Array.isArray(state.overrides)) return;
+    const found = state.overrides.find(
+      (row) => row !== null && typeof row === 'object' && row.spaceId === spaceId && row.permission === key,
+    );
+    if (found !== undefined) found.enabled = to === true;
+    else state.overrides.push({ spaceId, permission: key, enabled: to === true });
+  }
+  /**
+   * The team rows a 200 just confirmed, copied for the re-read: refresh()
+   * and reload() reset the state first, and the copy paints until the
+   * membership GET replaces it (backlog:71a6574a review giro 3, P1).
+   * @returns {Array<any>|null}
+   */
+  function snapshotMembers() {
+    return Array.isArray(state.members) ? state.members.map((row) => ({ ...row })) : null;
+  }
+  /**
+   * The grant request is out but the 200 has not answered yet: the person
+   * paints at once as «invio in corso», never as «invitato». A subject the
+   * store already lists is left alone — a second row would be the invented
+   * one, not this paint.
+   */
+  function markInviteSending(subject, role) {
+    if (!Array.isArray(state.members)) return;
+    const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
+    if (found !== undefined) return;
+    state.members.push({ subject, role, status: INVITE_SENDING_STATUS });
+  }
+  /**
+   * The 200 refused the grant (or never confirmed a status): drop the
+   * «invio in corso» row so the re-read paints only the server truth.
+   */
+  function removeInviteSending(subject) {
+    if (!Array.isArray(state.members)) return;
+    const at = state.members.findIndex(
+      (row) => row !== null && typeof row === 'object' && row.subject === subject && row.status === INVITE_SENDING_STATUS,
+    );
+    if (at >= 0) state.members.splice(at, 1);
+  }
+  function applyInvite(subject, role, status) {
+    if (!Array.isArray(state.members)) return;
+    const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
+    if (found !== undefined) {
+      // The store already lists the subject (a re-read landed between the
+      // 200 and this paint): the confirmed role and status still apply at
+      // once.
+      found.role = role;
+      found.status = status;
+      return;
+    }
+    state.members.push({ subject, role, status });
+  }
+  function applySuspensions(subjects) {
+    if (!Array.isArray(state.members)) return;
+    const wanted = new Set(subjects);
+    for (const member of state.members) {
+      if (member !== null && typeof member === 'object' && wanted.has(member.subject)) member.status = 'suspended';
+    }
+  }
+  /**
+   * The status the 200 just confirmed for an invited person: its own
+   * status, or the nested membership's (the grant route answers
+   * `{entity, binding, event}`, the status living on the entity). Null
+   * when the answer confirms nothing — the caller then keeps the
+   * «invio in corso» row until the re-read paints the server truth, and
+   * never invents an «invited» the 200 did not confirm.
+   * @param {unknown} answer
+   * @returns {string|null}
+   */
+  function inviteStatusOf(answer) {
+    const pick = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+    if (answer === null || typeof answer !== 'object') return null;
+    const direct = pick(/** @type {{status?: unknown}} */ (answer).status);
+    if (direct !== null) return direct;
+    for (const key of ['entity', 'membership']) {
+      const nested = /** @type {Record<string, unknown>} */ (answer)[key];
+      if (nested !== null && typeof nested === 'object') {
+        const confirmed = pick(/** @type {{status?: unknown}} */ (nested).status);
+        if (confirmed !== null) return confirmed;
+      }
+    }
+    return null;
+  }
 
   function activeSpace() {
     const spaces = readSpaces();
@@ -1130,9 +1162,15 @@ export function createSpaziAccessiView(deps) {
       if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
-      // Closing from the toggle replaces the toggle itself: keep keyboard
-      // focus on it, so Tab continues from the button that closed the menu.
-      if (!willOpen) focusToggle(newSpaceToggleSelector);
+      // Opening paints the menu new: move keyboard focus to its first voice
+      // (review P2 on #753 — the claimed cure), so Esc and Tab continue from
+      // inside the menu. Closing from the toggle replaces the toggle itself:
+      // keep keyboard focus on it, so Tab continues from the button.
+      if (willOpen) {
+        const menuNode = mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+        const firstVoice = menuNode && typeof menuNode.querySelector === 'function' ? menuNode.querySelector('button') : null;
+        if (firstVoice && typeof firstVoice.focus === 'function') firstVoice.focus();
+      } else focusToggle(newSpaceToggleSelector);
     });
     adderToggle.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
@@ -1292,7 +1330,13 @@ export function createSpaziAccessiView(deps) {
       box.appendChild(section);
       return;
     }
-    const rows = buildTeamRows(state.members, { selfSubject: state.selfSubject });
+    // backlog:71a6574a: the self row borrows the session profile's name or
+    // mailbox when the roster leaves it with a bare handle («khaoss85»).
+    const rows = buildTeamRows(state.members, {
+      selfSubject: state.selfSubject,
+      selfName: state.profileMember !== null ? state.profileMember.name : null,
+      selfEmail: state.profileMember !== null ? state.profileMember.email : null,
+    });
     // backlog:67e14a50efb6 (specs/account.md C13/C14): every team row paints
     // this space's shared calendar state and channel tiles from the same
     // connectors answer the cards counted — the team is one per organization
@@ -1311,32 +1355,32 @@ export function createSpaziAccessiView(deps) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
     // backlog:6563edf41aab: possible duplicates read like the customer
-    // cards — one muted line per colliding name, never a merge: the operator
-    // decides with Rimuovi on the stale row.
+    // cards — one spaced line per colliding name, never a merge and never a
+    // removal advice: Rimuovi suspends the person in the whole organisation.
     for (const hint of duplicateTeamHints(rows)) {
-      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted' }));
+      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted bo-spazi-duplicate' }));
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });
       const identity = el(doc, 'div', { cls: 'bo-spazi-identity' });
       identity.appendChild(el(doc, 'span', { text: row.initials, cls: 'bo-spazi-avatar', attrs: { 'aria-hidden': 'true' } }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
-      // Prototype 08: name over email. The email line carries the
-      // ellipsis (C13) with the full address in its title; a non-active
-      // status joins it. A roster without email keeps the status line.
+      // backlog:71a6574a (verifica Mac 11/11): name over email, always —
+      // «Daniele Pelleri · attivo» never stands where the email belongs —
+      // and the status lives in its own column beside the role. The email
+      // line keeps the ellipsis (C13) with the full address in its title.
       names.appendChild(el(doc, 'div', { text: row.name, cls: 'bo-spazi-subject' }));
       if (row.email !== null) {
-        const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
-        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
-      } else {
-        // backlog:9d06eb1e174b: no real mailbox — the access kind tells
-        // same-named rows apart, beside the status.
-        const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
-        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
+        names.appendChild(el(doc, 'div', { text: row.email, cls: 'bo-spazi-email', attrs: { title: row.email } }));
+      } else if (row.access !== null) {
+        // backlog:9d06eb1e174b: no real mailbox — the access kind still
+        // tells same-named rows apart under the name.
+        names.appendChild(el(doc, 'div', { text: row.access, cls: 'bo-spazi-access' }));
       }
       names.appendChild(renderTeamConns(conns, connsOut));
       identity.appendChild(names);
       item.appendChild(identity);
+      item.appendChild(el(doc, 'span', { text: row.status, cls: 'bo-spazi-status' }));
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
       if (state.confirmRemove !== null && row.subjects.includes(state.confirmRemove)) {
         const retry = state.removeRetry !== null && row.subjects.includes(state.removeRetry.subject)
@@ -1388,7 +1432,20 @@ export function createSpaziAccessiView(deps) {
             say(`${row.name} rimosso dal team.`);
             state.confirmRemove = null;
             state.removeRetry = null;
-            await refresh();
+            // backlog:71a6574a: the 200s suspended every subject — the row
+            // reads sospeso now with live buttons; the refresh reconciles.
+            applySuspensions(row.removable);
+            // Review giro 2 (P2): the confirmed overrides snapshot survives
+            // the refresh like on the flip path — a click while the re-read
+            // is out never paints «Permessi non disponibili.».
+            const confirmedRemoval = Array.isArray(state.overrides)
+              ? state.overrides.map((row) => ({ ...row }))
+              : null;
+            // backlog:71a6574a review giro 3 (P1): the suspended team paints
+            // on while the re-read is out.
+            const keptRemovalMembers = snapshotMembers();
+            render();
+            await refresh({ keepOverrides: confirmedRemoval, keepMembers: keptRemovalMembers });
             return;
           }
           const total = row.removable.length;
@@ -1404,7 +1461,21 @@ export function createSpaziAccessiView(deps) {
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
           // One message, inside the row that failed; a toast only if it cannot show.
-          await reload();
+          // backlog:71a6574a: the subjects the server took read sospeso now;
+          // the reload after it reconciles every row with the server truth.
+          const refusedSubjects = new Set(refused.map((entry) => entry.subject));
+          applySuspensions(row.removable.filter((subject) => !refusedSubjects.has(subject)));
+          // Review giro 2 (P2): the confirmed overrides snapshot survives the
+          // reload like on the flip path — a click while the re-read is out
+          // never paints «Permessi non disponibili.».
+          const confirmedPartial = Array.isArray(state.overrides)
+            ? state.overrides.map((row) => ({ ...row }))
+            : null;
+          // backlog:71a6574a review giro 3 (P1): the partly suspended team
+          // paints on while the re-read is out.
+          const keptPartialMembers = snapshotMembers();
+          render();
+          await reload({ keepOverrides: confirmedPartial, keepMembers: keptPartialMembers });
           // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
@@ -1466,20 +1537,56 @@ export function createSpaziAccessiView(deps) {
         say('Servono la persona e il motivo: senza motivo, il server rifiuta l\u2019invito.', true);
         return;
       }
+      // backlog:71a6574a review giro 4 (P1): the row paints now, before
+      // the 200, as «invio in corso» — never as «invitato», which only a
+      // 200 may confirm. The pending row rides the same keepMembers
+      // snapshot as the giro 3 cure, so one source of truth covers it.
+      markInviteSending(who, picked);
+      render();
       try {
-        await mutate('/api/spine/memberships', { subject: who, role: picked, reason: motive });
+        const answer = await mutate('/api/spine/memberships', { subject: who, role: picked, reason: motive });
         say(`${who} invitato come ${spaceRoleLabel(picked)}.`);
+        // backlog:71a6574a: the 200 created the membership — the row paints
+        // now with live buttons; the refresh after it reconciles. Only a
+        // status the 200 confirmed replaces the pending row, otherwise the
+        // pending row stays until the re-read paints the server truth.
+        const confirmed = inviteStatusOf(answer);
+        if (confirmed !== null) {
+          removeInviteSending(who);
+          applyInvite(who, picked, confirmed);
+        }
+        // Review giro 2 (P2): the confirmed overrides snapshot survives the
+        // refresh like on the flip path — a click while the re-read is out
+        // never paints «Permessi non disponibili.».
+        const confirmedInvite = Array.isArray(state.overrides)
+          ? state.overrides.map((row) => ({ ...row }))
+          : null;
+        // backlog:71a6574a review giro 3 (P1): the invited team paints on
+        // while the re-read is out.
+        const keptInviteMembers = snapshotMembers();
+        render();
+        await refresh({ keepOverrides: confirmedInvite, keepMembers: keptInviteMembers });
+        return;
       } catch (error) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
         // One message, inside the form that failed; a toast only if it cannot show.
-        await reload();
+        // Review giro 2 (P2): same confirmed snapshot as above — the refused
+        // invite still rereads, but the switches stay painted meanwhile.
+        const confirmedInviteRefusal = Array.isArray(state.overrides)
+          ? state.overrides.map((row) => ({ ...row }))
+          : null;
+        // backlog:71a6574a review giro 3 (P1): the refused invite changed
+        // nothing, so the team in state is the truth to keep. The pending
+        // «invio in corso» row goes first: a refused grant leaves no row.
+        removeInviteSending(who);
+        const keptInviteRefusalMembers = snapshotMembers();
+        await reload({ keepOverrides: confirmedInviteRefusal, keepMembers: keptInviteRefusalMembers });
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
         return;
       }
-      await refresh();
     });
     invite.appendChild(send);
     if (state.inviteRefusal !== null) {
@@ -1506,11 +1613,23 @@ export function createSpaziAccessiView(deps) {
     // is the panel's headline: with the master off the five stay visible
     // with their own honest values but disabled, because they decide
     // nothing until the master is back on.
-    const master = masterEnabled(space.id, state.overrides);
+    // backlog:b139d83617f3: the stored switch corrected by the gate — a
+    // ceiling-kept space reads off and locked, with who can enable it,
+    // never «finché non la riaccendi» (there is nothing to re-flip here).
+    // The locked line branches on the viewer role like the Assistente
+    // panel: the titolare is told where to turn it on, never to ask
+    // themself (review rev-agent-crm-1126-4389fec29d94 P1).
+    const verdict = aiMasterVerdict({ storedOn: masterEnabled(space.id, state.overrides), gate: state.gate });
+    const master = verdict.on;
+    const lockedNotice = state.myRole === 'owner'
+      ? ASSISTANT_SPACE_DISABLED_OWNER_NOTICE
+      : ASSISTANT_SPACE_DISABLED_NOTICE;
     section.appendChild(el(doc, 'p', {
       text: master
         ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
-        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
+        : verdict.locked
+          ? `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}. ${lockedNotice}`
+          : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
       cls: 'bo-muted',
     }));
     const switches = [
@@ -1542,12 +1661,19 @@ export function createSpaziAccessiView(deps) {
         toggle.setAttribute('aria-checked', 'false');
         toggle.setAttribute('data-paused', 'true');
         texts.appendChild(el(doc, 'div', {
-          text: entry.enabled ? 'In pausa: riparte acceso quando riaccendi l\u2019AI.' : 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.',
+          // backlog:b139d83617f3: under the ceiling lock nothing «riparte
+          // quando riaccendi» — flipping is refused up there, so every
+          // paused switch says only that it is paused.
+          text: verdict.locked || !entry.enabled
+            ? 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.'
+            : 'In pausa: riparte acceso quando riaccendi l\u2019AI.',
           cls: 'bo-spazi-paused',
         }));
       }
       toggle.setAttribute('data-on', entry.enabled && !paused ? 'true' : 'false');
-      toggle.disabled = state.busy || paused;
+      // backlog:b139d83617f3: the locked master is not flippable — the flip
+      // would be refused by the ceiling, so no confirm opens for it.
+      toggle.disabled = state.busy || paused || (verdict.locked && entry.master === true);
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.switchRefusal = null;
@@ -1574,6 +1700,8 @@ export function createSpaziAccessiView(deps) {
         yes.disabled = state.busy;
         if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
+          let confirmed = null;
+          let keptMembers = null;
           try {
             await mutate('/api/space-permissions/set-permission', {
               spaceId: space.id,
@@ -1581,6 +1709,20 @@ export function createSpaziAccessiView(deps) {
               enabled: pending.to ? 'on' : 'off',
             });
             say(`\u00AB${entry.label}\u00BB ${pending.to ? 'accesa' : 'spenta'}.`);
+            // backlog:71a6574a: the 200 applied the flip — paint it now with
+            // live buttons; the refresh after it reconciles with the server.
+            // Review giro 1 (P2): the refresh clears the reads, so a click
+            // while the re-read is out painted «Permessi non disponibili.»
+            // instead of opening its confirm. The confirmed snapshot below
+            // paints until the GET lands; the server truth still wins.
+            applySwitchFlip(space.id, pending.key, pending.to);
+            confirmed = Array.isArray(state.overrides)
+              ? state.overrides.map((row) => ({ ...row }))
+              : null;
+            // backlog:71a6574a review giro 3 (P1): the team paints on while
+            // the flip re-read is out, like the confirmed switches above.
+            keptMembers = snapshotMembers();
+            render();
           } catch (error) {
             const failure = errorOf(error);
             // A server that cannot take the change right now (a 5xx with
@@ -1589,7 +1731,11 @@ export function createSpaziAccessiView(deps) {
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
             // One message, under the switch that failed; a toast only if it cannot show.
-            await reload();
+            // backlog:71a6574a review giro 3 (P1): the refused flip changed
+            // nothing, so the team in state is the truth to keep — only the
+            // overrides snapshot stays out (review P2, seguito).
+            keptMembers = snapshotMembers();
+            await reload({ keepMembers: keptMembers });
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
@@ -1597,7 +1743,7 @@ export function createSpaziAccessiView(deps) {
             return;
           }
           state.confirmFlip = null;
-          await refresh();
+          await refresh({ keepOverrides: confirmed, keepMembers: keptMembers });
           // backlog 3136d15da7bd: a flipped switch may be the space AI
           // master — the top AI bar re-reads it at once instead of naming
           // questions while the AI is off (or hiding that it is back on).
@@ -1700,7 +1846,7 @@ export function createSpaziAccessiView(deps) {
     }
   }
 
-  async function refresh({ skeleton = false } = {}) {
+  async function refresh({ skeleton = false, keepOverrides = null, keepMembers = null } = {}) {
     const mine = (generation += 1);
     const space = readActiveSpace().trim();
     // A space change drops the previous space's count before anything
@@ -1719,16 +1865,36 @@ export function createSpaziAccessiView(deps) {
     const readsClient = coalesceSpaceReads(client);
     const countRead = space !== '' ? loadFixCount(readsClient, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
+    if (Array.isArray(keepOverrides)) {
+      // Review giro 1 (P2): a write the 200 just confirmed keeps its
+      // snapshot while the re-read is out — a click then paints against
+      // confirmed values, never «Permessi non disponibili.». The GET in
+      // loadCore still replaces this with the server truth (or its error).
+      state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
+    if (Array.isArray(keepMembers)) {
+      // backlog:71a6574a review giro 3 (P1): same promise for the team — the
+      // just-painted rows stay in state while the re-read is out, never
+      // «Team non disponibile.». The membership GET in loadCore still
+      // replaces this with the server truth (or its error).
+      state.members = keepMembers.map((row) => ({ ...row }));
+    }
     const reads = hasSpace ? beginReads(space, readsClient) : null;
-    // A statistic that already landed paints as data, never as pending:
-    // the flag flips in the settlement turn, before the data paint below.
+    // Voce 785aeb28bd18: the card statistic starts only after the data below
+    // landed and painted — never beside the roster. The flag flips in the
+    // settlement turn, before the data paint below, so a statistic that
+    // already landed paints as data, never as pending.
     let statsDone = false;
-    if (reads !== null) {
-      reads.statsRead.then(
+    let stats = null;
+    const startStats = () => {
+      if (stats !== null || reads === null) return stats;
+      stats = beginStatReads(space, reads, readsClient);
+      stats.statsRead.then(
         () => { statsDone = true; },
         () => { statsDone = true; },
       );
-    }
+      return stats;
+    };
     // backlog:1a96094db71d: on entry the page paints at once — tabs,
     // header, space cards and a skeleton where team and AI switches will
     // be — instead of «Carico…» for the whole of the reads. A refresh after
@@ -1756,6 +1922,9 @@ export function createSpaziAccessiView(deps) {
     if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
     if (reads === null) return;
+    // Voce 785aeb28bd18: the second wave starts only now that the data is
+    // on screen — the roster never queued behind the card reads.
+    const statsNow = startStats();
     // The statistic fills its tiles and the card line late. A space move
     // meanwhile belongs to the newer refresh; a repaint with nothing new
     // to show would only steal focus.
@@ -1768,11 +1937,17 @@ export function createSpaziAccessiView(deps) {
     const paintedPending = state.statsPending;
     const statBefore = state.stats.get(space);
     const connsBefore = state.spaceConns.get(space);
-    await loadStats(reads);
+    if (statsNow !== null) await loadStats(statsNow);
     state.statsPending = false;
+    // backlog:71a6574a: the profile resolved with the stats above — the
+    // self row reads its name or mailbox when the roster leaves it bare.
+    const profileMember = profileMemberOf(statsNow !== null ? await statsNow.profileRead : null);
+    const profileChanged = (profileMember?.name ?? null) !== (state.profileMember?.name ?? null)
+      || (profileMember?.email ?? null) !== (state.profileMember?.email ?? null);
+    state.profileMember = profileMember;
     if (mine !== generation) return;
     if (space === '' || readActiveSpace().trim() !== space) return;
-    if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
+    if (!paintedPending && !profileChanged && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
     if (!sameNodes(childrenOf(), lastPaint)) return;
     render();
   }

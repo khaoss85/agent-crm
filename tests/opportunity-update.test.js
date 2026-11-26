@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
+import { MAX_OPPORTUNITY_VALUE_CENTS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 
 const ACTOR = { type: 'user', id: 'opportunity-update' };
@@ -109,6 +110,30 @@ test('update refuses an empty patch, unknown fields and bad values', async (t) =
   assert.equal(reread.owner, 'elena');
 });
 
+test('a value above the ceiling is refused on create and update, the ceiling itself passes (voce 05dac489)', async (t) => {
+  const { app, opportunity } = await fixture(t);
+  assert.equal(MAX_OPPORTUNITY_VALUE_CENTS, 100_000_000, 'the ceiling is 1.000.000 €');
+  for (const tooHigh of [MAX_OPPORTUNITY_VALUE_CENTS + 1, 99_999_999_999_900]) {
+    await assert.rejects(
+      app.services.opportunities.update(opportunity.id, { valueCents: tooHigh }, { actor: ACTOR }),
+      (error) => error?.code === 'VALIDATION_ERROR' && error?.status === 400,
+      `an update above the ceiling is refused (${tooHigh})`,
+    );
+    await assert.rejects(
+      app.services.opportunities.create({
+        companyId: opportunity.companyId, name: 'Pacchetto', valueCents: tooHigh, owner: 'elena',
+      }, { actor: ACTOR }),
+      (error) => error?.code === 'VALIDATION_ERROR' && error?.status === 400,
+      `a create above the ceiling is refused (${tooHigh})`,
+    );
+  }
+  const atCeiling = await app.services.opportunities.update(
+    opportunity.id, { valueCents: MAX_OPPORTUNITY_VALUE_CENTS }, { actor: ACTOR });
+  assert.equal(atCeiling.valueCents, MAX_OPPORTUNITY_VALUE_CENTS, 'the ceiling itself stores');
+  const reread = await app.services.opportunities.get(opportunity.id);
+  assert.equal(reread.valueCents, MAX_OPPORTUNITY_VALUE_CENTS, 'only the allowed edit wrote');
+});
+
 test('update on a missing record 404s', async (t) => {
   const { app } = await fixture(t);
   await assert.rejects(
@@ -129,6 +154,9 @@ test('PATCH /api/opportunities/:id edits and refuses unknown fields', async (t) 
 
   const unknown = await patch(baseUrl, opportunity.id, { stage: 'won' });
   assert.equal(unknown.status, 400);
+
+  const tooHigh = await patch(baseUrl, opportunity.id, { valueCents: 99_999_999_999_900 });
+  assert.equal(tooHigh.status, 400, 'the live 17/11 value is refused over HTTP (voce 05dac489)');
 
   const missing = await patch(baseUrl, '00000000-0000-0000-0000-000000000000', { owner: 'maria' });
   assert.equal(missing.status, 404);

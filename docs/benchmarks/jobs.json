@@ -493,12 +493,15 @@
       "id": "JTBD-CS-01",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-integrity.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
+      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-tamper-a.test.js, tests/signed-terms-tamper-b.test.js, tests/signed-terms-linkage.test.js, tests/signed-terms-anchor.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
         "tests/contracts-review.test.js",
+        "tests/signed-terms-anchor.test.js",
         "tests/signed-terms-e2e.test.js",
-        "tests/signed-terms-integrity.test.js"
+        "tests/signed-terms-linkage.test.js",
+        "tests/signed-terms-tamper-a.test.js",
+        "tests/signed-terms-tamper-b.test.js"
       ],
       "title": "Activate a commercial contract from a signed Order"
     },
@@ -755,7 +758,7 @@
       "id": "JTBD-DO-02",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "partially supported",
-      "summary": "deterministic matching under a versioned, fingerprinted policy (deterministic-customer-match@1) with three exact rules in a fixed precedence — external identity, contact email, company name + domain. An exact match reuses the existing record across source systems; ambiguity produces a duplicate-candidate carrying its rule, its evidence and the policy fingerprint, and the row is left unresolved for a person. The scenario earns this by *attempting* an ambiguous row and publishing that no tie was broken. Still partial: nothing fuzzy, phonetic, probabilistic or machine-learned exists, there is no score or threshold, no rule breaks a tie, and detection runs on import only — entering a record by hand through a service or action detects nothing",
+      "summary": "deterministic matching under a versioned, fingerprinted policy (deterministic-customer-match@2) with three exact rules in a fixed precedence — external identity, contact email, company name + domain. An exact match reuses the existing record across source systems; ambiguity produces a duplicate-candidate carrying its rule, its evidence and the policy fingerprint, and the row is left unresolved for a person. Since version 2 an exact email naming an archived or removed contact also stays unresolved with the contact as candidate. The scenario earns this by *attempting* an ambiguous row and publishing that no tie was broken. Still partial: nothing fuzzy, phonetic, probabilistic or machine-learned exists, there is no score or threshold, no rule breaks a tie, and detection runs on import only — entering a record by hand through a service or action detects nothing",
       "tests": [],
       "title": "Detect duplicates on import or entry"
     },
@@ -1476,10 +1479,14 @@
       "id": "JTBD-PK-05",
       "section": "Package developer (Custom Package Authoring v1, M13)",
       "status": "validated end to end",
-      "summary": "accordo package scaffold <name> --apply creates, atomically, a minimal, empty local package — two files, an identity and five empty declarations — dry-run by default, and the result passes package validate, package inspect and package test with no manual edit (tests/package-scaffold.test.js → \"freshly scaffolded output passes validate, inspect and test with no manual edit\"; tests/package-test-command.test.js; docs/plans/dx3-package-scaffold.md). In the same breath, each published as its own limitation code: it invents no business logic — no record, action, policy, provider, capability, Admin section, Solution Plan or MCP tool (NO_DOMAIN_SEMANTICS); it performs no automatic composition — the one import into packages/domains/generated/index.js stays a human's deliberate edit (NO_COMPOSITION); it does no global identity-uniqueness verification — only the target directory is checked, and a duplicate identity is refused later by the registry at startup (IDENTITY_UNIQUENESS_NOT_CHECKED); and it does no remote installation or publication — nothing is downloaded, installed, signed, published or registered anywhere (NO_INSTALL_OR_PUBLISH). Conformance is not correctness: the output satisfies the framework contract and models no domain (CONFORMANCE_IS_NOT_CORRECTNESS)",
+      "summary": "accordo package scaffold <name> --apply creates, atomically, a minimal, empty local package — two files, an identity and five empty declarations — dry-run by default, and the result passes package validate, package inspect and package test with no manual edit (tests/package-scaffold.test.js → \"freshly scaffolded output passes validate, inspect and test with no manual edit\"; tests/package-test-command-1.test.js; tests/package-test-command-2.test.js; tests/package-test-command-3.test.js; tests/package-test-command-4.test.js; tests/package-test-command-5.test.js; docs/plans/dx3-package-scaffold.md). In the same breath, each published as its own limitation code: it invents no business logic — no record, action, policy, provider, capability, Admin section, Solution Plan or MCP tool (NO_DOMAIN_SEMANTICS); it performs no automatic composition — the one import into packages/domains/generated/index.js stays a human's deliberate edit (NO_COMPOSITION); it does no global identity-uniqueness verification — only the target directory is checked, and a duplicate identity is refused later by the registry at startup (IDENTITY_UNIQUENESS_NOT_CHECKED); and it does no remote installation or publication — nothing is downloaded, installed, signed, published or registered anywhere (NO_INSTALL_OR_PUBLISH). Conformance is not correctness: the output satisfies the framework contract and models no domain (CONFORMANCE_IS_NOT_CORRECTNESS)",
       "tests": [
         "tests/package-scaffold.test.js",
-        "tests/package-test-command.test.js"
+        "tests/package-test-command-1.test.js",
+        "tests/package-test-command-2.test.js",
+        "tests/package-test-command-3.test.js",
+        "tests/package-test-command-4.test.js",
+        "tests/package-test-command-5.test.js"
       ],
       "title": "Scaffold a new package from a template"
     },

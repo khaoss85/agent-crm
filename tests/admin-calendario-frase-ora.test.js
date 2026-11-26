@@ -173,7 +173,7 @@ test('a name outside the team never filters the slots (backlog:913c61ec)', async
   assert.deepEqual(suggestCalls(client), [], '«Guido» never travels as teamMemberIds');
   assert.equal(mount.querySelector('.cal-slots'), null, 'no invented free slots');
   assert.equal(ghosts(mount).length, 0);
-  assert.ok(mount.textContent.includes('Guido non è nel team'), mount.textContent);
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), mount.textContent);
   assert.equal(field(mount, 'end').value, '15:30', 'the form still carries the draft hours');
   assert.ok(button(mount, 'Annulla'), 'and the draft can be closed');
 });
@@ -252,7 +252,7 @@ test('a name outside the team leaves «Persona del team» empty', async () => {
   const client = phraseClient({ roster: [ROSTER[1]] });
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
   await askPhrase(view, mount);
-  assert.ok(mount.textContent.includes('Guido non è nel team'), mount.textContent);
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), mount.textContent);
   assert.ok(mount.querySelector('select[name="teamMemberId"]'), 'the person stays a choice among the team');
   assert.equal(personValue(mount), '', 'never prefilled with the outsider name');
   assert.equal(field(mount, 'end').value, '15:30', 'the draft hours still fill the form');
@@ -270,6 +270,6 @@ test('a name outside the team keeps the person the operator had chosen', async (
   person.value = 'google|sara';
   person.dispatch('change');
   await askPhrase(view, mount);
-  assert.ok(mount.textContent.includes('Guido non è nel team'), mount.textContent);
+  assert.ok(mount.textContent.includes('Dalla frase non capisco la persona'), mount.textContent);
   assert.equal(personValue(mount), 'google|sara', 'the operator choice stays');
 });

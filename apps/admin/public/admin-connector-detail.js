@@ -35,7 +35,7 @@
 import { NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
-import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, DIRECTION_BY_CHANNEL, connectorStatus, directionOf, matchAdapters, matchConnections, readConnectorListSnapshot, snapshotCoversSpace } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -533,20 +533,45 @@ export function createConnectorDetailView(deps) {
     return state.spaceId;
   };
 
+  // The list (`#/connettori`) already read adapters+rows for this space:
+  // reuse them so a warm open skips two of its reads (backlog:9a1c9a94).
+  // Tests inject `listSnapshot` (object or thunk); the page uses the module
+  // snapshot the list view stored. A space mismatch means a cold open.
+  const snapshotOf = () => {
+    try {
+      if (typeof deps.listSnapshot === 'function') return deps.listSnapshot();
+      if (deps.listSnapshot !== null && typeof deps.listSnapshot === 'object') return deps.listSnapshot;
+      return readConnectorListSnapshot();
+    } catch {
+      return null;
+    }
+  };
+
   async function load() {
     refreshSpace();
     state.loaded = false;
     state.loadError = null;
-    let schema;
-    try {
-      schema = await client.request('/api/schema');
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
+    const spaceId = state.spaceId.trim();
+    const snap = snapshotOf();
+    // Codex P2 on #1062: a warm open reuses only a fresh snapshot for this
+    // space — an expired or undated one re-reads, so a connection revoked
+    // or synced elsewhere shows its current state.
+    const warm = snapshotCoversSpace(snap, spaceId);
+    if (warm) {
+      state.channelsReady = true;
+      state.adapters = snap.adapters;
+    } else {
+      let schema;
+      try {
+        schema = await client.request('/api/schema');
+      } catch (error) {
+        state.loadError = errorOf(error);
+        return;
+      }
+      const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
+      state.channelsReady = Boolean(meta && meta.channelsContract === 1);
+      state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     }
-    const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-    state.channelsReady = Boolean(meta && meta.channelsContract === 1);
-    state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     state.units = null;
     state.catalogError = null;
     try {
@@ -559,14 +584,21 @@ export function createConnectorDetailView(deps) {
       state.units = null;
       state.catalogError = errorOf(error);
     }
-    if (!state.channelsReady || state.spaceId.trim() === '') return;
-    try {
-      const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(state.spaceId.trim())}`);
-      state.entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
+    if (!state.channelsReady || spaceId === '') return;
+    if (warm && Array.isArray(snap.entries)) {
+      state.entries = snap.entries;
       state.loaded = true;
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
+      // The grants still merge from the activity payload below, like the
+      // cold open: the snapshot carries only what the list read.
+    } else {
+      try {
+        const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`);
+        state.entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
+        state.loaded = true;
+      } catch (error) {
+        state.loadError = errorOf(error);
+        return;
+      }
     }
     // The profile links merge like the shared count (review #782 P1): the
     // Email detail reuses the Google card's read, any other reads it once.

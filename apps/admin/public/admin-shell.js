@@ -5,6 +5,7 @@ import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F
 import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
 import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { buildTeamRows, duplicateTeamHints } from './admin-labels.js'; // backlog:6563edf41aab (d): the Impostazioni count reads the same team rows the Spazi view paints.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -52,6 +53,9 @@ export const SHELL_ITEMS = Object.freeze([
   // (Dan 11/11) gives Sequenze its voice back when the sequences module is
   // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
+  // backlog:0d2d8f2e puts «Squadre» in the sidebar: the teams of agents
+  // with their backlog A, backlog B, routines and advisor metric.
+  { id: 'squadre', label: 'Squadre', group: 'native', route: null, story: 'backlog:0d2d8f2e', icon: 'squadre' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
   // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
@@ -98,6 +102,14 @@ export const SETTINGS_AREAS = Object.freeze([
  */
 export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
 
+/**
+ * Reason shown by every schema-driven voice while the space's schema has
+ * not been read yet (backlog:312dd81f83ba, ritorno 1): the menu waits
+ * instead of claiming «non composto in questo spazio» for a space it has
+ * not seen. A space known to lack the package keeps the reason above.
+ */
+export const SCHEMA_LOADING_REASON = 'Spazio in caricamento…';
+
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
   oggi: 'Chiedi: «cosa è più urgente oggi?»',
@@ -115,7 +127,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   'stato-sync': 'Chiedi: «c\u2019è qualcosa che non si è sincronizzato?»',
 });
 
-export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
+// backlog:dd6a01de569b: no ⌘K here — the fallback also paints on unknown
+// pages at 390px, where no keyboard exists. Desktop keeps the kbd hint.
+export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa…';
 
 /**
  * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
@@ -172,6 +186,56 @@ export function settingsBadge(fixCount) {
 export function clientBadge(count, exact = true) {
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return '';
   return exact === false ? `${count}+` : String(count);
+}
+
+/**
+ * Ceiling for reads flying together through the shared app queue
+ * (backlog:e1b3d56730fa): the same pilot bound Oggi already keeps
+ * (OGGI_MAX_IN_FLIGHT in admin-oggi.js) — one bound for the app, never a
+ * new one per screen.
+ */
+export const SHELL_MAX_IN_FLIGHT = 6;
+
+/**
+ * One shared queue for every read behind a client: the wrapped client runs
+ * at most `max` requests at once, the rest wait their turn. Fail-soft like
+ * before — a refused read still rejects to its own caller, and the queue
+ * keeps flowing. The page waves and the shell counters share the one
+ * instance in app.js, so the total in-flight peak stays within
+ * SHELL_MAX_IN_FLIGHT (backlog:e1b3d56730fa). Same shape as createReadGate
+ * in admin-oggi.js (MEM_ACC_REUSE): Oggi keeps its per-load instance, the
+ * app-wide one lives here.
+ * @param {{ request: (path: string, options?: any) => Promise<any> }} client
+ * @param {number} [max]
+ */
+export function createReadGate(client, max = SHELL_MAX_IN_FLIGHT) {
+  let flying = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
+  const pump = () => {
+    while (flying < max && waiting.length > 0) {
+      const next = waiting.shift();
+      flying += 1;
+      next();
+    }
+  };
+  return {
+    ...client,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        waiting.push(() => {
+          Promise.resolve()
+            .then(() => client.request(path, options))
+            .then(resolve, reject)
+            .finally(() => {
+              flying -= 1;
+              pump();
+            });
+        });
+        pump();
+      });
+    },
+  };
 }
 
 /**
@@ -241,6 +305,49 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
 }
 
 /**
+ * Count the possible team duplicates the Spazi e accessi screen paints for
+ * the same roster (`GET /api/spine/memberships`): the same painted rows
+ * (`buildTeamRows`) through the same hints (`duplicateTeamHints`), so the
+ * Impostazioni count and the screen never disagree. A failed or shapeless
+ * read counts 0 instead of failing the badge — the screen shows its own
+ * honest note for that half.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @param {{ spaceId?: unknown }} [options] the selected workspace, for the
+ * diagnostic line — the team itself is one per organization.
+ * @returns {Promise<number>}
+ */
+export async function loadTeamDuplicateCount(client, options = {}) {
+  // Review #1066 P2: a swallowed team failure must name the workspace scope
+  // like the sync half does — the team is org-wide, so an unknown space
+  // reads as the organization, never as a missing scope.
+  const scope = typeof options?.spaceId === 'string' && options.spaceId.trim() !== ''
+    ? options.spaceId.trim()
+    : 'organizzazione';
+  try {
+    const membersRead = await client.request('/api/spine/memberships');
+    if (!Array.isArray(membersRead?.items)) {
+      try {
+        console.warn('bo-shell team count unreadable: shapeless memberships', `spaceId=${scope}`);
+      } catch {
+        // Logging must never break the badge read.
+      }
+      return 0;
+    }
+    return duplicateTeamHints(buildTeamRows(membersRead.items)).length;
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name and the workspace scope are logged —
+    // never record bodies, cookies or personal data here.
+    try {
+      console.warn('bo-shell team count unreadable:', error instanceof Error ? error.name : 'unknown', `spaceId=${scope}`);
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return 0;
+  }
+}
+
+/**
  * Read the real fix count for the badge. Returns null (unknown) when the
  * customer-data package is not composed or a read fails: an unknown count
  * must never light the badge, and it must never render as "none" either.
@@ -249,6 +356,11 @@ export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_
  * read from the same activity payload); a failed or uncomposed sync read
  * keeps the quality count instead of failing the badge — the screen shows
  * its own honest note for that half.
+ * The team is one per organization, not per space, so the count always
+ * adds the possible team duplicates the Spazi e accessi screen paints
+ * (backlog:6563edf41aab): the same roster, the same rows, the same hints.
+ * A failed or shapeless team read keeps the base count instead of failing
+ * the badge — the screen shows its own honest note for that half.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ spaceId?: unknown }} [options]
  * @returns {Promise<number | null>}
@@ -260,8 +372,9 @@ export async function loadFixCount(client, options = {}) {
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
-    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
     const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
+    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items })
+      + await loadTeamDuplicateCount(client, { spaceId });
     if (spaceId === '') return base;
     try {
       const activity = await client.request(
@@ -384,8 +497,26 @@ export function mergeSpaces(primary, secondary) {
 }
 
 /**
+ * Canonical space order (backlog:8e1092b95c8a): spaces sorted by id, so the
+ * menu numbers (⌘N), the de-duplicated initials and the ⌘1/2/3 shortcuts all
+ * read from the same order no matter which source listed the spaces first.
+ * The same space keeps the same number and initials in every menu render.
+ * @param {unknown} spaces
+ */
+export function canonicalSpaceOrder(spaces) {
+  const list = Array.isArray(spaces) ? [...spaces] : [];
+  list.sort((left, right) => {
+    const a = left != null && typeof left.id === 'string' ? left.id : '';
+    const b = right != null && typeof right.id === 'string' ? right.id : '';
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return list;
+}
+
+/**
  * Resolve a ⌘1/2/3 (or Ctrl+1/2/3) keypress to a space id among the user's
- * spaces. Anything else — no modifier, another key, out of range — is null.
+ * spaces, in canonical order (see `canonicalSpaceOrder`). Anything else —
+ * no modifier, another key, out of range — is null.
  * @param {{ metaKey?: boolean, ctrlKey?: boolean, key?: string }} event
  * @param {Array<{ id: string }>} spaces
  */
@@ -393,9 +524,10 @@ export function resolveSpaceShortcut(event, spaces) {
   if (event == null || (event.metaKey !== true && event.ctrlKey !== true)) return null;
   const key = event.key;
   if (typeof key !== 'string' || !/^[1-9]$/.test(key)) return null;
+  const ordered = canonicalSpaceOrder(spaces);
   const index = Number(key) - 1;
-  if (!Array.isArray(spaces) || index < 0 || index >= spaces.length) return null;
-  const target = spaces[index];
+  if (index < 0 || index >= ordered.length) return null;
+  const target = ordered[index];
   return target != null && typeof target.id === 'string' ? target.id : null;
 }
 
@@ -420,21 +552,21 @@ export function spaceInitialsFor(name) {
 
 /**
  * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
- * each readable with white text (WCAG AA, ratios in styles.css next to
- * the `.bo-space-badge--pN` rules). The palette fits in one screen of
- * CSS instead of one rule per hue.
+ * each readable with the paper text (WCAG AA >= 4.5:1, ratios in
+ * styles.css next to the `.bo-space-badge--pN` rules). The palette fits
+ * in one screen of CSS instead of one rule per hue.
  */
 const SPACE_BADGE_PALETTE = [
   { h: 0, s: 60, l: 42 },
-  { h: 23, s: 60, l: 42 },
-  { h: 45, s: 60, l: 34 },
-  { h: 68, s: 60, l: 30 },
-  { h: 90, s: 60, l: 32 },
-  { h: 113, s: 60, l: 33 },
-  { h: 135, s: 60, l: 33 },
-  { h: 158, s: 60, l: 32 },
-  { h: 180, s: 60, l: 32 },
-  { h: 203, s: 60, l: 42 },
+  { h: 23, s: 60, l: 40 },
+  { h: 45, s: 60, l: 31 },
+  { h: 68, s: 60, l: 27 },
+  { h: 90, s: 60, l: 29 },
+  { h: 113, s: 60, l: 30 },
+  { h: 135, s: 60, l: 30 },
+  { h: 158, s: 60, l: 30 },
+  { h: 180, s: 60, l: 29 },
+  { h: 203, s: 60, l: 39 },
   { h: 225, s: 60, l: 42 },
   { h: 248, s: 60, l: 42 },
   { h: 270, s: 60, l: 42 },
@@ -508,7 +640,8 @@ export function spaceSwitcherLabel(spaces) {
 }
 
 /**
- * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
+ * Space-menu rows with the ⌘N hint, in canonical id order
+ * (backlog:8e1092b95c8a). Only the first nine spaces
  * get a hint; the rest render without one. Display initials never repeat
  * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
@@ -524,7 +657,9 @@ export function spaceSwitcherLabel(spaces) {
  * @param {Array<string> | null} [memberIds] ids the session profile names
  */
 export function spaceMenuItems(spaces, activeId, memberIds = null) {
-  const list = Array.isArray(spaces) ? spaces : [];
+  // backlog:8e1092b95c8a: canonical order, so number and initials never
+  // depend on which source listed the spaces first.
+  const list = canonicalSpaceOrder(spaces);
   const seen = new Set();
   const memberSet = memberIds == null ? null : new Set(
     (Array.isArray(memberIds) ? memberIds : []).filter((id) => typeof id === 'string'),
@@ -568,12 +703,16 @@ export function spaceMenuItems(spaces, activeId, memberIds = null) {
  * write the space's agents and sequences — left alone they would keep the
  * space just left behind. Calendario too (review #664): its week and its
  * queued phrase search belong to one space.
+ * Voce 5fc6709109fa: the dashboard is Oggi, the most space-scoped screen
+ * of all — after Cambia spazio it re-reads the new space in place instead
+ * of keeping the space just left behind. Unmounted the dashboard is the
+ * framework demo, so re-routing it is a no-op paint.
  * @param {unknown} view the routed view id
  * @param {{ mounted?: boolean }} [options]
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
-  if (view === 'dashboard') return mounted === true;
-  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
+  if (view === 'dashboard') return true;
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'squadre' || view === 'sequenze' || view === 'calendario';
 }
 
 /**
@@ -589,12 +728,40 @@ export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
  * Agenti only when the agents package is composed (agentsAvailable).
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean }} input
+ * Squadre only when the same package serves squads (squadsAvailable).
+ * `schemaKnown: false` while the space's schema has not been read yet:
+ * every voice the schema drives waits with the loading reason instead of
+ * claiming the package is missing (backlog:312dd81f83ba, ritorno 1).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, schemaKnown?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, schemaKnown = true } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
+  if (schemaKnown !== false) {
+    return buildKnownShellNav({ pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, firstPipeline });
+  }
+  // The schema has not answered yet: schema-driven voices wait. Voices that
+  // need no schema (Oggi, Calendario, Reporting…) keep their shape, and
+  // Sequenze stays out until the schema says it is composed.
+  const items = SHELL_ITEMS.map((item) => {
+    if (item.id === 'clienti' || item.id === 'pipeline' || item.id === 'agenti' || item.id === 'squadre' || item.id === 'sequenze') {
+      return { ...item, route: null, available: false, disabledReason: SCHEMA_LOADING_REASON };
+    }
+    if (item.route === null) {
+      return { ...item, available: false, disabledReason: `In arrivo con ${item.story}` };
+    }
+    return { ...item, available: true, disabledReason: '' };
+  });
+  return items;
+}
+
+/**
+ * Build the sidebar model from a schema already read: generated modules are
+ * the "personalizzati" group, the first composed pipeline backs Pipeline.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean, squadsAvailable?: boolean, firstPipeline?: { name?: unknown, label?: unknown } }} input
+ */
+function buildKnownShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false, squadsAvailable = false, firstPipeline = null } = {}) {
   const items = SHELL_ITEMS.map((item) => {
     if (item.id === 'clienti') {
       if (customerDataAvailable) {
@@ -613,6 +780,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: '#/agenti', available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
+    }
+    if (item.id === 'squadre') {
+      if (squadsAvailable) {
+        return { ...item, route: '#/squadre', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'Squadre non attive in questo spazio' };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
@@ -931,7 +1104,10 @@ export function createShellView({
           link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
         } else {
           // backlog:b76770f82fe9: same reserved room for the fix count.
-          const empty = el(doc, 'span', 'bo-badge is-empty', '0');
+          // backlog:acd136b3cd5d: the placeholder carries no «0» text — the
+          // room stays reserved by the badge's own min-width, and the link's
+          // accessible name reads exactly «Impostazioni».
+          const empty = el(doc, 'span', 'bo-badge is-empty', '');
           empty.setAttribute('aria-hidden', 'true');
           link.appendChild(empty);
         }
@@ -959,7 +1135,7 @@ export function createShellView({
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
     const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
-      line: 'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato' });
+      line: 'Descrivi il modulo con parole tue: ti faccio io le domande giuste' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {
@@ -1342,10 +1518,13 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     unknown
       // backlog:1d33b335fba0: say what was not read, in plain words, with
       // a way to try again — never «leggerle» with nothing it refers to.
+      // backlog:6563edf41aab: singular agrees — «1 cosa», never «1 cose».
       ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
-        : `${badgeText} cose da sistemare (vedi Stato sync).`,
+        : fixCount === 1
+          ? '1 cosa da sistemare (vedi Stato sync).'
+          : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
   panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {
@@ -1398,13 +1577,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         navigate(area.route);
       });
-      row.appendChild(link);
       // BO-F0-03: the Stato sync tab carries the badge with the real
       // "things to fix" count — the same text as the sidebar badge, so it
-      // is absent at zero and when the count is unknown.
+      // is absent at zero and when the count is unknown. Restyle
+      // 454f1189ff97: the badge sits before «Apri», so «Apri» stays at the
+      // right edge like on every other row.
       if (area.id === 'stato-sync' && badgeText !== '') {
         row.appendChild(el(doc, 'span', 'bo-badge', badgeText));
       }
+      row.appendChild(link);
     } else {
       row.appendChild(el(doc, 'span', 'bo-setting-coming', `In arrivo con ${area.story}`));
     }
@@ -1501,6 +1682,7 @@ export function shellScreenFor(target) {
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'squadre': return { id: 'squadre', label: 'Squadre' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':
