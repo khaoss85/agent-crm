@@ -1022,6 +1022,31 @@ test('766e9cf9469e: with the AI off, failing or empty the computed fallback stay
   }
 });
 
+// Review Muse rev-agent-crm-1163-abb9b6b317dc (P2, backlog:766e9cf9469e):
+// a rejected summary request is never silent — name/status/code go to the
+// injected log — while resolved fallbacks (off/empty/unparseable) stay
+// silent. The header keeps the computed fallback in every case.
+test('766e9cf9469e: a failing summary request logs, resolved fallbacks stay silent', async () => {
+  for (const [name, summary, logged] of [
+    ['off', { lines: null, reason: 'ai-disabled' }, false],
+    ['empty period', { lines: null, reason: 'empty' }, false],
+    ['unparseable', { lines: null, reason: 'unparseable' }, false],
+    ['network failure', new Error('boom'), true],
+  ]) {
+    const { mount, view, logLines } = harness({ summary });
+    await view.renderReporting();
+    await tick();
+    const lines = summaryLinesOf(mount);
+    assert.ok(lines.includes('28 nuovi clienti in 4 settimane, soprattutto da Instagram.'),
+      `${name}: the computed fallback stays`);
+    assert.equal(
+      logLines.some(([message]) => message === 'reporting summary request failed'),
+      logged,
+      `${name}: the failure is ${logged ? 'logged' : 'silent'}`,
+    );
+  }
+});
+
 test('766e9cf9469e: periodo/persona change refetches the two lines', async () => {
   const first = ['Prima risposta con 28 clienti.', 'Confronto con 5 contro 9.'];
   const second = ['Seconda risposta con 7 clienti.', 'Confronto con 3 contro 4.'];

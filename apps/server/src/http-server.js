@@ -113,29 +113,32 @@ export function isResponseEnvelope(value) {
  */
 export function reportingSummaryFacts(model) {
   const integers = [];
-  const integer = (value) => {
-    if (Number.isSafeInteger(value)) integers.push(value);
-    return Number.isSafeInteger(value) ? value : 0;
-  };
+  // Review Muse rev-agent-crm-1163-abb9b6b317dc (P2): the allowlist holds
+  // ONLY integers the text renders — count() never pushes, each push below
+  // sits next to the line that renders the number. A bare 0 with no textual
+  // occurrence must never land here, or a hallucinated '0 preventivi'
+  // passes the digit check.
+  const count = (value) => (Number.isSafeInteger(value) ? value : 0);
   const text = [];
   const channels = model?.channels ?? {};
   const weeks = Array.isArray(channels.weeks) ? channels.weeks : [];
   const entries = Array.isArray(channels.channels) ? channels.channels : [];
-  const total = integer(channels.total);
+  const total = count(channels.total);
   const top = entries.reduce((best, entry) => (
     (Number.isSafeInteger(entry?.total) ? entry.total : 0) > (Number.isSafeInteger(best?.total) ? best.total : 0)
       ? entry
       : best
   ), entries[0] ?? null);
   if (total > 0 && entries.length > 0) {
+    const topRendered = top !== null && Number.isSafeInteger(top?.total) && top.total > 0;
     text.push(
       `Nuovi clienti: ${total} in ${weeks.length} ${weeks.length === 1 ? 'settimana' : 'settimane'}`
-      + `${top !== null && Number.isSafeInteger(top?.total) && top.total > 0 ? `, canale principale ${top.channel} (${top.total})` : ''}.`,
+      + `${topRendered ? `, canale principale ${top.channel} (${top.total})` : ''}.`,
     );
     // Review Muse rev-agent-crm-1163-abb9b6b317dc (P1): weeks.length is
     // rendered above, so it belongs to the allowlist too.
-    integers.push(weeks.length);
-    if (Number.isSafeInteger(top?.total)) integers.push(top.total);
+    integers.push(total, weeks.length);
+    if (topRendered) integers.push(top.total);
     if (weeks.length >= 2) {
       const totals = weeks.map((_, index) => entries.reduce((sum, entry) => {
         const value = entry?.weeks?.[index];
@@ -146,13 +149,14 @@ export function reportingSummaryFacts(model) {
     }
   }
   const team = Array.isArray(model?.team) ? model.team : [];
-  const openCount = team.reduce((sum, entry) => sum + integer(entry?.openCount), 0);
-  const wonCount = team.reduce((sum, entry) => sum + integer(entry?.wonCount), 0);
-  const lostCount = team.reduce((sum, entry) => sum + integer(entry?.lostCount), 0);
+  const openCount = team.reduce((sum, entry) => sum + count(entry?.openCount), 0);
+  const wonCount = team.reduce((sum, entry) => sum + count(entry?.wonCount), 0);
+  const lostCount = team.reduce((sum, entry) => sum + count(entry?.lostCount), 0);
   const currency = typeof model?.currency === 'string' ? model.currency : 'EUR';
   if (openCount + wonCount + lostCount > 0) {
     const openMinor = team.reduce((sum, entry) => sum + (Number.isSafeInteger(entry?.openMinor) ? entry.openMinor : 0), 0);
     if (team.some((entry) => Number.isSafeInteger(entry?.openMinor))) integers.push(openMinor);
+    integers.push(openCount, wonCount, lostCount);
     text.push(`Preventivi aperti: ${openCount} (${openMinor} ${currency}); vinte: ${wonCount}; perse: ${lostCount}.`);
   }
   const forecast = model?.forecast ?? null;

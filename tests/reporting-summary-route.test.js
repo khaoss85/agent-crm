@@ -198,6 +198,35 @@ test('the facts allowlist covers the rendered forecast sum (P1 repro)', () => {
   );
 });
 
+// Review Muse rev-agent-crm-1163-abb9b6b317dc (P2, backlog:766e9cf9469e):
+// the allowlist holds ONLY integers the text renders. Red before the fix:
+// integer() pushed every team count — including zeros no line mentions —
+// so a hallucinated '0 preventivi' passed the digit check on a period
+// whose team counts are all zero.
+test('the facts allowlist holds no number the text never renders (P2)', () => {
+  const { facts } = reportingSummaryFacts({
+    channels: {
+      total: 16,
+      weeks: [0, 0, 0, 0, 0],
+      channels: [{ channel: 'instagram', total: 16, weeks: [0, 0, 0, 7, 9] }],
+    },
+    team: [{ owner: 'alice', openCount: 0, wonCount: 0, lostCount: 0 }],
+    forecast: null,
+    currency: 'EUR',
+  });
+  assert.ok(!facts.integers.includes(0), 'no team line, no bare 0 in the allowlist');
+  const said = facts.text.join(' ');
+  for (const n of facts.integers) {
+    assert.ok(said.includes(String(n)), `allowlisted ${n} is rendered in the facts text`);
+  }
+});
+
+test('an empty model renders no facts and allowlists nothing (P2)', () => {
+  const { facts } = reportingSummaryFacts({});
+  assert.deepEqual(facts.text, []);
+  assert.deepEqual(facts.integers, []);
+});
+
 test('with channel data the route accepts a faithful echo of the weeks count (P1 repro)', async (t) => {
   const { app, baseUrl } = await summaryServer(t);
   // October 2026 spans five Monday weeks (28 set, 5, 12, 19, 26 ott): the

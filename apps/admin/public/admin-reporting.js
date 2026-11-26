@@ -1135,12 +1135,18 @@ export function createReportingView(deps) {
           for (const text of answer.lines) {
             summaryHost.appendChild(el(doc, 'p', { text }));
           }
-        }).catch(() => {
-          // backlog:766e9cf9469e: the AI lines are best-effort — a failing,
-          // capped or disabled summary keeps the computed fallback silently.
-          // Logging here would double-count a dashboard/records failure the
-          // screen already logs (or invent an error on a 404 that is honest
-          // setup state), so the catch stays silent by contract.
+        }).catch((error) => {
+          // backlog:766e9cf9469e: the AI lines are best-effort — a failing
+          // summary keeps the computed fallback above, never an error state.
+          // But the failure is never silent (review Muse
+          // rev-agent-crm-1163-abb9b6b317dc P2, AGENTS.md: a swallowed
+          // exception without logging the cause blocks): name/status/code go
+          // to the injected log — never the body — so on-call can tell
+          // 'AI off' from 'summary route broken'.
+          const cause = error && typeof error === 'object'
+            ? { name: error.name ?? 'Error', status: error.status ?? null, code: error.code ?? null }
+            : { name: 'Error', status: null, code: null };
+          log('reporting summary request failed', cause);
         });
       }
     }
