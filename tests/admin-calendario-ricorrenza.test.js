@@ -89,6 +89,13 @@ async function settle(rounds = 14) {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
+/** Il profilo che dice esplicitamente «Google non collegato»: solo così la serie parte. */
+const NOT_LINKED = { member: null, connections: { available: true, items: [] } };
+
+function notLinkedClient() {
+  return stubClient({ profile: NOT_LINKED });
+}
+
 async function openCalendar(client = null) {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -134,7 +141,7 @@ test('ricorrenza: il form ha «Si ripete» con Non si ripete predefinito e le et
 });
 
 test('ricorrenza: «Ogni settimana» manda la regola nella claim, senza scelta manda null', async () => {
-  const { mount, client } = await openCalendar();
+  const { mount, client } = await openCalendar(notLinkedClient());
   openManual(mount);
   await pickCustomerByName(mount, 'Ada');
   const fill = (name, value) => { byName(mount, name).value = value; byName(mount, name).dispatch('input'); };
@@ -159,7 +166,7 @@ test('ricorrenza: «Ogni settimana» manda la regola nella claim, senza scelta m
 });
 
 test('ricorrenza: la fine della serie è scritta sotto «Si ripete» prima di Conferma', async () => {
-  const { mount } = await openCalendar();
+  const { mount } = await openCalendar(notLinkedClient());
   openManual(mount);
   const none = mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'recurrence-end-note');
   assert.equal(none.length, 0, '«Non si ripete» non promette nessuna serie');
@@ -191,6 +198,34 @@ test('ricorrenza: senza scelta la claim manda recurrence null', async () => {
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(confirms[0].body.recurrence, null, '«Non si ripete» manda null');
+});
+
+test('repro 0f2ae629 P2-2748: con calendario ignoto «Si ripete» è disattivato e Conferma non manda serie', async () => {
+  // Profilo illeggibile (stub di default): lo stato resta null, la serie non parte.
+  const { mount, client } = await openCalendar();
+  openManual(mount);
+  const select = byName(mount, 'recurrence');
+  assert.ok(select, 'la scelta «Si ripete» c’è anche con stato ignoto');
+  assert.equal(select.value, 'none', 'resta su «Non si ripete»');
+  assert.equal(select.getAttribute('disabled'), 'disabled', 'le opzioni sono disattivate finché il profilo non conferma');
+  const note = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'recurrence-linked-note');
+  assert.ok(note, 'la riga dice perché');
+  await pickCustomerByName(mount, 'Ada');
+  const fill = (name, value) => { byName(mount, name).value = value; byName(mount, name).dispatch('input'); };
+  fill('date', '2026-11-17');
+  fill('start', '17:00');
+  fill('end', '18:00');
+  const person = byName(mount, 'teamMemberId');
+  person.value = person.findAll('option').find((node) => node.getAttribute('value') !== '').getAttribute('value');
+  person.dispatch('change');
+  const service = byName(mount, 'serviceKey');
+  service.value = 'taglio';
+  service.dispatch('change');
+  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await settle();
+  const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(confirms.length, 1, 'Conferma scrive una volta');
+  assert.equal(confirms[0].body.recurrence, null, 'con stato ignoto il form non manda mai una serie');
 });
 
 test('ricorrenza: con Google collegato «Si ripete» è disattivato e Conferma non manda serie', async () => {

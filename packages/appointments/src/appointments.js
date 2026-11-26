@@ -560,7 +560,13 @@ async function refuseHeldSlot(context, input) {
   const appointments = flowAppointments(context, names);
   const same = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0] ?? null;
   if (same) return;
-  const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  // Like bookSeries: a series' own committed rows never block it, so a
+  // retried confirm replays instead of 409ing on its own head. Singles
+  // keep the exact old read: no row is ever skipped for them.
+  const heldAll = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  const held = input.recurrence !== null && typeof input.sourceKey === 'string'
+    ? heldAll.filter((row) => !row || row.seriesKey !== input.sourceKey)
+    : heldAll;
   const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
   const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
     [...held, ...blocks]);
@@ -2827,6 +2833,28 @@ export async function confirmBooking(context, request) {
   // switch, like proposeBooking — a confirm over a held slot refuses 409
   // instead of opening a proposal for an impossible slot.
   await refuseHeldSlot(context, input);
+  // backlog:0f2ae629e09b — a series confirms every occurrence or nothing:
+  // like proposeBooking, confirm checks the whole series (not just the
+  // head) before the permission gate, so a tail-busy series 409s instead
+  // of recording a proposal for a series that can never book.
+  if (input.recurrence !== null) {
+    const seriesSlots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+    assertSeriesNonEmpty(seriesSlots);
+    assertSeriesHeadSlot(input, seriesSlots);
+    const preGateAppointments = flowAppointments(context, { appointment: context?.moduleNames?.appointment ?? 'appointment' });
+    // Like bookSeries: the series' own committed rows never block it, so a
+    // retried confirm replays instead of 409ing on its own occurrences.
+    const preGateHeld = (await preGateAppointments.listWhere({ teamMemberId: input.teamMemberId }))
+      .filter((row) => !row || row.seriesKey !== input.sourceKey);
+    const preGateBlocks = await ownerBlocksFor(
+      context.calendarSync,
+      input.teamMemberId,
+      seriesSlots[0].startsAt,
+      seriesSlots[seriesSlots.length - 1].endsAt,
+    );
+    const preGateHit = seriesConflict([...preGateHeld, ...preGateBlocks], input.teamMemberId, seriesSlots, seriesSlots.length);
+    if (preGateHit) throw seriesOverlapError(input.teamMemberId, preGateHit, seriesSlots.length);
+  }
   // A named calendar is validated before any row exists: a statically
   // preventable miscomposition fails here, never after a committed
   // confirmed booking the caller received an error for.
