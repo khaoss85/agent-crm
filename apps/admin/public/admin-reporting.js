@@ -281,6 +281,34 @@ export function isAiSummaryLines(lines) {
 }
 
 /**
+ * backlog:766e9cf9469e: whether the period has anything for the model to
+ * rewrite — at least one new customer or one pipeline movement, from the
+ * dashboard model the route already returns. It mirrors the server's
+ * no-data rule (`reportingSummaryHasData` on the same counts), so an
+ * empty period sends no summary request at all; the route stays the
+ * authority and still answers `{ lines: null, reason: 'empty' }` to any
+ * direct call. Missing or unreadable counts read as «no data», never as
+ * a reason to ask.
+ * @param {unknown} model the dashboard payload the screen just rendered
+ */
+export function hasSummaryData(model) {
+  const channels = model !== null && typeof model === 'object'
+    ? /** @type {Record<string, unknown>} */ (model).channels
+    : null;
+  const total = channels !== null && typeof channels === 'object'
+    && Number.isSafeInteger(/** @type {Record<string, unknown>} */ (channels).total)
+    ? /** @type {number} */ (/** @type {Record<string, unknown>} */ (channels).total)
+    : 0;
+  if (total > 0) return true;
+  const team = model !== null && typeof model === 'object' && Array.isArray(/** @type {Record<string, unknown>} */ (model).team)
+    ? /** @type {Array<Record<string, unknown>>} */ (/** @type {Record<string, unknown>} */ (model).team)
+    : [];
+  return team.some((entry) => ['openCount', 'wonCount', 'lostCount'].some((key) => (
+    Number.isSafeInteger(entry?.[key]) && /** @type {number} */ (entry?.[key]) > 0
+  )));
+}
+
+/**
  * Bar fill width for a value against the chart maximum. Zero/negative
  * maxima render empty, never NaN.
  * @param {number} value @param {number} max
@@ -1092,23 +1120,29 @@ export function createReportingView(deps) {
       for (const text of channelsSummary(model.channels) ?? []) {
         summaryHost.appendChild(el(doc, 'p', { text }));
       }
-      const summaryRequest = summaryPath({
-        period: dashboard.period, owner: dashboard.owner || null, spaceId: readSpaceId(),
-      });
-      client.request(summaryRequest).then((answer) => {
-        if (seen !== renderToken) return;
-        if (!isAiSummaryLines(answer?.lines)) return;
-        while (summaryHost.firstChild) summaryHost.removeChild(summaryHost.firstChild);
-        for (const text of answer.lines) {
-          summaryHost.appendChild(el(doc, 'p', { text }));
-        }
-      }).catch(() => {
-        // backlog:766e9cf9469e: the AI lines are best-effort — a failing,
-        // capped or disabled summary keeps the computed fallback silently.
-        // Logging here would double-count a dashboard/records failure the
-        // screen already logs (or invent an error on a 404 that is honest
-        // setup state), so the catch stays silent by contract.
-      });
+      // backlog:766e9cf9469e: an empty period has nothing to rewrite — the
+      // computed fallback above already says so, so no request leaves the
+      // screen (the route would answer `empty` without touching a model).
+      // The cards below always render: only the AI request is skipped.
+      if (hasSummaryData(model)) {
+        const summaryRequest = summaryPath({
+          period: dashboard.period, owner: dashboard.owner || null, spaceId: readSpaceId(),
+        });
+        client.request(summaryRequest).then((answer) => {
+          if (seen !== renderToken) return;
+          if (!isAiSummaryLines(answer?.lines)) return;
+          while (summaryHost.firstChild) summaryHost.removeChild(summaryHost.firstChild);
+          for (const text of answer.lines) {
+            summaryHost.appendChild(el(doc, 'p', { text }));
+          }
+        }).catch(() => {
+          // backlog:766e9cf9469e: the AI lines are best-effort — a failing,
+          // capped or disabled summary keeps the computed fallback silently.
+          // Logging here would double-count a dashboard/records failure the
+          // screen already logs (or invent an error on a 404 that is honest
+          // setup state), so the catch stays silent by contract.
+        });
+      }
     }
     // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
     // built, by direct reference — never via lastChild, so the grid classes

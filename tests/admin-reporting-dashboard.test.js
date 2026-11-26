@@ -16,6 +16,7 @@ import {
   FORECAST_LEGEND,
   channelsSummary,
   channelWeekTotals,
+  hasSummaryData,
   isAiSummaryLines,
   summaryPath,
   REPORTING_CODE_FILES,
@@ -1054,4 +1055,33 @@ test('766e9cf9469e: periodo/persona change refetches the two lines', async () =>
   assert.equal(summaryRequests.length, 2, 'a persona change refetches the lines');
   assert.match(summaryRequests[1], /owner=bob/);
   assert.deepEqual(summaryLinesOf(mount), second, 'the header shows the new period lines');
+});
+
+test('766e9cf9469e: hasSummaryData mirrors the server no-data rule', () => {
+  assert.equal(hasSummaryData(MODEL), true, 'the month with customers and movement asks');
+  assert.equal(
+    hasSummaryData({ channels: { total: 0 }, team: [{ owner: 'alice', openCount: 0, wonCount: 1, lostCount: 0 }] }),
+    true,
+    'a won movement alone still asks',
+  );
+  assert.equal(hasSummaryData({ channels: { total: 0 }, team: [] }), false, 'no customers, no movement: nothing to rewrite');
+  assert.equal(hasSummaryData({ channels: { total: 0 }, team: [{ owner: 'alice' }] }), false, 'unreadable counts read as no data');
+  assert.equal(hasSummaryData({}), false);
+  assert.equal(hasSummaryData(null), false);
+});
+
+test('766e9cf9469e: an empty period sends no summary request at all', async () => {
+  const empty = {
+    ...MODEL,
+    team: [],
+    owners: [],
+    channels: { weeks: [], channels: [], total: 0, undated: 0 },
+  };
+  const { mount, view, requests } = harness({ dashboard: empty });
+  await view.renderReporting();
+  await tick();
+  assert.ok(!requests.some((path) => path.includes('/api/reporting/summary')),
+    'empty period: the screen never asks the model');
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.doesNotMatch(text, /non disponibile|riprova|errore/i, 'no error text for an empty period');
 });
