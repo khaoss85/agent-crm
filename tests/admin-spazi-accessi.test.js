@@ -2725,3 +2725,26 @@ test('785aeb28bd18: the card statistic reads start only after the team data land
   await flush();
   assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });
+
+test('backlog:44f7bfe8 — le card leggono la stessa sigla da ogni spazio', () => {
+  // Come il menu: la sigla e il colore di uno spazio non dipendono da quale
+  // spazio è aperto (prova del Mac del 18/11 sul pilota).
+  const spaces = [
+    { id: 'spazio-arvo', name: 'Arvo Studio' },
+    { id: 'spazio-presti', name: 'Presti Group' },
+    { id: 'spazio-prova-b1', name: 'Prova Validazione B1' },
+  ];
+  const menuById = Object.fromEntries(
+    spaceMenuItems(spaces, 'spazio-arvo').map((row) => [row.id, `${row.initials}/${row.badgeClass}`]),
+  );
+  for (const current of spaces) {
+    const cards = buildSpaziCards({ spaces, activeSpaceId: current.id, role: 'owner' });
+    for (const card of cards) {
+      assert.equal(
+        `${card.initials}/${card.badgeClass}`,
+        menuById[card.id],
+        `${card.name}: stessa sigla e colore del menu, da ${current.name}`,
+      );
+    }
+  }
+});
