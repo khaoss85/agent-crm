@@ -376,6 +376,27 @@ function validateSeriesIdentity(value) {
 }
 
 /**
+ * The stored space of a series (backlog:6acf0a73bfc3): the single source of
+ * truth for series attribution on both booking paths. Stored rows that
+ * agree name the space — every later join persists it, never the caller's
+ * claim, so input can neither move a row to another space nor read back a
+ * foreign series as its own. With no stored attribution (no rows, or rows
+ * without a space) the claim bootstraps the series: the first writer names
+ * its space like any other idempotency identity. Stored rows that disagree
+ * fail closed as a missing series: a series split across spaces joins
+ * nothing until it is reconciled.
+ */
+function storedSeriesSpace(siblings, seriesKey) {
+  const seen = new Set();
+  for (const row of Array.isArray(siblings) ? siblings : []) {
+    const space = row?.spaceId;
+    if (typeof space === 'string' && space !== '') seen.add(space);
+  }
+  if (seen.size > 1) throw new NotFoundError('appointment series', seriesKey);
+  return seen.size === 1 ? [...seen][0] : null;
+}
+
+/**
  * The framework's normalized unique-constraint refusal, recognized so the loser
  * of a race replays the winner's row instead of surfacing driver text. Matched
  * on the typed `ConflictError`, never on message text; a transient busy
@@ -1301,10 +1322,10 @@ async function bookSeries(context, input) {
   assertSeriesHeadSlot(input, slots);
   // Every occurrence stores the space that owns it (backlog:6acf0a73bfc3):
   // a recurrence-formed series without attribution would read back with a
-  // null space and every later scoped write on it would refuse — the real
-  // creation path must prove the space up front, like the single path does
-  // through validateSeriesIdentity.
-  const seriesSpace = input.series?.spaceId ?? null;
+  // null space and every later scoped write on it would refuse. The claim
+  // bootstraps a new series; the stored series wins below, inside the
+  // critical section, so a booking can never move a row to another space.
+  let seriesSpace = input.series?.spaceId ?? null;
   if (!seriesSpace) {
     throw new ValidationError(
       'spaceId is required with a recurrence: every occurrence stores the space that owns it, so a later scoped write can prove it',
@@ -1314,10 +1335,14 @@ async function bookSeries(context, input) {
   const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
   const ruleJson = JSON.stringify(input.recurrence);
   const headReminderKey = input.remindAt === null ? null : reminderSourceKey(keys[0]);
+  // The stored series wins over the caller's claim inside the critical
+  // section below (backlog:6acf0a73bfc3): occurrence rows are built from
+  // the effective input, so the persisted spaceId is never the claim.
+  let effectiveInput = input;
   const inputFor = (index) => (index === 0
-    ? { ...input, sourceKey: keys[0] }
+    ? { ...effectiveInput, sourceKey: keys[0] }
     : {
-      ...input,
+      ...effectiveInput,
       sourceKey: keys[index],
       startsAt: slots[index].startsAt,
       endsAt: slots[index].endsAt,
@@ -1347,13 +1372,13 @@ async function bookSeries(context, input) {
     const heldWithBlocks = [...others, ...blocks];
     const stored = [];
     for (const key of keys) stored.push((await appointments.listWhere({ sourceKey: key }))[0] ?? null);
-    // A series key belongs to one space (backlog:6acf0a73bfc3): rows are
-    // caller-attributed, so a series booked under another space's key is
-    // refused before any write — never persisted as a foreign sibling.
+    // A series key belongs to one space (backlog:6acf0a73bfc3): the
+    // persisted space is the stored series' own, never the caller's claim
+    // — a series booked under another space's key still lands in the
+    // stored space. Stored rows that disagree fail closed as missing.
     const sameKey = await appointments.listWhere({ seriesKey: input.sourceKey });
-    if ((Array.isArray(sameKey) ? sameKey : []).some((row) => row && row.spaceId !== seriesSpace)) {
-      throw new NotFoundError('appointment series', input.sourceKey);
-    }
+    seriesSpace = storedSeriesSpace(sameKey, input.sourceKey) ?? seriesSpace;
+    effectiveInput = { ...input, series: { ...input.series, spaceId: seriesSpace } };
     const missing = [];
     for (let index = 0; index < slots.length; index += 1) {
       const submitted = submittedFor(index);
@@ -1474,7 +1499,8 @@ export async function bookAppointment(context, request) {
 
   // Singles and occurrences share one stored shape (backlog:0f2ae629e09b):
   // for a single the series columns stay null, like old rows read back.
-  const submitted = submittedBooking(input, source, reminderKey, null);
+  // Built inside the critical section below, on the derived series space,
+  // so the persisted attribution is never the caller's claim.
 
   // The check-then-act below runs serialized per team member on every path:
   // the member chain above orders same-process bookings so the loser re-reads
@@ -1488,16 +1514,19 @@ export async function bookAppointment(context, request) {
   // (A busy timeout past the winner's commit, or a Postgres serialization
   // abort, surfaces a retryable conflict whose retry re-reads the winner.)
   const runCritical = async () => {
-    // A series is joined only inside its own space (backlog:6acf0a73bfc3):
-    // rows are caller-attributed, so a booking that names another space's
-    // seriesKey is refused before any write — never persisted as a foreign
-    // sibling, and never an oracle: a foreign series reads as missing.
+    // A series is joined in its own stored space (backlog:6acf0a73bfc3):
+    // the persisted spaceId is the stored series' own, never the caller's
+    // claim — a booking that names another space's seriesKey still lands
+    // in the stored space, and stored rows that disagree fail closed as
+    // missing. With no stored rows the claim bootstraps the series (first
+    // writer, like the source-key identity).
+    let joinSeries = null;
     if (typeof input.series?.seriesKey === 'string' && input.series.seriesKey !== '') {
       const siblings = await appointments.listWhere({ seriesKey: input.series.seriesKey });
-      if ((Array.isArray(siblings) ? siblings : []).some((row) => row && row.spaceId !== input.series.spaceId)) {
-        throw new NotFoundError('appointment series', input.series.seriesKey);
-      }
+      const stored = storedSeriesSpace(siblings, input.series.seriesKey);
+      if (stored !== null) joinSeries = { ...input.series, spaceId: stored };
     }
+    const submitted = submittedBooking(joinSeries === null ? input : { ...input, series: joinSeries }, source, reminderKey, null);
     // A lost unique-guard race whose winner was cancelled between the
     // resolution and the insert resolves again instead of replaying a dead
     // row: every pass re-reads, so the loop ends on a free key, a live

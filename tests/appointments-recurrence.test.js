@@ -230,6 +230,24 @@ test('una serie senza spazio viene rifiutata prima di ogni scrittura', async () 
   assert.equal(service.rows.length, 0, 'nessuna occorrenza senza spazio che la possiede');
 });
 
+test('una serie esistente persiste lo spazio salvato, mai la pretesa del chiamante', async () => {
+  const service = fakeAppointments();
+  const first = await bookAppointment(
+    contextFor(service),
+    booking({ recurrence: { kind: 'weekly', count: 2 }, spaceId: SPACE }),
+  );
+  assert.equal(first.occurrenceCount, 2);
+  const again = await bookAppointment(
+    contextFor(service),
+    booking({ recurrence: { kind: 'weekly', count: 2 }, spaceId: 'spazio-2' }),
+  );
+  assert.equal(again.replayed, true, 'stessa serie, stesse righe: replay, non duplicato');
+  for (const row of service.rows) {
+    assert.equal(row.spaceId, SPACE, 'la pretesa di un altro spazio non sposta la serie salvata');
+  }
+  assert.equal(service.rows.length, 2, 'nessuna riga in più nello spazio sbagliato');
+});
+
 test('una serie settimanale crea le occorrenze, ognuna con la sua chiave di serie', async () => {
   const service = fakeAppointments();
   const result = await bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekly', count: 3 }, spaceId: SPACE }));

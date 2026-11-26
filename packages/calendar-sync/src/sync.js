@@ -1565,18 +1565,19 @@ export function createCalendarSyncOperations(options = {}) {
     /**
      * The series link probe for scoped appointment writes
      * (backlog:6acf0a73bfc3): read-only, never a provider call. A missing
-     * space refuses before any lookup — a foreign or absent space never
-     * reads the series as never-exported, so the grid cannot mutate alone
-     * while Google keeps the linked master. The caller's grant is proven
-     * BEFORE the link lookup (a space with no binding answers
-     * `CALENDAR_GRANT_UNKNOWN`, a space with only revoked grants answers
-     * `CALENDAR_GRANT_REVOKED`), so an unknown key and an exported key
-     * refuse identically from a foreign space — never a cross-space
-     * oracle. No link reads `{ linked: false }`; a link resolves the
-     * grant for the caller's space as well (a foreign space answers
-     * `CALENDAR_GRANT_UNKNOWN`, a revoked grant answers
-     * `CALENDAR_GRANT_REVOKED`). Deployments with no bound grant resolve
-     * globally, as on main.
+     * space refuses before any lookup. The link is read BEFORE any
+     * grant is proven: no link reads `{ linked: false }` with no grant
+     * check, so a local-only series converges grid-only from a space
+     * that holds no grant. Only an exported key proves the caller's
+     * grant (a space with no binding answers `CALENDAR_GRANT_UNKNOWN`,
+     * a space with only revoked grants answers `CALENDAR_GRANT_REVOKED`,
+     * a foreign space answers `CALENDAR_GRANT_UNKNOWN` on the linked
+     * calendar), so the grid cannot mutate alone while Google keeps
+     * the linked master. The appointments path proves the anchor's
+     * space before probing, so a foreign anchor never reaches this
+     * probe — the grant checks below guard direct handle callers on
+     * linked keys. Deployments with no bound grant resolve globally,
+     * as on main.
      */
     async seriesScopeLink(headSourceKey, { spaceId } = {}) {
       if (typeof spaceId !== 'string' || spaceId.trim() === '') {
@@ -1586,9 +1587,9 @@ export function createCalendarSyncOperations(options = {}) {
         throw new ValidationError('seriesScopeLink needs a head sourceKey', { field: 'headSourceKey' });
       }
       const space = canonicalSpaceIdOrAbsent(spaceId);
-      await requireProbeGrant(space);
       const link = await findLinkBySource(headSourceKey);
       if (!link) return { linked: false };
+      await requireProbeGrant(space);
       await requireLiveGrant(link.calendarId, space);
       return { linked: true, calendarId: link.calendarId };
     },

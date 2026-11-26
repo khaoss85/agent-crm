@@ -98,12 +98,18 @@ const modulesFor = (service) => ({
 
 /**
  * The probe behind a linked series: the keys in `linked` behave like rows
- * with a Google sync link owned by `space`. A foreign space throws the same
- * grant refusal the real probe raises, so the grid never mutates alone.
+ * with a Google sync link owned by `space`, which holds the only grant
+ * (`boundSpaces`, plus `revokedSpaces` for revoked grants). Like the real
+ * probe, an unlinked key reads `{ linked: false }` from any space with no
+ * grant check — a local-only series converges grid-only without a grant —
+ * while a linked key from a space with no grant refuses
+ * `CALENDAR_GRANT_UNKNOWN` (409 `CALENDAR_GRANT_REVOKED` when revoked).
  */
-function fakeCalendarSync({ linked = [], space = SPACE } = {}) {
+function fakeCalendarSync({ linked = [], space = SPACE, boundSpaces = null, revokedSpaces = [] } = {}) {
   const calls = { probe: [], push: [], detail: 0 };
   const linkedSet = new Set(linked);
+  const bound = new Set(boundSpaces ?? [space]);
+  const revoked = new Set(revokedSpaces);
   return {
     calls,
     async seriesScopeLink(sourceKey, { spaceId } = {}) {
@@ -113,12 +119,18 @@ function fakeCalendarSync({ linked = [], space = SPACE } = {}) {
           field: 'spaceId',
         });
       }
-      if (spaceId !== space) {
-        throw new AppError(`calendar "cal-1" has no grant for this space: bind it before syncing`, {
+      if (!linkedSet.has(sourceKey)) return { linked: false };
+      if (revoked.has(spaceId)) {
+        throw new AppError('calendar "cal-1" grant is revoked: re-bind it before syncing', {
+          code: 'CALENDAR_GRANT_REVOKED', status: 409,
+        });
+      }
+      if (!bound.has(spaceId)) {
+        throw new AppError('calendar "cal-1" has no grant for this space: bind it before syncing', {
           code: 'CALENDAR_GRANT_UNKNOWN', status: 404,
         });
       }
-      return linkedSet.has(sourceKey) ? { linked: true, calendarId: 'cal-1' } : { linked: false };
+      return { linked: true, calendarId: 'cal-1' };
     },
     async pushAppointment() {
       calls.push.push(Array.from(arguments));
@@ -247,6 +259,46 @@ test('cancel: single on a local series row cancels only the anchor', async () =>
   assert.equal(service.rows[2].status, 'booked', 'the tail stays');
   assert.equal(out.push, null);
   assert.equal(calendarSync.calls.push.length, 0);
+});
+
+test('scoped single on a grantless local-only series converges grid-only, like the real probe', async () => {
+  const service = fakeAppointments(seriesRows([{ spaceId: OTHER_SPACE }, { spaceId: OTHER_SPACE }, { spaceId: OTHER_SPACE }]));
+  const calendarSync = fakeCalendarSync();
+  const moved = await rescheduleAppointment(
+    contextFor(service, calendarSync),
+    {
+      id: 'a-2', startsAt: shiftDay('2026-10-20T18:00:00.000Z'), endsAt: shiftDay('2026-10-20T19:00:00.000Z'),
+      scope: 'single', spaceId: OTHER_SPACE,
+    },
+  );
+  assert.equal(moved.moved, true, 'no grant is needed when Google holds nothing');
+  assert.equal(service.rows[1].startsAt, shiftDay('2026-10-20T18:00:00.000Z'), 'the anchor moves');
+  assert.equal(service.rows[1].spaceId, OTHER_SPACE, 'the stored space is kept');
+  assert.equal(moved.push, null, 'a scoped write never pushes');
+  const cancelled = await cancelAppointment(
+    contextFor(service, calendarSync),
+    { id: 'a-3', reason: 'Non serve piu', scope: 'single', spaceId: OTHER_SPACE },
+  );
+  assert.equal(cancelled.cancelled, true, 'the cancel converges grid-only too');
+});
+
+test('scoped single on a linked key from a grantless space refuses 404, like the real probe', async () => {
+  const service = fakeAppointments(seriesRows([{ spaceId: OTHER_SPACE }, { spaceId: OTHER_SPACE }, { spaceId: OTHER_SPACE }]));
+  const calendarSync = fakeCalendarSync({ linked: ['gym:serie:1:0'] });
+  await rejectsWith(
+    rescheduleAppointment(
+      contextFor(service, calendarSync),
+      {
+        id: 'a-2', startsAt: shiftDay('2026-10-20T18:00:00.000Z'), endsAt: shiftDay('2026-10-20T19:00:00.000Z'),
+        scope: 'single', spaceId: OTHER_SPACE,
+      },
+    ),
+    (caught) => {
+      assert.equal(caught.code, 'CALENDAR_GRANT_UNKNOWN');
+      assert.equal(caught.status, 404);
+    },
+  );
+  assert.equal(service.writes.length, 0, 'the grid is unchanged on a linked key without a grant');
 });
 
 test('reschedule: a wide scope refuses before the space gate, even from a foreign space', async () => {
@@ -590,21 +642,41 @@ test('cancel: a scoped cancel on a series row without attribution refuses like a
   assert.equal(calendarSync.calls.probe.length, 0, 'an unattributed anchor never reaches the link probe');
 });
 
-test('booking: joining another space’s seriesKey refuses and writes nothing', async () => {
+test('booking: joining with another space’s seriesKey persists the stored space, never the claim', async () => {
   const service = fakeAppointments(seriesRows());
+  const booked = await bookAppointment(
+    contextFor(service, null),
+    bookingRequest({
+      seriesKey: 'serie:1', occurrenceIndex: 9, spaceId: OTHER_SPACE, sourceKey: 'gym:booked:serie:9',
+      startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+    }),
+  );
+  assert.equal(booked.appointment.seriesKey, 'serie:1');
+  assert.equal(
+    booked.appointment.spaceId, SPACE,
+    'the row carries the stored series space: the input claim moves nothing to the other space',
+  );
+  assert.equal(service.rows.length, 4);
+});
+
+test('booking: joining a series whose stored rows disagree refuses as missing and writes nothing', async () => {
+  const service = fakeAppointments(seriesRows([{}, { spaceId: OTHER_SPACE }, {}]));
   const before = service.rows.map((row) => ({ ...row }));
   await rejectsWith(
     bookAppointment(
       contextFor(service, null),
-      bookingRequest({ seriesKey: 'serie:1', occurrenceIndex: 9, spaceId: OTHER_SPACE, sourceKey: 'gym:booked:serie:9' }),
+      bookingRequest({
+        seriesKey: 'serie:1', occurrenceIndex: 9, spaceId: SPACE, sourceKey: 'gym:booked:serie:9',
+        startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z',
+      }),
     ),
     (caught) => {
-      assert.ok(caught instanceof NotFoundError, 'a foreign series reads as missing on booking too');
+      assert.ok(caught instanceof NotFoundError, 'a series split across spaces joins nothing');
       assert.equal(caught.code, 'NOT_FOUND');
       assert.equal(caught.status, 404);
     },
   );
-  assert.deepEqual(service.rows, before, 'no foreign sibling is persisted');
+  assert.deepEqual(service.rows, before, 'no sibling of a corrupt series is persisted');
 });
 
 test('booking: joining the calling space’s seriesKey persists the sibling', async () => {
@@ -805,9 +877,12 @@ test('booking: a plain booking stays series-free, like on main', async () => {
 
 /**
  * The real link probe (backlog:6acf0a73bfc3): read-only, against the real
- * sqlite store. The owning space sees the link; a foreign space meets the
- * same grant refusal whatever key it names; an unknown key reads as
- * unlinked from any space — never a cross-space oracle.
+ * sqlite store. The owning space sees the link; a foreign space still
+ * cannot reach a linked key (grant refusal). An unknown key reads as
+ * unlinked from any space with no grant check, so a local-only series
+ * converges grid-only without a grant. The appointments path proves the
+ * anchor's space before probing, so a foreign anchor never reaches this
+ * probe through the app.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const probeManifest = (pkg, name) => JSON.parse(
@@ -881,27 +956,31 @@ test('seriesScopeLink: the owning space sees the link, a foreign space cannot re
   assert.ok(foreignLinked, 'a foreign space refuses the exported key');
   assert.equal(foreignLinked.code, 'CALENDAR_GRANT_UNKNOWN');
 
-  let foreignUnknown = null;
-  try {
-    await ctx.sync.seriesScopeLink(foreign, { spaceId: OTHER_SPACE });
-  } catch (caught) {
-    foreignUnknown = caught;
-  }
-  assert.ok(foreignUnknown, 'an unknown key refuses from a foreign space, like the exported one: no cross-space oracle');
-  assert.equal(foreignUnknown.code, 'CALENDAR_GRANT_UNKNOWN');
+  const foreignUnknown = await ctx.sync.seriesScopeLink(foreign, { spaceId: OTHER_SPACE });
+  assert.equal(
+    foreignUnknown.linked, false,
+    'an unknown key reads as unlinked from any space: a local-only series needs no grant',
+  );
 
   const unknown = await ctx.sync.seriesScopeLink(foreign, { spaceId: SPACE });
   assert.equal(unknown.linked, false, 'an unknown key reads as unlinked from the owning space');
 
+  await ctx.sync.seriesScopeLink('gym:serie:mai-esportata-2', { spaceId: OTHER_SPACE }).then(
+    (probe) => assert.equal(probe.linked, false, 'another unknown key still reads as unlinked, never a refusal'),
+  );
+
   await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
   let revoked = null;
   try {
-    await ctx.sync.seriesScopeLink(foreign, { spaceId: SPACE });
+    await ctx.sync.seriesScopeLink(row.sourceKey, { spaceId: SPACE });
   } catch (caught) {
     revoked = caught;
   }
-  assert.ok(revoked, 'a space with only revoked grants refuses before any lookup');
+  assert.ok(revoked, 'a space with only revoked grants still refuses on a linked key');
   assert.equal(revoked.code, 'CALENDAR_GRANT_REVOKED');
+
+  const revokedUnknown = await ctx.sync.seriesScopeLink(foreign, { spaceId: SPACE });
+  assert.equal(revokedUnknown.linked, false, 'an unknown key stays unlinked even for a revoked space');
 
   let missing = null;
   try {
