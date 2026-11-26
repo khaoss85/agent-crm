@@ -647,6 +647,8 @@ export function spaceSwitcherLabel(spaces) {
  * the word rule («Prova Validazione B1» → «PV»), then longer slices of
  * the name — the first unused candidate, so «Presti Group» and «Prova
  * Validazione B1» read differently even when both arrive as «PR».
+ * (backlog:44f7bfe8: the session profile now carries name-based siglas —
+ * «PG»/«PV» — so the stored value the menu prefers is already the name's.)
  * Rows outside the host's live member list (backlog:ca7008cac764) carry
  * `needsAccess`: visited mounts the session profile does not name may land
  * on the space login instead of switching, so the menu marks them instead

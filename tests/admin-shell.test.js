@@ -1536,8 +1536,8 @@ test('backlog:44f7bfe8 — la sigla non dipende dallo spazio aperto', () => {
   ];
   const views = new Map();
   for (const current of all) {
-    // Il profilo mette per primo lo spazio aperto, con le iniziali naive —
-    // come la sessione live (admin-session.js).
+    // Il profilo mette per primo lo spazio aperto (come la sessione live):
+    // la sigla deve venire dal nome, mai dall'ordine di elenco.
     const profile = parseSessionProfile(JSON.stringify({
       space: { id: current.id, name: current.name },
       spaces: [current, ...all.filter((space) => space.id !== current.id)],
@@ -1547,6 +1547,17 @@ test('backlog:44f7bfe8 — la sigla non dipende dallo spazio aperto', () => {
     }));
     assert.ok(profile, 'il profilo della sessione resta leggibile');
     views.set(current.id, spaceMenuItems(mergeSpaces(profile.spaces, []), current.id));
+  }
+  // La sigla è calcolata dal nome dello spazio, non dallo spazio aperto.
+  const expected = { 'spazio-arvo': 'AS', 'spazio-presti': 'PG', 'spazio-prova-b1': 'PV' };
+  for (const [id, initials] of Object.entries(expected)) {
+    for (const current of all) {
+      assert.equal(
+        views.get(current.id).find((row) => row.id === id).initials,
+        initials,
+        `${id}: sigla dal nome anche da ${current.id}`,
+      );
+    }
   }
   for (const space of all) {
     const seen = all.map((view) => views.get(view.id).find((row) => row.id === space.id));

@@ -70,6 +70,26 @@ function cleanText(value) {
 }
 
 /**
+ * Space badge initials from the space name (backlog:44f7bfe8): the same
+ * word rule as `spaceInitialsFor` in admin-shell.js («Presti Group» → «PG»,
+ * «Prova Validazione B1» → «PV»), duplicated here — never a new rule — so
+ * this module stays import-free (admin-shell.js already imports from here,
+ * the reverse import would be a cycle). The naive `slice(0, 2)` read «PR»
+ * for both spaces and let the open space always read «PR».
+ * @param {unknown} name
+ */
+function sessionSpaceInitials(name) {
+  if (typeof name !== 'string') return '·';
+  const words = name.split(/\s+/)
+    .map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, ''))
+    .filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
  * @param {unknown} value
  */
 function cleanLogoutUrl(value) {
@@ -107,7 +127,7 @@ export function parseSessionProfile(jsonText) {
   const current = Object.freeze({
     id: spaceId,
     name: spaceName,
-    initials: spaceName.slice(0, 2).toUpperCase(),
+    initials: sessionSpaceInitials(spaceName),
   });
   // Every space the person can open (backlog:029409ff): the host's list
   // when usable, otherwise the current space alone. Unknown entries are
@@ -125,7 +145,7 @@ export function parseSessionProfile(jsonText) {
     cleaned.push(Object.freeze({
       id,
       name: entryName,
-      initials: entryName.slice(0, 2).toUpperCase(),
+      initials: sessionSpaceInitials(entryName),
     }));
   }
   return Object.freeze({
