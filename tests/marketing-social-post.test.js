@@ -89,3 +89,23 @@ test('il post online diverso dalla versione approvata non passa', () => {
   assert.equal(missing.match, false);
   assert.ok(missing.mismatches.includes('online-missing'));
 });
+
+test("un titolo corrotto sulla riga salvata blocca la revisione e l'ok (voce 18e40456)", () => {
+  const post = proposed();
+  const corrupted = { ...post, title: 'x'.repeat(500) };
+  const review = reviewSocialPost(corrupted);
+  assert.equal(review.complete, false);
+  assert.ok([...review.missing].includes('title'));
+  assert.throws(() => approveSocialPost({ post: corrupted, actor: { type: 'user', id: 'dan' }, approvedAt: '2026-11-14T21:00:00Z' }), (error) => error.code === 'SOCIAL_POST_INCOMPLETE');
+  const nonString = { ...post, title: 123 };
+  assert.equal(reviewSocialPost(nonString).complete, false);
+  assert.throws(() => approveSocialPost({ post: nonString, actor: { type: 'user', id: 'dan' }, approvedAt: '2026-11-14T21:00:00Z' }), (error) => error.code === 'SOCIAL_POST_INCOMPLETE');
+});
+
+test('una deriva di soli spazi che cambia Telegram non passa come uguale (voce 18e40456)', () => {
+  const approved = 'riga1\nriga2';
+  const online = 'riga1 riga2';
+  const result = verifyPublishedPost({ approvedText: approved, onlineText: online });
+  assert.equal(result.match, false);
+  assert.ok([...result.mismatches].includes('text-differs'));
+});
