@@ -1384,3 +1384,55 @@ test('1f7cb20d3c30 review #836 P2: two concurrent creates of one @name in a spac
   const rows = (await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE })).filter((row) => row.name === 'Auguri');
   assert.equal(rows.length, 1, 'never two agents with the same @name');
 });
+
+test('70e194b94156 review agent-crm#940 P2: a legacy run without decidedAt is checked against its start month', async () => {
+  // Head bb85a4eb fell back to the wall clock when the run had no decidedAt,
+  // reintroducing the wrong-month check for legacy proposed runs: an October
+  // run over its cap was approved in November because November spent 0.
+  const OCT_EARLY = '2026-10-31T07:00:00.000Z';
+  const OCT_31 = '2026-10-31T08:01:00.000Z';
+  const NOV_02 = '2026-11-02T08:01:00.000Z';
+  const { modules, ops } = compose(OCT_EARLY);
+  const nov = createAgentOperations({ modules, now: () => NOV_02 });
+  await makeAgent(ops, { sourceKey: 'custom-agent:legacy', name: 'Storico', spendingCapCents: 1000 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-legacy',
+    agentSourceKey: 'custom-agent:legacy',
+    phrase: 'ogni giorno il report vendite',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 12,
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: OCT_31,
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 12,
+      proposals: [{ action: 'draft-report', payload: { title: 'Report' } }],
+    }),
+  });
+  // The owner tightens the cap after the proposal: October spent 12c of 10c.
+  await ops.updateAgent({ actor: USER, spaceId: SPACE, agentSourceKey: 'custom-agent:legacy', spendingCapCents: 10 });
+  // A row written before decidedAt existed carries only startedAt.
+  const stored = (await modules.get('teammate-run').service.listWhere({ spaceId: SPACE }))[0];
+  assert.equal(stored.outcome, 'proposed');
+  assert.ok(typeof stored.startedAt === 'string' && stored.startedAt < '2026-11-01T00:00:00.000Z');
+  await modules.get('teammate-run').service.applyManaged(stored.id, { decidedAt: null }, { actor: USER });
+  // Approving in November must still refuse: the run spent October's cap.
+  let applied = 0;
+  await assert.rejects(
+    () => nov.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: stored.sourceKey,
+      applyAction: async () => { applied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+  );
+  assert.equal(applied, 0, 'nothing is applied over the cap');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: stored.sourceKey });
+  assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: raise the cap and retry');
+});

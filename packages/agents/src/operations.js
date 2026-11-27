@@ -946,9 +946,14 @@ export function createAgentOperations(options = {}) {
       // agent-crm#940 P1). `spentSince` has no upper bound, so the window
       // is closed here: rows decided after the approval (a new month's
       // spend) must not count toward the run's own month.
+      // Rows written before `decidedAt` existed carry only `startedAt`:
+      // like `spentSince` and `inExecutionMonth` below, fall back to the
+      // slot instant instead of the wall clock, or a legacy October run
+      // approved in November checks November's spend (review
+      // agent-crm#940 P2).
       const decidedMonth = typeof current.decidedAt === 'string' && current.decidedAt !== ''
         ? current.decidedAt
-        : ledgerAt;
+        : (typeof current.startedAt === 'string' && current.startedAt !== '' ? current.startedAt : ledgerAt);
       const windowStartIso = monthStartIso(decidedMonth);
       const windowStartMs = Date.parse(windowStartIso);
       const windowStart = new Date(windowStartMs);
@@ -979,16 +984,12 @@ export function createAgentOperations(options = {}) {
         const squadRows = await squads().listWhere({ spaceId });
         for (const squadRow of squadRows) {
           if (squadRow?.spendingCapCents === null || squadRow?.spendingCapCents === undefined) continue;
-          let members = null;
-          try {
-            members = JSON.parse(String(squadRow.membersJson ?? '[]'));
-          } catch {
-            continue;
-          }
-          if (!Array.isArray(members)) continue;
-          const keys = new Set(members
-            .map((member) => member?.agentSourceKey)
-            .filter((key) => typeof key === 'string' && key !== ''));
+          // Fail closed (review agent-crm#940 P2): a capped squad with an
+          // unreadable member list must refuse the approval, never skip the
+          // cap check and bless squad overspend. Same verdict as the
+          // overview path, which decodes with decodeSquadRow.
+          const members = decodeSquadRow(squadRow).members;
+          const keys = new Set(members.map((member) => member.agentSourceKey));
           if (!keys.has(current.agentSourceKey)) continue;
           const spent = spentMonth(keys);
           if (spent > squadRow.spendingCapCents) {
