@@ -193,7 +193,7 @@ test('776cf3469e64: Nome svuotato dopo il rifiuto di Crea — la riga dice che i
 
 test('776cf3469e64 follow-up rev-agent-crm-1141: Nome svuotato dopo il 409 del server — sparisce anche il banner in alto', async () => {
   const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
-  const { mount, client } = await paintedView({ failCreate: [taken] });
+  const { mount, client, view } = await paintedView({ failCreate: [taken] });
   button(mount, 'new-agent').dispatch('click', {});
   fillPanel(mount);
   button(mount, 'create-agent').dispatch('click', {});
@@ -203,6 +203,11 @@ test('776cf3469e64 follow-up rev-agent-crm-1141: Nome svuotato dopo il 409 del s
   type(mount, 'agent-name', '');
   assert.match(mount.textContent, /Dagli un nome/, 'il Nome vuoto dice che il nome manca');
   assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'il banner del doppione non copre il Nome vuoto');
+  // Review rev-agent-crm-1144-1f32e02ea8 (P2): the repaint rebuilt from
+  // state must not restore the stale 409 banner over the empty Nome.
+  view.paint();
+  assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'il banner del doppione non torna dopo il repaint');
+  assert.match(mount.textContent, /Dagli un nome/, 'il Nome vuoto dice che il nome manca anche dopo il repaint');
   button(mount, 'create-agent').dispatch('click', {});
   await flush();
   assert.equal(posts(client).length, 1, 'niente POST con il Nome vuoto');
