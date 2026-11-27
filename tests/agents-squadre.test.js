@@ -448,3 +448,62 @@ test('an ownerId refuses instead of being silently dropped', async () => {
     (error) => error.code === 'VALIDATION_ERROR' && /ownerId/.test(error.message),
   );
 });
+
+test('70e194b94156 review agent-crm#940 P2: a corrupt capped-squad row fails the approval closed', async () => {
+  // Head bb85a4eb skipped corrupt membersJson with `continue`, so a capped
+  // squad in overspend was skipped and the approval blessed squad overspend
+  // instead of refusing. Fail closed like the overview path does.
+  const { modules, ops } = compose();
+  const made = await ops.createSquad({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'sq-cap-corrupt',
+    spendingCapCents: 100,
+    plan: {
+      name: 'Squadra cara',
+      objective: 'Spende oltre il tetto.',
+      metric: { name: 'Cose', target: 1, unit: 'cose' },
+      members: [{ key: 'uno', name: 'Uno', role: 'Fa', instructions: 'Fa cose senza farle da solo.' }],
+      routines: [{ memberKey: 'uno', phrase: 'ogni giorno fai', plan: { cadence: 'daily', timeOfDay: '08:00' } }],
+      phases: [{ name: 'Solo', approval: 'none' }],
+    },
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({ kind: 'artifact', costCents: 120, artifact: { done: true } }),
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: '2026-11-03T08:01:00.000Z',
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 5,
+      proposals: [{ action: 'draft-first-message', payload: { to: 'lead-2' } }],
+    }),
+  });
+  const overview = await ops.readSquadOverview({ spaceId: SPACE, squadSourceKey: 'sq-cap-corrupt' });
+  assert.equal(overview.metrics.overCap, true);
+  assert.equal(overview.backlogB.length, 1);
+  const runSourceKey = overview.backlogB[0].runSourceKey;
+  for (const membersJson of ['"x"', '{"a":1}', 'null', '[1]', '[{"agentSourceKey":""}]']) {
+    await modules.get('teammate-squad').service.applyManaged(
+      made.squad.id, { membersJson }, { actor: USER },
+    );
+    let applied = 0;
+    await assert.rejects(
+      () => ops.approveRun({
+        actor: USER,
+        spaceId: SPACE,
+        runSourceKey,
+        applyAction: async () => { applied += 1; return { ok: true }; },
+      }),
+      (error) => error.code === 'SQUAD_ROW_CORRUPT',
+      `corrupt members ${membersJson} must fail closed`,
+    );
+    assert.equal(applied, 0, 'nothing is applied on a corrupt squad row');
+  }
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: runSourceKey });
+  assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: fix the squad row and retry');
+});
