@@ -486,7 +486,7 @@ test('70e194b94156 review agent-crm#940 P2: a corrupt capped-squad row fails the
   assert.equal(overview.metrics.overCap, true);
   assert.equal(overview.backlogB.length, 1);
   const runSourceKey = overview.backlogB[0].runSourceKey;
-  for (const membersJson of ['"x"', '{"a":1}']) {
+  for (const membersJson of ['"x"', '{"a":1}', 'null', '[1]', '[{"agentSourceKey":""}]']) {
     await modules.get('teammate-squad').service.applyManaged(
       made.squad.id, { membersJson }, { actor: USER },
     );

@@ -1419,19 +1419,30 @@ test('70e194b94156 review agent-crm#940 P2: a legacy run without decidedAt is ch
   const stored = (await modules.get('teammate-run').service.listWhere({ spaceId: SPACE }))[0];
   assert.equal(stored.outcome, 'proposed');
   assert.ok(typeof stored.startedAt === 'string' && stored.startedAt < '2026-11-01T00:00:00.000Z');
-  await modules.get('teammate-run').service.applyManaged(stored.id, { decidedAt: null }, { actor: USER });
-  // Approving in November must still refuse: the run spent October's cap.
-  let applied = 0;
+  // An empty instant can never be stored: the record layer refuses it, so the
+  // approve-time fallback only ever sees a missing (null) decidedAt.
   await assert.rejects(
-    () => nov.approveRun({
-      actor: USER,
-      spaceId: SPACE,
-      runSourceKey: stored.sourceKey,
-      applyAction: async () => { applied += 1; return { ok: true }; },
-    }),
-    (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+    () => modules.get('teammate-run').service.applyManaged(stored.id, { decidedAt: '' }, { actor: USER }),
+    (error) => error.code === 'VALIDATION_ERROR',
+    'an empty decidedAt must be refused at write time',
   );
-  assert.equal(applied, 0, 'nothing is applied over the cap');
+  // A missing instant (null) falls back to startedAt.
+  {
+    await modules.get('teammate-run').service.applyManaged(stored.id, { decidedAt: null }, { actor: USER });
+    // Approving in November must still refuse: the run spent October's cap.
+    let applied = 0;
+    await assert.rejects(
+      () => nov.approveRun({
+        actor: USER,
+        spaceId: SPACE,
+        runSourceKey: stored.sourceKey,
+        applyAction: async () => { applied += 1; return { ok: true }; },
+      }),
+      (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+      'a null decidedAt must fall back to the start month',
+    );
+    assert.equal(applied, 0, 'nothing is applied over the cap');
+  }
   const rows = await modules.get('teammate-run').service
     .listWhere({ spaceId: SPACE, sourceKey: stored.sourceKey });
   assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: raise the cap and retry');
