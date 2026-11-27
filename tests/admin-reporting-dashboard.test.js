@@ -14,7 +14,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   FORECAST_LEGEND,
-  REPORTING_BADGES,
+  channelsSummary,
+  channelWeekTotals,
   REPORTING_CODE_FILES,
   REPORTING_CODE_LEDE,
   REPORTING_CURRENCY,
@@ -266,17 +267,58 @@ test('without a proposal the button says so honestly, still with zero requests',
   assert.match(text, /Nessuna ridistribuzione da proporre/);
 });
 
-test('header shows user-word badges under the title (C2, backlog:1ce3a1f0)', async () => {
+test('526e1bf4bd28: the header carries no label row, only what the period brought', async () => {
   const { mount, view } = harness();
   await view.renderReporting();
-  const badges = mount.findAll('span').map((node) => node.textContent);
-  assert.deepEqual(REPORTING_BADGES, [
-    'Clienti, preventivi e vendite',
-    'Si toglie senza rompere niente',
-    'Fatto dal tuo agente di coding',
-  ]);
-  for (const badge of REPORTING_BADGES) {
-    assert.ok(badges.includes(badge), `badge renders: ${badge}`);
+  const spans = mount.findAll('span').map((node) => node.textContent);
+  for (const label of ['Clienti, preventivi e vendite', 'Si toglie senza rompere niente', 'Fatto dal tuo agente di coding']) {
+    assert.ok(!spans.includes(label), `no technical label under the title: ${label}`);
+  }
+  const lines = mount.findAll('p').map((node) => node.textContent);
+  assert.ok(lines.includes('28 nuovi clienti in 4 settimane, soprattutto da Instagram.'),
+    'the header says how many and from where');
+  assert.ok(lines.some((line) => /^Settimana del 19 ott: \d+, quella prima: \d+ \((in crescita|in calo|stabile)\)\.$/.test(line)),
+    'the second line compares the last two weeks');
+});
+
+test('526e1bf4bd28: channelsSummary reads the breakdown and stays silent on an empty one', () => {
+  assert.equal(channelsSummary({ weeks: [], channels: [], total: 0, undated: 0 }), null);
+  assert.equal(channelsSummary(null), null);
+  assert.deepEqual(channelsSummary({
+    weeks: [{ week: '2026-10-05', label: '5 ott' }],
+    channels: [{ channel: 'phone', total: 1, weeks: [1] }],
+    total: 1,
+    undated: 0,
+  }), ['1 nuovo cliente in una settimana, soprattutto da Telefono.']);
+  assert.deepEqual(channelsSummary({
+    weeks: [{ week: '2026-10-05', label: '5 ott' }, { week: '2026-10-12', label: '12 ott' }],
+    channels: [{ channel: 'whatsapp', total: 5, weeks: [4, 1] }, { channel: 'email', total: 2, weeks: [0, 2] }],
+    total: 7,
+    undated: 0,
+  }), ['7 nuovi clienti in 2 settimane, soprattutto da WhatsApp.', 'Settimana del 12 ott: 3, quella prima: 4 (in calo).']);
+});
+
+test('526e1bf4bd28: every bar segment carries value and channel, and a floor height', async () => {
+  const { mount, view } = harness({
+    dashboard: {
+      ...MODEL,
+      channels: {
+        weeks: [{ week: '2026-10-05', label: '5 ott' }, { week: '2026-10-12', label: '12 ott' }],
+        channels: [{ channel: 'whatsapp', total: 41, weeks: [1, 40] }, { channel: 'phone', total: 2, weeks: [2, 0] }],
+        total: 43,
+        undated: 0,
+      },
+    },
+  });
+  await view.renderReporting();
+  const segments = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '') === 'bo-rep-week-seg');
+  assert.equal(segments.length, 3, 'one segment per channel with a count in the week');
+  assert.deepEqual(segments.map((node) => node.getAttribute('data-tip')).sort(), ['Telefono 2', 'WhatsApp 1', 'WhatsApp 40']);
+  for (const segment of segments) {
+    assert.equal(segment.getAttribute('title'), segment.getAttribute('data-tip'), 'the native title stays as fallback');
+    assert.equal(segment.getAttribute('tabindex'), '0', 'the tooltip is reachable from the keyboard');
+    const height = Number(/height:(\d+)px/.exec(segment.getAttribute('style'))?.[1]);
+    assert.ok(height >= 14, `a small value stays readable (${segment.getAttribute('data-tip')}: ${height}px)`);
   }
 });
 
@@ -460,9 +502,9 @@ test('an unknown channel renders under its raw name, never invented', async () =
   assert.match(text, /carrier-pigeon 2/);
 });
 
-test('an empty channel breakdown renders title, zero and empty bars, never blank (C20)', async () => {
+test('an empty channel breakdown says what to do, never blank and never a row of zeros (C20, 526e1bf4bd28)', async () => {
   const { mount, view } = harness({
-    dashboard: { ...MODEL, channels: { weeks: [], channels: [], total: 0, undated: 0 } },
+    dashboard: { ...MODEL, channels: { weeks: [{ week: '2026-10-05', label: '5 ott' }], channels: [], total: 0, undated: 0 } },
   });
   await view.renderReporting();
   const text = [
@@ -470,6 +512,35 @@ test('an empty channel breakdown renders title, zero and empty bars, never blank
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/);
   assert.match(text, /0 primi contatti da un canale/);
+  assert.match(text, /Ancora nessun nuovo cliente in queste settimane\./);
+  const add = mount.findAll('a').find((node) => node.textContent === 'Aggiungi un cliente');
+  assert.equal(add?.getAttribute('href'), '#/clienti/nuovo', 'the empty state opens the creation form, not the list');
+  assert.equal(mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '') === 'bo-rep-week').length, 0,
+    'no empty bars and no zero totals');
+});
+
+test('526e1bf4bd28: header summary and card share one emptiness rule and one weekly total', async () => {
+  const twoWeeks = [{ week: '2026-10-05', label: '5 ott' }, { week: '2026-10-12', label: '12 ott' }];
+  // Customers counted but none inside the weeks shown: no summary, empty card.
+  const outside = { total: 5, undated: 0, weeks: twoWeeks, channels: [{ channel: 'instagram', total: 5, weeks: [0, 0] }] };
+  assert.equal(channelsSummary(outside), null);
+  {
+    const { mount, view } = harness({ dashboard: { ...MODEL, channels: outside } });
+    await view.renderReporting();
+    const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+    assert.match(text, /Ancora nessun nuovo cliente in queste settimane\./);
+    assert.doesNotMatch(text, /nuovi clienti in 2 settimane/, 'the header says nothing the card does not draw');
+  }
+  // Non-integer weekly values count as zero in both places.
+  const fractional = { total: 3, undated: 0, weeks: twoWeeks, channels: [{ channel: 'whatsapp', total: 3, weeks: [1.5, 2] }] };
+  assert.deepEqual(channelWeekTotals(fractional), [0, 2]);
+  assert.match(channelsSummary(fractional)[1], /Settimana del 12 ott: 2, quella prima: 0 \(in crescita\)\./);
+  {
+    const { mount, view } = harness({ dashboard: { ...MODEL, channels: fractional } });
+    await view.renderReporting();
+    const totals = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '') === 'bo-rep-week-total').map((node) => node.textContent);
+    assert.deepEqual(totals, ['0', '2'], 'bars show the same weekly totals as the header');
+  }
 });
 
 test('forecastStatus is on track at and past the obiettivo, honest below it (C13)', () => {

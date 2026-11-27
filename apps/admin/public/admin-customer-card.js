@@ -7,8 +7,9 @@ import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
-import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
+import { openOfferPanel, offerShareMessage, offerShareShortLabel, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
+import { mergeHandoffIntoDraft } from './admin-composer-handoff.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
@@ -1383,6 +1384,30 @@ export function createCustomerCardView(deps) {
    * @type {{ remember: (resource: unknown, id: unknown, name: unknown) => void, get: (resource: unknown, id: unknown) => string | null } | null}
    */
   const knownNames = deps.knownNames && typeof deps.knownNames.get === 'function' ? deps.knownNames : null;
+  // backlog:ab7c38cbcca5: the offer message handed over by the offer page.
+  const composerHandoff = deps.composerHandoff && typeof deps.composerHandoff.take === 'function'
+    ? deps.composerHandoff : null;
+  /** The «Scrivi» opener of the shown scheda, set when its Azioni rapide paint. @type {null | ((card: any, navCtx: any, preferChannel?: string | null) => void)} */
+  let composerOpener = null;
+  /**
+   * backlog:19adbbb982ef: clipboard write that never throws — false sends the
+   * operator to the pill's own link. A denied clipboard stays diagnosable.
+   * @param {string} text
+   */
+  const copyToClipboard = async (text) => {
+    try {
+      const clipboard = doc?.defaultView?.navigator?.clipboard
+        ?? (typeof navigator !== 'undefined' ? navigator.clipboard : null);
+      if (!clipboard || typeof clipboard.writeText !== 'function') return false;
+      await clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] copia negli appunti non riuscita', { name: error?.name ?? null });
+      }
+      return false;
+    }
+  };
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -2246,6 +2271,9 @@ export function createCustomerCardView(deps) {
   }
 
   function quickActions(box, card, navCtx, extra = {}) {
+    // backlog:ab7c38cbcca5: the composer opener lives in this scope; the
+    // handed-over offer message (openHandedMessage) opens it from here.
+    composerOpener = openComposer;
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     const phone = card?.phone?.available === true
@@ -6060,11 +6088,42 @@ export function createCustomerCardView(deps) {
     if (fromQuote && first?.status === 'approved' && typeof first?.id === 'string' && first.id !== ''
       && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
       const shareWrap = el('div', 'bo-scheda-share');
-      const shareButton = el('button', undefined, 'Invia offerta');
+      // backlog:19adbbb982ef: the same shape and words as the offer page
+      // (#1143) — «Invia offerta» is the main action of the line, the link
+      // reads as a short copyable pill (never the raw URL, never a system
+      // link), and one status line says where the message is. No toast for
+      // the scheda on screen: the line is the one notice.
+      const shareButton = el('button', 'primary small', 'Invia offerta');
       shareButton.setAttribute('type', 'button');
       shareButton.setAttribute('data-action', 'scheda-share-link');
-      const shareLine = el('p', 'bo-muted', '');
+      const sharePill = el('span', 'offer-share-pill');
+      sharePill.setAttribute('hidden', 'hidden');
+      const shareLine = el('p', 'bo-muted offer-share-line', '');
       shareLine.setAttribute('role', 'status');
+      /** @param {string} text @param {boolean} [failed] */
+      const sayShare = (text, failed = false) => {
+        shareLine.setAttribute('class', failed ? 'field-error offer-share-line' : 'bo-muted offer-share-line');
+        shareLine.textContent = text;
+      };
+      /** The pill of the ready link: short label, whole URL only in the href and on the clipboard. @param {string} url */
+      const showPill = (url) => {
+        while (sharePill.firstChild) sharePill.removeChild(sharePill.firstChild);
+        const open = el('a', 'offer-share-link-open', offerShareShortLabel(url));
+        open.setAttribute('href', url);
+        open.setAttribute('data-action', 'offer-share-open');
+        open.setAttribute('title', 'Apri il link dell\u2019offerta');
+        const copy = el('button', 'offer-share-copy', 'Copia link');
+        copy.setAttribute('type', 'button');
+        copy.setAttribute('data-action', 'offer-share-copy-link');
+        copy.addEventListener('click', () => {
+          void copyToClipboard(url).then((copied) => {
+            copy.textContent = copied ? 'Copiato' : 'Copia non riuscita';
+          });
+        });
+        sharePill.appendChild(open);
+        sharePill.appendChild(copy);
+        sharePill.removeAttribute('hidden');
+      };
       const shareSend = () => uiBusy(shareButton, 'Creo il link…', async () => {
         // Review Muse #905 (P1): a slow share-link answer must never land
         // on another customer's composer. The scheda and the space are
@@ -6074,8 +6133,7 @@ export function createCustomerCardView(deps) {
         const pressShown = shownKey;
         const pressSpaceId = activeSpaceId();
         const pressKey = pressSpaceId !== null ? `${pressSpaceId}:${offerCtx.resource}:${offerCtx.id}` : null;
-        shareLine.setAttribute('class', 'bo-muted');
-        shareLine.textContent = 'Creo il link…';
+        sayShare('Creo il link…');
         try {
           const answer = await client.request(
             `/api/modules/quote/records/${encodeURIComponent(first.id)}/actions/share-link`,
@@ -6090,10 +6148,7 @@ export function createCustomerCardView(deps) {
               : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
             const url = offerShareUrl(origin, fresh);
             if (url === null) {
-              if (mount.contains(shareLine)) {
-                shareLine.setAttribute('class', 'field-error');
-                shareLine.textContent = 'Link non creato: indirizzo non valido. Riprova più tardi.';
-              }
+              if (mount.contains(shareLine)) sayShare('Link non creato: indirizzo non valido. Riprova più tardi.', true);
               return;
             }
             const share = result.share ?? null;
@@ -6107,50 +6162,73 @@ export function createCustomerCardView(deps) {
           }
           if (staged === null) {
             if (mount.contains(shareLine)) {
-              shareLine.setAttribute('class', 'field-error');
-              shareLine.textContent = result.alreadyExisted === true
-                ? 'Il link esiste già: aprilo dalla pagina offerta.'
-                : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+              sayShare(result.alreadyExisted === true
+                ? 'Il link esiste già ma non è visibile qui: aprilo dalla pagina offerta.'
+                : 'Link non creato: la risposta è senza link. Riprova più tardi.', true);
             }
             return;
           }
           const message = offerShareMessage({ offerName: name, url: staged.url, expiresAt: staged.expiresAt }) ?? staged.url;
+          const offerSubject = typeof name === 'string' && name.trim() !== '' ? `Offerta «${name.trim()}»` : '';
           if (pressKey !== null) {
             const draft = composerDrafts.get(pressKey) ?? { text: '', subject: '', aiBefore: null };
-            draft.text = message;
+            // backlog:dffa472d6baa (2): merge, never replace — typed text
+            // stays first and the message lands after it, once.
+            draft.text = mergeHandoffIntoDraft(draft.text, message);
+            if ((draft.subject ?? '') === '' && offerSubject !== '') draft.subject = offerSubject;
             composerDrafts.set(pressKey, draft);
           }
           // The live composer belongs to whoever is on screen now: only
           // the pressed scheda, still shown in the same space, receives it.
+          // That scheda is gone from the screen, so the toast is the only
+          // place left to say where the link waits.
           if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
             toast('Link pronto per la scheda precedente: riaprila per inviarlo.');
             return;
           }
+          showPill(staged.url);
+          sayShare(`${fresh === null ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.'} Messaggio pronto nel composer: premi Invia.`);
+          // backlog:19adbbb982ef: one press, one place to send — the composer
+          // opens with the message (or takes it, when already open).
           const area = mount.querySelector('.bo-scheda-composer-text');
-          if (area) area.value = message;
-          shareLine.setAttribute('class', 'bo-muted');
-          shareLine.textContent = fresh === null ? 'Link già pronto nel composer: è lo stesso di prima.' : 'Link pronto nel composer.';
-          shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
-          const open = el('a', 'offer-share-link-open', 'Apri il link');
-          open.setAttribute('href', staged.url);
-          shareLine.appendChild(open);
-          toast('Link pronto: aprilo con Scrivi e invialo tu.');
+          if (area) {
+            // backlog:dffa472d6baa (2): the open composer merges too — what
+            // the operator typed stays on screen, the message lands after it.
+            area.value = mergeHandoffIntoDraft(area.value, message);
+            // Review Muse #1157 (P1): the open composer shows the subject too —
+            // the draft keeps what the fields show, so a subject held only in
+            // the draft was wiped by the first keystroke. An empty subject
+            // field takes the offer subject; a typed one stays.
+            const subjectField = mount.querySelector('.bo-scheda-composer-subject');
+            if (subjectField && String(subjectField.value ?? '') === '' && offerSubject !== '') subjectField.value = offerSubject;
+          } else {
+            const shownCard = lastShown !== null && lastShown.key === shownKey ? (lastShown.loaded?.card ?? null) : null;
+            if (composerOpener !== null && shownCard !== null) composerOpener(shownCard, offerCtx);
+          }
         } catch (error) {
-          shareLine.setAttribute('class', 'field-error');
-          shareLine.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+          // backlog:dffa472d6baa (1): the same shown-scheda guard as the
+          // success branch — an error landing after a navigation writes
+          // nothing, not even on the detached line. humanWriteError logs
+          // the cause first (review #1158 P1: the guarded return must not
+          // swallow it), then the failure surfaces globally through the
+          // toast, like the success branch does — never silently.
+          const failure = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
+            toast(failure, true);
+            return;
+          }
+          sayShare(failure, true);
         }
       });
       shareButton.addEventListener('click', () => { void shareSend(); });
       shareWrap.appendChild(shareButton);
+      shareWrap.appendChild(sharePill);
       shareWrap.appendChild(shareLine);
       shareWrap.__shareOffer = shareSend;
       const known = schedaShareLinks.get(first.id);
       if (known) {
-        shareLine.textContent = 'Link già pronto nel composer.';
-        shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
-        const open = el('a', 'offer-share-link-open', 'Apri il link');
-        open.setAttribute('href', known.url);
-        shareLine.appendChild(open);
+        showPill(known.url);
+        sayShare('Link già pronto, da inviare: il messaggio è nel composer.');
       }
       box.appendChild(shareWrap);
     }
@@ -7896,6 +7974,34 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     show(panel, key, [left, right]);
+    // backlog:ab7c38cbcca5: «Scrivi a <cliente>» on the offer page — once the
+    // scheda can write (card and channels read), the message waiting for
+    // THIS customer in THIS space opens in the composer, ready for Invia.
+    if (!waits('card', 'profile', 'timeline')) {
+      openHandedMessage(card, { resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null }, key);
+    }
+  }
+
+  /**
+   * backlog:ab7c38cbcca5: takes the offer message handed to the customer on
+   * screen (one-shot, keyed by space and customer in the store) into the
+   * composer draft of the same space and customer, then opens the composer.
+   * A draft already typed keeps its text, the message goes after it.
+   * @param {any} card @param {{ resource: string, id: string, contactCompanyId?: string | null }} navCtx @param {string} key
+   */
+  function openHandedMessage(card, navCtx, key) {
+    if (composerHandoff === null || composerOpener === null || key !== shownKey) return;
+    const spaceId = activeSpaceId();
+    if (spaceId === null) return;
+    const handed = composerHandoff.take(navCtx.resource, navCtx.id);
+    if (handed === null) return;
+    const draftKey = `${spaceId}:${navCtx.resource}:${navCtx.id}`;
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '', aiBefore: null };
+    draft.text = mergeHandoffIntoDraft(draft.text, handed.text);
+    // The email subject only fills an empty one: a typed subject stays.
+    if ((draft.subject ?? '') === '' && handed.subject !== '') draft.subject = handed.subject;
+    composerDrafts.set(draftKey, draft);
+    composerOpener(card, navCtx);
   }
 
   /**

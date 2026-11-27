@@ -99,6 +99,7 @@ export function reviewSocialPost(draft) {
   if (!statedText(record.articleUrl, MAX_URL)) missing.push('articleUrl');
   if (record.channel !== SOCIAL_POST_CHANNEL) missing.push('channel');
   if (!isCents(record.costCents)) missing.push('costCents');
+  if (record.title !== undefined && record.title !== null && !statedText(record.title, MAX_TITLE)) missing.push('title');
   return Object.freeze({ complete: missing.length === 0, missing: Object.freeze([...missing]) });
 }
 
@@ -138,9 +139,11 @@ export function approveSocialPost(request = {}) {
       code: 'SOCIAL_POST_REQUEST_INVALID', status: 400,
     });
   }
+  const rawTitle = post.title ?? null;
+  const snapTitle = rawTitle === null ? null : String(rawTitle).trim();
   return Object.freeze({
     approval: Object.freeze({
-      title: post.title ?? null,
+      title: snapTitle,
       text: post.text,
       articleUrl: post.articleUrl,
       channel: post.channel,
@@ -184,9 +187,9 @@ export function checkPostSpendCap(request = {}) {
   });
 }
 
-/** Normalizza un testo pubblicato per il confronto: mai riscrittura, solo lettura. */
+/** Normalizza un testo pubblicato per il confronto: NFC e bordi, mai collasso interno (gli spazi cambiano Telegram). */
 function normalizePublished(value) {
-  return String(value ?? '').normalize('NFC').replace(/\s+/g, ' ').trim();
+  return String(value ?? '').normalize('NFC').trim();
 }
 
 /**

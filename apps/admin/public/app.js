@@ -5,6 +5,7 @@ import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { createShellSchemaClient, schemaStampOf } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
+import { createComposerHandoff } from './admin-composer-handoff.js';
 import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
@@ -676,11 +677,15 @@ const offerCrumbs = createOfferCrumbs({ space: () => shellActiveSpace ?? null })
 /** The customer names the views already showed (backlog:a762c28a646c). */
 const knownNames = createKnownNames({ space: () => shellActiveSpace ?? null });
 
+/** backlog:ab7c38cbcca5: the offer message the offer page hands to the scheda composer. */
+const composerHandoff = createComposerHandoff({ space: () => shellActiveSpace ?? null });
+
 const offerDetail = createOfferDetail({
   doc: document,
   mount: mountGate.owned('offer-detail'),
   client: moduleClient,
   knownNames,
+  composerHandoff,
   submissions,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
@@ -758,6 +763,7 @@ const customerCardView = createCustomerCardView({
   mount: mountGate.owned('customer-card'),
   client: moduleClient,
   knownNames,
+  composerHandoff,
   toast,
   // backlog:947260f9f036: a withdrawal sent early takes its «Annulla» away.
   hideToast: (scope) => { if (toaster !== null) toaster.hideScope(scope); },
