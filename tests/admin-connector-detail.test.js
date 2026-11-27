@@ -575,6 +575,31 @@ test('warm open reuses list data: fewer reads than a cold open (backlog:9a1c9a94
   assert.equal(readConnectorListSnapshot(), null);
 });
 
+test('warm open paints in under 1 s on a warm service (backlog:9a1c9a94)', async () => {
+  const adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }];
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const calls = [];
+  const started = Date.now();
+  await createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ calls }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+    listSnapshot: { spaceId: 'presti', adapters, entries: [CONNECTION], channelsReady: true, at: Date.now() },
+  }).render('whatsapp');
+  await flush();
+  const elapsed = Date.now() - started;
+  // A warm service answers at once: the detail's own work is milliseconds,
+  // so the whole warm open stays far under the 1 s budget. The live 3-8 s
+  // came from the schema + connectors reads the warm path now skips.
+  assert.ok(elapsed < 1000, `warm open took ${elapsed} ms, budget 1000 ms`);
+  assert.ok(!calls.includes('/api/schema'), 'a warm open skips the schema read');
+  assert.ok(!calls.some((path) => path.startsWith('/api/connectors?')), 'a warm open skips the connectors read');
+  assert.ok(mount.textContent.includes('+390200000001'));
+});
+
 test('an expired snapshot re-reads: a revoked connection shows its current state (Codex P2 #1062)', async () => {
   const adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }];
   const renderDetail = async ({ calls, extra = {} }) => {
