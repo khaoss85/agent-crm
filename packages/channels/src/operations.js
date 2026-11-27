@@ -353,9 +353,14 @@ const SYSTEM = () => trustedSystemActor('channel package internal write');
  *   tenantId: string,
  *   config?: Record<string, any>,
  *   interactionLog?: { logMessage: (request: any) => Promise<any>, advanceMessage?: (record: any, to: any, errorCode?: any) => Promise<any> } | null,
+ *   calendarReads?: ((request: { spaceId: string }) => Array<{ connectionKey: unknown, received: unknown, lastReceivedAt: unknown }>) | null,
  * }} deps `resolveSecret` is the deployment's custody edge (platform
  * runtime-vault in production, a fixture map in tests): the reference is
  * stored, the value is resolved at call time and never persisted.
+ * `calendarReads` is the deployment's poll tally (backlog:8d976add): the
+ * events a poll-based sync (calendar pulls) really read, attributed per
+ * connection by the deployment that owns both sides of the wiring. Absent
+ * keeps today's inbox-only tallies, exactly as before.
  */
 export function createChannelOperations(deps) {
   const { database, modules, registries } = deps;
@@ -432,6 +437,15 @@ export function createChannelOperations(deps) {
   if (interactionLog !== null && (typeof interactionLog !== 'object' || typeof interactionLog.logMessage !== 'function')) {
     throw new ValidationError('channel interactionLog must open the composed interaction-log@1 capability (logMessage)', {
       field: 'interactionLog',
+    });
+  }
+  // The deployment's poll tally (backlog:8d976add), opened over the
+  // calendar-sync package that owns those stores. Optional: without it the
+  // activity reads inbox-only tallies, exactly as before.
+  const calendarReads = deps.calendarReads ?? null;
+  if (calendarReads !== null && typeof calendarReads !== 'function') {
+    throw new ValidationError('channel calendarReads must be a function opening the deployment poll tally', {
+      field: 'calendarReads',
     });
   }
   const sendTimeoutMs = Number.isSafeInteger(deps.config?.sendTimeoutMs) ? deps.config.sendTimeoutMs : CHANNEL_SEND_TIMEOUT_MS;
@@ -1721,7 +1735,9 @@ export function createChannelOperations(deps) {
    * connection — its binding, the same import progress surface
    * `readInitialImport` returns, the provider-stated grant expiry
    * (`grantExpiresAt`, null when the binding states none), inbox tallies by
-   * effect, open dead letters, the observed direction (`in` when inbox rows exist, `out`
+   * effect plus the deployment's poll-pulled tally beside them (`pulled`,
+   * `lastPulledAt`, backlog:8d976add — zeroed when unwired, never invented),
+   * open dead letters, the observed direction (`in` when inbox rows or pulled events exist, `out`
    * when dead-letter rows exist, `both` when both do, null before any
    * traffic), and a health verdict (`idle` while a binding waits for
    * activation or before the first pull of an importable connection
@@ -1745,6 +1761,36 @@ export function createChannelOperations(deps) {
    * The per-connection outbound signal is a follow-up voice.
    */
   const SYNC_ACTIVITY_EFFECTS = ['applied', 'quarantined', 'ignored', 'duplicate', 'pending'];
+  /**
+   * The poll-pulled events the deployment attributes to this space's
+   * connections (backlog:8d976add), by connection key. A best-effort read:
+   * a failing or malformed tally reads as no pulled events, never as a
+   * broken screen — zero stays a measured zero and the waiting pill stays
+   * honest. The first well-formed item wins per connection, so a doubled
+   * deployment list cannot double-count one channel.
+   */
+  function readPulledByKey(spaceId) {
+    if (calendarReads === null) return null;
+    let listed;
+    try {
+      listed = calendarReads({ spaceId });
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(listed)) return null;
+    const byKey = new Map();
+    for (const item of listed) {
+      if (item === null || typeof item !== 'object') continue;
+      const { connectionKey, received, lastReceivedAt } = item;
+      if (typeof connectionKey !== 'string' || connectionKey === '' || byKey.has(connectionKey)) continue;
+      if (!Number.isSafeInteger(received) || received < 0) continue;
+      byKey.set(connectionKey, Object.freeze({
+        received,
+        lastReceivedAt: typeof lastReceivedAt === 'string' && lastReceivedAt !== '' ? lastReceivedAt : null,
+      }));
+    }
+    return byKey;
+  }
   function readSyncActivity(params) {
     const spaceId = assertSpaceId(params?.spaceId);
     const feedLimit = params?.feedLimit === undefined ? 20 : params.feedLimit;
@@ -1754,6 +1800,7 @@ export function createChannelOperations(deps) {
     const inboxService = inbox();
     const letterService = letters();
 
+    const pulledByKey = readPulledByKey(spaceId);
     const entries = connections().listWhere({ spaceId }).map((connection) => {
       const traffic = { spaceId, connectionKey: connection.sourceKey };
       const inboxCount = { received: inboxService.countWhere(traffic) };
@@ -1762,6 +1809,13 @@ export function createChannelOperations(deps) {
       }
       const latestInbox = inboxService.list({ where: traffic, limit: 1 })[0] ?? null;
       inboxCount.lastReceivedAt = typeof latestInbox?.receivedAt === 'string' ? latestInbox.receivedAt : null;
+      // Poll-pulled events (backlog:8d976add) ride beside the inbox tally,
+      // never inside it: `received` keeps counting inbox rows only, so the
+      // effect tallies still add up to it. The screens fold `pulled` in.
+      const pulled = pulledByKey?.get(connection.sourceKey) ?? null;
+      inboxCount.pulled = pulled !== null ? pulled.received : 0;
+      inboxCount.lastPulledAt = pulled !== null ? pulled.lastReceivedAt : null;
+      const arrived = inboxCount.received + inboxCount.pulled;
       const openDeadLetters = letterService.countWhere({ ...traffic, state: 'open' });
       const latestLetter = letterService.list({ where: { ...traffic, state: 'open' }, limit: 1 })[0] ?? null;
       const lastFailedAt = typeof latestLetter?.lastFailedAt === 'string' ? latestLetter.lastFailedAt : null;
@@ -1773,9 +1827,9 @@ export function createChannelOperations(deps) {
       const health = connection.status !== 'active'
         ? (connection.status === 'pending' ? 'idle' : 'down')
         : fixes > 0 || Boolean(sync && sync.lastErrorCode) ? 'attention'
-          : sync === null && isHistoryImportable(connection) && inboxCount.received === 0 ? 'idle' : 'ok';
-      const direction = inboxCount.received > 0 && letterCount > 0 ? 'both'
-        : inboxCount.received > 0 ? 'in'
+          : sync === null && isHistoryImportable(connection) && arrived === 0 ? 'idle' : 'ok';
+      const direction = arrived > 0 && letterCount > 0 ? 'both'
+        : arrived > 0 ? 'in'
           : letterCount > 0 ? 'out' : null;
       // BO-F6-16: the Stato sync screen names an expiring grant before it
       // breaks (the yellow card and the channel pill). Absent means no

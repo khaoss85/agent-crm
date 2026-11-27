@@ -439,9 +439,31 @@ export function channelSynced(input = {}) {
 }
 
 /**
+ * The events one activity entry really received (backlog:8d976add): the
+ * `inbox.received` tally plus the deployment's poll-pulled tally beside it
+ * (`inbox.pulled`, calendar pulls the inbox never sees). Malformed or
+ * missing tallies read zero, never a guess — and an old payload without
+ * the pulled keys reads exactly as before.
+ * @param {unknown} inbox one entry's inbox tally, possibly null
+ * @returns {{ received: number, lastAt: string | null }}
+ */
+export function inboxArrived(inbox) {
+  const box = inbox !== null && typeof inbox === 'object' ? inbox : null;
+  let received = box !== null && Number.isSafeInteger(box.received) && box.received > 0 ? box.received : 0;
+  if (box !== null && Number.isSafeInteger(box.pulled) && box.pulled > 0) received += box.pulled;
+  let lastAt = box !== null && typeof box.lastReceivedAt === 'string' && box.lastReceivedAt !== ''
+    ? box.lastReceivedAt : null;
+  const pulledAt = box !== null && typeof box.lastPulledAt === 'string' && box.lastPulledAt !== ''
+    ? box.lastPulledAt : null;
+  if (pulledAt !== null && (lastAt === null || pulledAt > lastAt)) lastAt = pulledAt;
+  return { received, lastAt };
+}
+
+/**
  * Events really received on one counted channel, from the activity payload
- * (GET /api/connectors/activity): the sum of the `inbox.received` tallies,
- * like the Stato sync table aggregates them. Unknown payloads read null
+ * (GET /api/connectors/activity): the sum of the arrived tallies
+ * (`inboxArrived`, inbox plus poll-pulled), like the Stato sync table
+ * aggregates them. Unknown payloads read null
  * (unknown), never zero: zero must stay a measured zero.
  * @param {any} activity the activity payload, possibly null
  * @param {string} channel the counted channel id
@@ -457,8 +479,7 @@ export function activityReceived(activity, channel) {
     if (entry === null || typeof entry !== 'object') continue;
     if (countedChannel(entry.channel) !== channel) continue;
     seen = true;
-    const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
-    if (inbox !== null && Number.isSafeInteger(inbox.received) && inbox.received > 0) total += inbox.received;
+    total += inboxArrived(entry.inbox).received;
   }
   return seen ? total : 0;
 }
