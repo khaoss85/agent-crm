@@ -35,6 +35,7 @@ import {
   channelState,
   channelSynced as sharedChannelSynced,
   countedChannel,
+  inboxArrived,
   NINE_CHANNELS,
   mergeProfileConnections,
 } from './admin-channels-count.js';
@@ -238,8 +239,7 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
     lastAt = activity.lastActivityAt;
   }
   const received = entries.reduce((total, entry) => total
-    + (entry !== null && typeof entry === 'object' && entry.inbox !== null && typeof entry.inbox === 'object'
-      && Number.isSafeInteger(entry.inbox.received) && entry.inbox.received > 0 ? entry.inbox.received : 0), 0);
+    + (entry !== null && typeof entry === 'object' ? inboxArrived(entry.inbox).received : 0), 0);
   const rows = syncChannelTable(activity, nowMs);
   // The freshest update the table itself shows when the payload carries no
   // top-level instant (the pilot omits it before the first round).
@@ -462,11 +462,14 @@ export function syncChannelRows(activity) {
     if (key === null) continue;
     const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
     const outbox = entry.outbox !== null && typeof entry.outbox === 'object' ? entry.outbox : null;
-    const receivedAt = inbox !== null && typeof inbox.lastReceivedAt === 'string' && inbox.lastReceivedAt !== ''
-      ? inbox.lastReceivedAt : null;
+    // Backlog 8d976add: the arrived tally folds the deployment's
+    // poll-pulled events in (a pulled arrival is an arrival, like a
+    // received one, for the freshest-movement precedence below).
+    const arrived = inboxArrived(inbox);
+    const receivedAt = arrived.lastAt;
     const failedAt = outbox !== null && typeof outbox.lastFailedAt === 'string' && outbox.lastFailedAt !== ''
       ? outbox.lastFailedAt : null;
-    const received = inbox !== null && Number.isSafeInteger(inbox.received) ? inbox.received : 0;
+    const received = arrived.received;
     const quarantined = inbox !== null && Number.isSafeInteger(inbox.quarantined) ? inbox.quarantined : 0;
     const dead = outbox !== null && Number.isSafeInteger(outbox.openDeadLetters) ? outbox.openDeadLetters : 0;
     const health = typeof entry.health === 'string' ? entry.health : 'idle';
@@ -659,9 +662,11 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
     let importing = false;
     const keys = [];
     for (const entry of list) {
-      const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
-      if (inbox !== null && Number.isSafeInteger(inbox.received) && inbox.received > 0) received += inbox.received;
-      for (const at of [inbox !== null ? inbox.lastReceivedAt : null,
+      // Backlog 8d976add: one arrived tally per entry (inbox plus the
+      // deployment's poll-pulled events), like `syncChannelRows` above.
+      const arrived = inboxArrived(entry !== null && typeof entry === 'object' ? entry.inbox : null);
+      received += arrived.received;
+      for (const at of [arrived.lastAt,
         entry.outbox !== null && typeof entry.outbox === 'object' ? entry.outbox.lastFailedAt : null]) {
         if (typeof at === 'string' && at !== '' && (lastAt === null || at > lastAt)) lastAt = at;
       }

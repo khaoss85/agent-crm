@@ -47,6 +47,7 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  * @param {{
  *   adapterDefinition: any, fixtureApi: any,
  *   secretRef?: string, secretValue?: string,
+ *   calendarReads?: ((request: any) => Array<any>) | null,
  *   tenantId?: string, config?: Record<string, any>,
  *   resolveSender?: ((request: any) => Promise<any>) | null,
  *   interactionLog?: { logMessage: (request: any) => Promise<any> } | null,
@@ -56,7 +57,9 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   time and window checks never mix a frozen clock with the wall clock.
  *   `resolveSender` stands in for the composed `channel-sender@1`
  *   capability where the test proves the engine rather than the
- *   reconciliation itself. `dbPath` opens a file database instead of
+ *   reconciliation itself. `calendarReads` stands in for the deployment
+ *   poll tally (calendar pulls) the activity folds beside the inbox.
+ *   `dbPath` opens a file database instead of
  *   `:memory:` so two harnesses can share one store like two processes.
  *   `interactionLog` is the opened `interaction-log@1` handle (usually a
  *   recording fake): with it a queued send naming a host subject logs the
@@ -103,6 +106,7 @@ export function createChannelsHarness(options) {
   };
   const ops = createChannelOperations({
     database, modules, registries, resolveSecret, tenantId, config: options.config,
+    calendarReads: options.calendarReads ?? null,
     resolveSender: options.resolveSender ?? null,
     ...(options.interactionLog === undefined ? {} : { interactionLog: options.interactionLog }),
     ...(typeof options.nowMs === 'function' ? { nowMs: options.nowMs } : {}),
