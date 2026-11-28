@@ -33,7 +33,7 @@
 
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials, isStaleRead } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, countedChannel, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1818,10 +1818,14 @@ export function countConnectedNine(connections = [], profile = null) {
  */
 export function missingLeadChannels(connections = [], profile = null, adapters = null) {
   const rows = Array.isArray(connections) ? connections : [];
+  // The shared counted id (admin-channels-count.js), like the strip count
+  // and Stato sync: a row stored under an adapter spelling (gmail,
+  // google-calendar, messenger) votes for its channel, never as missing.
   const active = new Set(
     rows
-      .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
-      .map((row) => row.channel),
+      .filter((row) => row != null && row.status === 'active')
+      .map((row) => countedChannel(row.channel))
+      .filter((channel) => channel !== ''),
   );
   for (const channel of googleNineChannels(profile)) active.add(channel);
   const guided = CONNECTOR_CATALOG.map((entry) => entry?.channel);

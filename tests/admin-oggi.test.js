@@ -2581,6 +2581,27 @@ test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for th
   }
 });
 
+// Voce 07129a208435 (Oggi «0 di 9» contro Stato sync «2 di 11» sulla stessa
+// base): Oggi legge il countedChannel condiviso — una riga archiviata con
+// la grafia dell'adapter (gmail, google-calendar, messenger) conta come il
+// suo canale e non viene invitata, come già fa Stato sync.
+test('07129a208435: Oggi reads the shared countedChannel, alias spellings count as their channel', () => {
+  const connections = [
+    { channel: 'gmail', status: 'active' },
+    { channel: 'google-calendar', status: 'active' },
+    { channel: 'messenger', status: 'active' },
+  ];
+  const missing = missingLeadChannels(connections, null, null).map((entry) => entry.channel);
+  for (const channel of ['email', 'calendar', 'facebook']) {
+    assert.ok(!missing.includes(channel), `${channel}: linked under an alias spelling is not invited`);
+  }
+  const invite = buildChannelInvite({ connections, profile: null, adapters: null });
+  assert.equal(invite.connected, 3, 'the three alias rows count as connected');
+  assert.equal(invite.total, 9);
+  assert.ok(!invite.leads.includes('Email'), 'Email is not invited while gmail is linked');
+  assert.equal(countConnectedNine(connections, null), 3, 'the nine-count agrees on the same rows');
+});
+
 // Backlog 6d0df351: the pilot shape — the schema serves only WhatsApp and
 // Telegram. Oggi invites exactly those (Telegram joins from outside the
 // nine); what no adapter serves reads «non ancora disponibile», never Collega.
