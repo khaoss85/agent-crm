@@ -406,7 +406,7 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, visibility } = {}) {
+    insertEvent({ calendarId, summary, description = '', start, end, recurrence, extendedProperties = {}, id, secret, visibility } = {}) {
       requireGrant({ secret }, 'insertEvent');
       const cal = calendar(calendarId);
       const eventId = id === undefined ? `fake-${cal.seq + 1}-${Math.floor(nowMs() % 100000)}` : checkEventId(id);
@@ -420,6 +420,18 @@ export function createFakeGoogleCalendar(options = {}) {
       if (visibility !== undefined && visibility !== null && !visibilities.includes(visibility)) {
         throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'insertEvent visibility must be one of default, public, private, confidential');
       }
+      // Series export (backlog:bb13ef1823ad): the engine inserts one
+      // recurring event carrying the series RRULE, the way a confirmed
+      // series arrives whole on Google. Same bounds as the read path —
+      // refused before anything is stored, never a half-written event.
+      let series = null;
+      if (recurrence !== undefined && recurrence !== null) {
+        if (!Array.isArray(recurrence) || recurrence.length === 0 || recurrence.length > 8
+          || !recurrence.every((line) => typeof line === 'string' && line.startsWith('RRULE:') && line.length <= 256)) {
+          throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'insertEvent recurrence must be 1-8 RRULE strings up to 256 chars');
+        }
+        series = Object.freeze([...recurrence]);
+      }
       const stored = {
         id: eventId,
         summary: typeof summary === 'string' ? summary : '',
@@ -430,6 +442,7 @@ export function createFakeGoogleCalendar(options = {}) {
         updated: nowIso(),
         extendedProperties: { ...extendedProperties },
         ...(visibility === undefined || visibility === null ? {} : { visibility }),
+        ...(series === null ? {} : { recurrence: series }),
       };
       cal.events.set(eventId, stored);
       touch(cal, eventId);

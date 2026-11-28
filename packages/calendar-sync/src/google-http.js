@@ -128,9 +128,20 @@ export function toEngineEvent(wire) {
   const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
     ? { recurringEventId: wire.recurringEventId }
     : {};
+  // A recurring master carries its RRULE lines (backlog:bb13ef1823ad):
+  // without them the engine cannot tell the series it linked from an
+  // expanded occurrence, so reconciliation would link an instance id
+  // and drop the series shape. Bounded strings only, never a guess —
+  // a missing or unbounded value stays absent.
+  const recurrence = Array.isArray(wire.recurrence) && wire.recurrence.length > 0
+    && wire.recurrence.length <= 8
+    && wire.recurrence.every((line) => typeof line === 'string' && line !== '' && line.length <= 256)
+    ? { recurrence: Object.freeze([...wire.recurrence]) }
+    : {};
   return Object.freeze({
     id,
     ...recurring,
+    ...recurrence,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -318,7 +329,10 @@ export function createHttpGoogleCalendar(options = {}) {
      * writes (`extendedProperties.private.accordoSourceKey`), so a retry
      * after a lost link reconciles instead of inserting a duplicate —
      * the provider-side half of export idempotency, like the fake's
-     * `findByAccordoSourceKey`.
+     * `findByAccordoSourceKey`. A series reconciles to its master
+     * (backlog:bb13ef1823ad): `singleEvents=false` reads masters only,
+     * so the link names the series instead of an expanded occurrence
+     * instance — which a later cancel would only partly delete.
      */
     async findByAccordoSourceKey({ calendarId, sourceKey, secret } = {}) {
       assertSecret(secret, 'findByAccordoSourceKey');
@@ -328,7 +342,7 @@ export function createHttpGoogleCalendar(options = {}) {
       }
       const params = new URLSearchParams();
       params.set('privateExtendedProperty', `accordoSourceKey=${sourceKey}`);
-      params.set('singleEvents', 'true');
+      params.set('singleEvents', 'false');
       params.set('maxResults', '10');
       let body;
       try {
@@ -346,7 +360,7 @@ export function createHttpGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, visibility } = {}) {
+    async insertEvent({ calendarId, summary, description = '', start, end, recurrence, extendedProperties = {}, id, secret, visibility } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
       // Team visibility (backlog:9aa5c073): a private booking exports with
@@ -356,12 +370,22 @@ export function createHttpGoogleCalendar(options = {}) {
       if (visibility !== undefined && visibility !== null && !visibilities.includes(visibility)) {
         throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent visibility must be one of default, public, private, confidential');
       }
+      // Series export (backlog:bb13ef1823ad): one recurring event carrying
+      // the series RRULE — the same bounds the fake enforces, so a call
+      // the fake accepts is one production accepts, and a malformed one
+      // refuses before any network write.
+      if (recurrence !== undefined && recurrence !== null
+        && (!Array.isArray(recurrence) || recurrence.length === 0 || recurrence.length > 8
+          || !recurrence.every((line) => typeof line === 'string' && line.startsWith('RRULE:') && line.length <= 256))) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent recurrence must be 1-8 RRULE strings up to 256 chars');
+      }
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
         ...(typeof description === 'string' && description !== '' ? { description } : {}),
         ...(start === undefined || start === null ? {} : { start }),
         ...(end === undefined || end === null ? {} : { end }),
         ...(visibility === undefined || visibility === null ? {} : { visibility }),
+        ...(recurrence === undefined || recurrence === null ? {} : { recurrence: [...recurrence] }),
         extendedProperties: { private: { ...extendedProperties } },
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
       });
