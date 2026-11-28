@@ -374,3 +374,32 @@ test('92829060f8ff: dopo Crea la nota resta in vista, sotto la barra', async () 
   assert.match(note.getAttribute('style') ?? '', /scroll-margin-top: 12px/, 'resta sotto la barra');
   assert.ok(scrolled.some((options) => options && options.block === 'nearest'), 'scorre in vista');
 });
+
+test('086c6656c5df: «Nuovo agente» da una frase — la proposta si conferma in un clic, i campi restano a mano', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  type(mount, 'agent-phrase', 'ogni lunedì segue i lead nuovi');
+  assert.ok(mount.textContent.includes('Proposta: Segue i lead'), 'la proposta nomina l’agente senza le parole di cadenza');
+  assert.equal(mount.querySelector('input[name="agent-name"]').value, '', 'scrivere la frase non tocca i campi a mano');
+  button(mount, 'use-suggestion').dispatch('click', {});
+  assert.equal(mount.querySelector('input[name="agent-name"]').value, 'Segue i lead');
+  assert.match(mount.querySelector('input[name="agent-role"]').value, /Esegue: ogni lunedì segue i lead nuovi/);
+  assert.match(mount.querySelector('textarea[name="agent-instructions"]').value, /chiede sempre l’ok/);
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  const sent = posts(client);
+  assert.equal(sent.length, 1, 'un clic di conferma, un agente');
+  assert.equal(sent[0].body.name, 'Segue i lead');
+  assert.ok(mount.textContent.includes('Segue i lead è entrato nel tuo team.'));
+});
+
+test('086c6656c5df: senza frase nessuna proposta; la creazione a mano resta come prima', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  assert.equal(button(mount, 'use-suggestion'), null, 'senza frase non si propone niente');
+  fillPanel(mount, {});
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client).length, 1);
+  assert.equal(posts(client)[0].body.name, 'Auguri');
+});

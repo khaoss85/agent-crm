@@ -483,6 +483,86 @@ export function checkAgentStatusInput(record) {
   };
 }
 
+/**
+ * Backlog 086c6656c5df: what the UI proposes — in one click — when a
+ * phrase names no schedule. Daily and monthly need no weekday, so they
+ * are proposed as-is; `once` still needs its instant, which the confirm
+ * fills with now. Weekly is left out on purpose: proposing «ogni lunedì»
+ * for a phrase that names no day would be a guess.
+ */
+export const UNCLEAR_SCHEDULE_PROPOSALS = Object.freeze([
+  Object.freeze({ id: 'daily', label: 'Ogni giorno', plan: Object.freeze({ cadence: 'daily', timeOfDay: '08:00' }) }),
+  Object.freeze({ id: 'monthly', label: 'Ogni mese', plan: Object.freeze({ cadence: 'monthly', timeOfDay: '08:00' }) }),
+  Object.freeze({ id: 'once', label: 'Una volta, adesso', plan: Object.freeze({ cadence: 'once' }) }),
+]);
+
+/** Fresh copies of UNCLEAR_SCHEDULE_PROPOSALS: the UI confirms one, never mutates it. */
+export function suggestScheduleProposals() {
+  return UNCLEAR_SCHEDULE_PROPOSALS.map((entry) => ({ id: entry.id, label: entry.label, plan: { ...entry.plan } }));
+}
+
+/**
+ * Backlog 086c6656c5df: the per-turn cost the UI proposes for one click
+ * confirm — the median of the agent's own positive run costs, so one odd
+ * run never moves it; the fallback (default ten cents) when the agent
+ * never ran with a cost yet.
+ * @param {Array<any>} runs @param {string} agentSourceKey @param {number} [fallbackCents]
+ */
+export function suggestCostCents(runs, agentSourceKey, fallbackCents = 10) {
+  const fallback = Number.isInteger(fallbackCents) && fallbackCents > 0 ? fallbackCents : 10;
+  if (agentSourceKey === '') return fallback;
+  const costs = (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && typeof run === 'object' && run.agentSourceKey === agentSourceKey
+      && Number.isInteger(run.costCents) && run.costCents > 0)
+    .map((run) => run.costCents)
+    .sort((a, b) => a - b);
+  if (costs.length === 0) return fallback;
+  const middle = Math.floor(costs.length / 2);
+  return costs.length % 2 === 1 ? costs[middle] : Math.round((costs[middle - 1] + costs[middle]) / 2);
+}
+
+/**
+ * Backlog 086c6656c5df: a new agent drafted from one phrase — the AI
+ * proposal the «Nuovo agente» panel offers, with the hand-written fields
+ * staying beside it as the manual secondary. The name is the phrase's
+ * first three words without its schedule words; the role and the
+ * instructions keep the whole phrase, so nothing the operator typed is
+ * lost. Null when the phrase says nothing.
+ * @param {unknown} phrase
+ */
+export function suggestNewAgent(phrase) {
+  const cleaned = typeof phrase === 'string' ? phrase.replace(/\s+/g, ' ').trim() : '';
+  if (cleaned === '') return null;
+  // Schedule words («ogni lunedì», «una volta») never name the agent: drop
+  // them by folded-word spans, then read the first three surviving words
+  // back from the cleaned phrase, accents included. foldItalian keeps word
+  // count and order, so folded and cleaned words align one to one.
+  const foldedWords = foldItalian(cleaned).split(' ').filter(Boolean);
+  const cleanedWords = cleaned.split(' ').filter(Boolean);
+  const dropped = new Set();
+  const days = new Set(['lunedi', 'martedi', 'mercoledi', 'giovedi', 'venerdi', 'sabato', 'domenica', 'giorno', 'settimana', 'mese', 'mattina']);
+  for (let i = 0; i < foldedWords.length; i += 1) {
+    const word = foldedWords[i].replace(/^[@,;:.–—-]+/, '').replace(/[,;:.–—-]+$/, '');
+    if (word === 'ogni' && days.has((foldedWords[i + 1] ?? '').replace(/[,;:.–—-]+$/, ''))) {
+      dropped.add(i); dropped.add(i + 1); i += 1;
+    } else if (word === 'una' && (foldedWords[i + 1] === 'volta' || foldedWords[i + 1] === 'tantum')) {
+      dropped.add(i); dropped.add(i + 1); i += 1;
+    } else if (word === 'quotidiano' || word === 'settimanale' || word === 'mensile' || word === 'subito' || word === 'adesso') {
+      dropped.add(i);
+    }
+  }
+  const kept = cleanedWords
+    .filter((word, index) => !dropped.has(index))
+    .map((word) => word.replace(/^[@,;:.–—-]+/, '').replace(/[,;:.–—-]+$/, ''))
+    .filter(Boolean)
+    .slice(0, 3);
+  const rawName = kept.length > 0 ? kept.join(' ') : cleanedWords.slice(0, 3).join(' ');
+  const name = (rawName === '' ? 'Nuovo agente' : rawName.replace(/^./, (char) => char.toUpperCase())).slice(0, 120);
+  const role = `Esegue: ${cleaned}`.slice(0, 120);
+  const instructions = `${cleaned} Prima di fare qualcosa chiede sempre l’ok.`.slice(0, 4000);
+  return { name, role, instructions };
+}
+
 /** Validate the assignment create input. */
 export function checkAssignmentInput(record) {
   const input = record && typeof record === 'object' ? record : {};

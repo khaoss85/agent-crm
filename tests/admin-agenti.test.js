@@ -26,6 +26,9 @@ import {
   isDaFareRun,
   lastRunLine,
   isDecisionUnavailable,
+  suggestScheduleProposals,
+  suggestedCostCents,
+  suggestNewAgentDraft,
 } from '../apps/admin/public/admin-agenti.js';
 import { rerendersOnSpaceSwitch } from '../apps/admin/public/admin-shell.js';
 import { createAssistantPanel, ASSISTANT_STATUS_PATH } from '../apps/admin/public/admin-assistant.js';
@@ -289,7 +292,7 @@ test('Aggiungi adds a catalogue agent through one keyed POST and the team shows 
   assert.equal(mount.querySelector('button[data-slug="pulizia-contatti"]'), null, 'the tile now says Nel tuo team');
 });
 
-test('talking to an agent: a phrase with no schedule runs once at once, with no extra press (restyle 19/11)', async () => {
+test('talking to an agent: a phrase with no schedule proposes a frequency or once to confirm (086c6656c5df)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = driveClient({ unclearFirst: true });
@@ -301,18 +304,127 @@ test('talking to an agent: a phrase with no schedule runs once at once, with no 
   input.dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
+  const first = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(first.length, 1, 'the unclear answer proposes instead of guessing');
+  assert.equal(first[0].body.plan, undefined, 'the first write lets the server read the phrase');
+  assert.ok(textOf(mount).includes(PHRASE_UNCLEAR_NOTE), 'the question stays on screen');
+  for (const action of ['freq-daily', 'freq-monthly', 'once']) assert.ok(findButton(mount, action), action);
+  findButton(mount, 'freq-daily').dispatch('click', {});
+  await flush();
   const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
-  assert.equal(posts.length, 2, 'the unclear answer is followed by the «una volta» write, no press');
-  assert.equal(posts[0].body.plan, undefined, 'the first write lets the server read the phrase');
-  assert.deepEqual(posts[1].body.plan, { cadence: 'once', runAt: NOW });
+  assert.equal(posts.length, 2, 'one click confirms the proposed frequency');
+  assert.deepEqual(posts[1].body.plan, { cadence: 'daily', timeOfDay: '08:00' });
   assert.equal(posts[1].body.phrase, 'occupati dei lead WhatsApp non contattati');
   assert.notEqual(posts[0].key, posts[1].key, 'a different body takes a new key');
   const text = textOf(mount);
   assert.ok(!text.includes(PHRASE_UNCLEAR_NOTE), 'no question left on screen');
   assert.equal(findButton(mount, 'once'), null);
+  assert.ok(text.includes('Incarico dato a Riaggancio: ogni giorno'), 'the outcome names the confirmed frequency');
+});
+
+test('talking to an agent: confirming «una volta» sends the frozen words with its instant (086c6656c5df)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ unclearFirst: true });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'occupati dei lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  const retyped = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  retyped.value = 'parole cambiate mentre propone';
+  retyped.dispatch('input', {});
+  findButton(mount, 'once').dispatch('click', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].body.plan, { cadence: 'once', runAt: NOW });
+  assert.equal(posts[1].body.phrase, 'occupati dei lead', 'the confirm sends the refused words, never newer typing');
+  const text = textOf(mount);
   assert.ok(text.includes('Incarico dato a Riaggancio: una volta.'));
   assert.ok(text.includes(PHRASE_ONCE_FALLBACK_NOTE), 'the outcome says how to make it repeat');
-  assert.ok(text.includes('«occupati dei lead WhatsApp non contattati»'));
+});
+
+test('a capped agent proposes its per-turn cost: one click fills it and sends (086c6656c5df)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  client.agents[0] = { ...RIAGGANCIO, spendingCapCents: 1000 };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const suggest = findButton(mount, 'cost-suggest');
+  assert.ok(suggest, 'the card proposes a cost beside the manual field');
+  assert.ok(suggest.textContent.includes('0,42 €'), 'the proposal is the median of its own runs');
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'ogni giorno prepara il report';
+  input.dispatch('input', {});
+  suggest.dispatch('click', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 1, 'one click confirms the proposed cost');
+  assert.equal(posts[0].body.costPerRunCents, 42);
+  assert.ok(textOf(mount).includes('Incarico dato a Riaggancio:'));
+});
+
+test('086c6656c5df: «Usa … a giro» e le frequenze dicono «Invio…» dal clic (cura del rosso fast di #1104)', async () => {
+  const cappedDoc = createFakeDocument();
+  const cappedMount = createMount();
+  const cappedClient = driveClient();
+  cappedClient.agents[0] = { ...RIAGGANCIO, spendingCapCents: 1000 };
+  const cappedView = createAgentiView({ doc: cappedDoc, mount: cappedMount, client: cappedClient, spaceId: () => 'presti', now: () => NOW });
+  await cappedView.render();
+  await flush();
+  const talk = cappedMount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  talk.value = 'ogni giorno prepara il report';
+  talk.dispatch('input', {});
+  const suggest = findButton(cappedMount, 'cost-suggest');
+  suggest.dispatch('click', {});
+  assert.equal(suggest.textContent, 'Invio…', 'l’attesa si vede dal clic');
+  await flush();
+  assert.equal(cappedClient.calls.filter((call) => call.path === '/api/agents/assign').length, 1, 'un clic conferma il costo proposto');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ unclearFirst: true });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'occupati dei lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  const pick = findButton(mount, 'once');
+  pick.dispatch('click', {});
+  assert.equal(pick.textContent, 'Invio…', 'l’attesa si vede dal clic');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.path === '/api/agents/assign').length, 2, 'un clic conferma «una volta»');
+});
+
+test('086c6656c5df helpers: frequencies are fresh copies, the cost is the median, the draft names the agent', () => {
+  const first = suggestScheduleProposals();
+  assert.deepEqual(first.map((entry) => entry.id), ['daily', 'monthly', 'once']);
+  first[0].plan.cadence = 'weekly';
+  assert.equal(suggestScheduleProposals()[0].plan.cadence, 'daily', 'a confirm never mutates the proposal');
+  const runs = [
+    { agentSourceKey: 'a', costCents: 30 },
+    { agentSourceKey: 'a', costCents: 10 },
+    { agentSourceKey: 'a', costCents: 20 },
+    { agentSourceKey: 'a', costCents: 'x' },
+    { agentSourceKey: 'b', costCents: 999 },
+  ];
+  assert.equal(suggestedCostCents(runs, 'a'), 20);
+  assert.equal(suggestedCostCents([], 'a'), 10, 'no runs yet: ten cents');
+  assert.equal(suggestedCostCents(runs, 'nessuno'), 10, 'another agent never moves it');
+  const draft = suggestNewAgentDraft('ogni lunedì segue i lead nuovi');
+  assert.equal(draft?.name, 'Segue i lead');
+  assert.match(draft?.role ?? '', /ogni lunedì segue i lead nuovi/);
+  assert.equal(suggestNewAgentDraft('   '), null);
+  assert.equal(suggestNewAgentDraft(null), null);
 });
 
 test('without the agents package the screen says so, and writes nothing', async () => {
@@ -1004,7 +1116,7 @@ test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {
   assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-done', sourceKey: 'r-3', outcome: 'applied' }]), 'Fatto', 'un giro applicato non è da approvare');
 });
 
-test('review #1072 P1: a failed «una volta» retry leaves no fallback note on the next incarico', async () => {
+test('review #1072 P1: a failed «una volta» confirm leaves no fallback note on the next incarico', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const drive = driveClient();
@@ -1029,8 +1141,12 @@ test('review #1072 P1: a failed «una volta» retry leaves no fallback note on t
   talk().dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
-  assert.equal(assignCalls, 2, 'the unclear phrase was retried once and failed');
-  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE));
+  assert.equal(assignCalls, 1, 'the unclear phrase proposes instead of retrying');
+  assert.ok(findButton(mount, 'once'), 'the «una volta» confirm stays on screen');
+  findButton(mount, 'once').dispatch('click', {});
+  await flush();
+  assert.equal(assignCalls, 2, 'one click confirms with the frozen words');
+  assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE), 'a failed confirm leaves no fallback note');
   talk().value = 'ogni lunedì occupati dei lead';
   talk().dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
@@ -1040,7 +1156,7 @@ test('review #1072 P1: a failed «una volta» retry leaves no fallback note on t
   assert.ok(!textOf(mount).includes(PHRASE_ONCE_FALLBACK_NOTE), 'no stale «parte una volta» note on a scheduled incarico');
 });
 
-test('review #1072 giro 2 P1: typing during «Invio…» never changes what the «una volta» retry sends', async () => {
+test('review #1072 giro 2 P1: typing during «Invio…» never changes what the «una volta» confirm sends', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const drive = driveClient();
@@ -1075,7 +1191,12 @@ test('review #1072 giro 2 P1: typing during «Invio…» never changes what the 
   talk().dispatch('input', {});
   release();
   await flush();
-  assert.equal(sent.length, 2);
-  assert.equal(sent[1].phrase, 'occupati dei lead', 'the retry sends the words of the failed attempt');
+  assert.equal(sent.length, 1, 'the unclear answer proposes instead of retrying on its own');
+  assert.ok(findButton(mount, 'once'), 'the confirm stays on screen');
   assert.equal(talk().value, 'ogni lunedì manda il report', 'the new words stay in the field');
+  findButton(mount, 'once').dispatch('click', {});
+  await flush();
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].phrase, 'occupati dei lead', 'the confirm sends the words of the failed attempt');
+  assert.deepEqual(sent[1].plan, { cadence: 'once', runAt: NOW });
 });
