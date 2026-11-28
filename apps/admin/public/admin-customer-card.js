@@ -416,6 +416,31 @@ export function offerStageMenu(first, fromQuote, opportunities, pipelines) {
   return voices.length > 0 ? { id, kind: 'core', current, voices } : null;
 }
 
+/**
+ * Backlog 53c61a1caf4f: dentro un menu aperto Freccia giù e Freccia su
+ * scorrono le voci (in ciclo), Home va alla prima, Fine all'ultima, Esc
+ * chiude tornando al pulsante. Un handler per voce: nel DOM vero
+ * l'evento risale comunque al menu, nel fake-dom dei test arriva diretto
+ * alla voce.
+ */
+function attachMenuVoiceKeys(voices, close) {
+  if (!Array.isArray(voices) || voices.length === 0) return;
+  const focusAt = (index) => {
+    const voice = voices[index];
+    if (voice && typeof voice.focus === 'function') voice.focus();
+  };
+  voices.forEach((voice, index) => {
+    voice.addEventListener('keydown', (event) => {
+      const key = event?.key;
+      if (key === 'ArrowDown') { event.preventDefault?.(); focusAt((index + 1) % voices.length); }
+      else if (key === 'ArrowUp') { event.preventDefault?.(); focusAt((index - 1 + voices.length) % voices.length); }
+      else if (key === 'Home') { event.preventDefault?.(); focusAt(0); }
+      else if (key === 'End') { event.preventDefault?.(); focusAt(voices.length - 1); }
+      else if (key === 'Escape') close(true);
+    });
+  });
+}
+
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
@@ -3639,6 +3664,8 @@ export function createCustomerCardView(deps) {
     });
     offerMenu.appendChild(offerAi);
     offerMenu.appendChild(offerManual);
+    // backlog:53c61a1caf4f: Freccia giù/su, Home e Fine dentro il menu aperto.
+    attachMenuVoiceKeys([offerAi, offerManual], closeOfferMenu);
     offerWrap.appendChild(offer);
     offerWrap.appendChild(offerMenu);
     // The wrap joins the row below, after Appuntamento — the prototype order
@@ -6049,6 +6076,7 @@ export function createCustomerCardView(deps) {
         confirmVoice = null;
         confirmPanel.box.setAttribute('class', 'card-confirm hidden');
       });
+      const stageVoices = [];
       for (const voiceDef of stageMenu.voices) {
         // backlog:26afd13657c5: the voices read the board's labels — the
         // state pill above and the board columns upper-case them, and so
@@ -6068,7 +6096,10 @@ export function createCustomerCardView(deps) {
           void uiBusy(voice, 'Sposto…', () => move(voiceDef));
         });
         menu.appendChild(voice);
+        stageVoices.push(voice);
       }
+      // backlog:53c61a1caf4f: Freccia giù/su, Home e Fine dentro il menu aperto.
+      attachMenuVoiceKeys(stageVoices, close);
       wrap.appendChild(button);
       wrap.appendChild(menu);
       wrap.appendChild(confirmPanel.box);

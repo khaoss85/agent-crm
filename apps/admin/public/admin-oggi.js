@@ -1494,13 +1494,17 @@ export function buildServerReplies(answer, now = new Date()) {
       href: cardHrefForSubject({ subjectOwner: 'host', subjectResource: resource, subjectId: id }),
     });
   }
-  const total = Number.isSafeInteger(answer.total) ? answer.total : rows.length;
+  // Voce dbc80d21175d: the count is exact only when the server says so —
+  // a missing total (rows cut to the shown page) or a missing flag is a
+  // floor («almeno N»), never a lower number painted as exact.
+  const totalIsSafe = Number.isSafeInteger(answer.total);
+  const total = totalIsSafe ? answer.total : rows.length;
   const unreadPill = Array.isArray(answer.views) ? answer.views.find((view) => view?.id === UNREAD_VIEW) : null;
   return {
     available: true,
     source: 'server',
     total,
-    totalIsExact: answer.totalIsExact !== false,
+    totalIsExact: totalIsSafe ? answer.totalIsExact === true : false,
     rows,
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
     correspondents,
@@ -2684,7 +2688,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     disabled?: boolean,
  *     namesPending?: boolean,
  *     notificationsOpen?: boolean,
- *     inbox?: { available?: boolean, partial?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
+ *     inbox?: { available?: boolean, partial?: boolean, total?: number, totalIsExact?: boolean, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
  *     pressed?: { id: unknown, kind: string } | null,
  *   },
  * }} options
@@ -3586,7 +3590,9 @@ export function createOggiView(deps) {
         ? { ...serverInbox, partial: serverInbox.partial === true || local?.partial === true, notifications, unreadSummary }
         : local == null
           ? null
-          : { ...local, unreadSummary };
+          // Voce dbc80d21175d: without the server view the count covers
+          // only this page — a floor when the page is cut, never exact.
+          : { ...local, totalIsExact: local.partial !== true, unreadSummary };
     renderOggi({
       doc,
       mount: target,

@@ -2024,6 +2024,60 @@ test('backlog:8e1092b95c8a: Nuovo modulo e Assistente senza parole tecniche ingl
   for (const line of answer.lines) check(line, 'la risposta');
 });
 
+test('backlog:419166e7ee75: domanda supportata senza bolla non-attive, altre domande senza ripetizione', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': CONVS,
+    '/api/modules/data-quality-issue/records?limit=50': ISSUES,
+  });
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} });
+  await panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.equal(panel.getState().answerTitle, 'Chi devo ricontattare?');
+  assert.ok(!mount.textContent.includes('Le domande libere non sono ancora attive'), 'nessuna bolla non-attive');
+  const chips = mount.findAll('button')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-assistant-suggestion'))
+    .map((node) => node.textContent);
+  assert.ok(chips.includes('Quali lead mostrano segnali caldi?'), 'le altre domande restano');
+  assert.ok(!chips.includes('Chi devo ricontattare?'), 'la domanda appena fatta non si ripropone');
+  const doc2 = createFakeDocument();
+  const mount2 = createMount();
+  const client2 = stubClient({
+    '/api/space-permissions/effective?spaceId=space-1': {
+      spaceId: 'space-1',
+      overrides: [{ spaceId: 'space-1', permission: 'send-without-approval', enabled: true }],
+      resolved: { drafts: true },
+      aiEnabled: true,
+    },
+  });
+  const panel2 = createAssistantPanel({ doc: doc2, mount: mount2, client: client2, navigate: () => {}, notify: () => {}, spaceId: () => 'space-1' });
+  await panel2.open('impostazioni', undefined, undefined, 'Cosa puo fare lAI senza chiedermi?');
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.equal(panel2.getState().answerTitle, 'Cosa può fare l’AI senza chiedermi?');
+  assert.ok(!mount2.textContent.includes('Le domande libere non sono ancora attive'), 'nessuna bolla prima della risposta AI');
+});
+
+test('backlog:36a12874fa84: traccia in italiano con plurale giusto', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    '/api/space-permissions/effective?spaceId=space-1': {
+      spaceId: 'space-1',
+      overrides: [{ spaceId: 'space-1', permission: 'send-without-approval', enabled: true }],
+      resolved: { drafts: true },
+      aiEnabled: true,
+    },
+  });
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, spaceId: () => 'space-1' });
+  await panel.open('impostazioni', undefined, undefined, 'Cosa puo fare lAI senza chiedermi?');
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.equal(panel.getState().answerTitle, 'Cosa può fare l’AI senza chiedermi?');
+  assert.ok(mount.textContent.includes('gli interruttori AI di questo spazio: 1 riga letta'), 'traccia in italiano con singolare');
+  assert.ok(!mount.textContent.includes('space-permissions/effective'), 'nessun nome tecnico grezzo in traccia');
+  assert.ok(!mount.textContent.includes('1 righe lette'), 'plurale mai con 1 riga');
+});
+
 test('backlog:a1f2db873cf3: without a measurable bar the CSS default stays and nothing throws', () => {
   const noBar = { style: {} };
   setPanelTopBelowBar({ querySelector: () => null }, noBar);
