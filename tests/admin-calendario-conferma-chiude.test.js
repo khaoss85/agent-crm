@@ -11,8 +11,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
  * aperto anche uscendo e tornando nel Calendario, la seconda apertura aveva
  * giorno e ora vuoti e «Mancano dei dati: servizio» restava dopo la scelta.
  * Come Google Calendar: la Conferma chiude il pannello e il nuovo blocco si
- * vede evidenziato; ogni apertura propone giorno e ora; la nota sparisce
- * appena il dato c'è.
+ * vede evidenziato; ogni apertura propone giorno e ora; la nota resta
+ * finché manca un dato e sparisce solo con l'ultimo (backlog:1e3393038b8b).
  */
 
 const CATALOG = {
@@ -201,10 +201,10 @@ test('ogni apertura propone giorno e ora: oggi 09:00–09:30 senza slot cliccato
   assert.equal(byName(mount).end.value, '09:30');
 });
 
-test('il messaggio di dato mancante sparisce appena il dato c’è', async () => {
+test('il messaggio di dato mancante resta finché manca un dato (backlog:1e3393038b8b)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: [{ resource: 'contact', id: 'c1', name: 'Ada' }] });
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await settle();
@@ -216,8 +216,12 @@ test('il messaggio di dato mancante sparisce appena il dato c’è', async () =>
   const form = byName(mount);
   form.serviceKey.value = 'taglio';
   form.serviceKey.dispatch('change');
-  assert.ok(!texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'choosing the service clears the note at once');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'the note stays while data is still missing');
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('servizio')), 'the note no longer names the chosen service');
   form.teamMemberId.value = 'marco';
+  form.teamMemberId.dispatch('input');
   form.teamMemberId.dispatch('change');
-  assert.ok(!texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'the note stays gone while filling the form');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'the note stays while the customer is missing');
+  await pickCustomerByName(mount, 'Ada');
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Mancano dei dati')), 'the note goes once the last datum is in');
 });
