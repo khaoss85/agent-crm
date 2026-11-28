@@ -88,6 +88,7 @@ const MAX_LABEL = 200;
 const MAX_NOTES = 2000;
 const MAX_LOCATION = 300;
 const MAX_LOCATION_URL = 2000;
+const MAX_CUSTOMER_NAME = 120;
 const MAX_REASON = 300;
 const MAX_FOLLOW_UP_TITLE = 200;
 const MAX_SLOT_MS = 24 * 60 * 60 * 1000;
@@ -3093,6 +3094,7 @@ function romeDayLine(nowIso) {
 const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italian customer sentence. '
   + 'Reply with JSON only, no other text, with any of these keys: '
   + '{"teamMemberId": "opaque team identity, only when the sentence names a person", '
+  + '"customer": "the customer the sentence books for, as stated — the name after «per» — only when the sentence names one", '
   + '"serviceKey": "lowercase listino slug, only when the sentence names a service", '
   + '"day": "YYYY-MM-DD calendar day in Europe/Rome, only when the sentence names a day but no time", '
   + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant, only when the sentence states a time", '
@@ -3100,6 +3102,8 @@ const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italia
   + '"durationMinutes": "integer minutes the sentence states for the appointment, only when stated", '
   + '"notes": "anything else worth keeping, at most one line"}. '
   + 'Omit every key the sentence does not state. Never invent a person, a service or a time. '
+  + 'A name the sentence books FOR (for example after «per») is the customer, never the service: '
+  + 'serviceKey only when the sentence names a listino service. '
   + 'When the sentence names a day but no time (for example «giovedì»), return day and never startsAt: '
   + 'never invent 00:00, noon or any other hour for a missing time — the caller asks the human for the hour. '
   + 'A stated midnight («mezzanotte») always rides with its day: return day together with startsAt, '
@@ -3237,6 +3241,9 @@ function extractPhraseDraft(text, nowMs) {
   try {
     if (parsed.teamMemberId !== undefined) {
       draft.teamMemberId = safeText(parsed.teamMemberId, 'draft.teamMemberId', MAX_ID);
+    }
+    if (parsed.customer !== undefined) {
+      draft.customer = safeText(parsed.customer, 'draft.customer', MAX_CUSTOMER_NAME);
     }
     if (parsed.serviceKey !== undefined) {
       const key = safeText(parsed.serviceKey, 'draft.serviceKey', 48);

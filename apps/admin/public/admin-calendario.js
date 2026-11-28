@@ -772,6 +772,29 @@ export function draftDayOnly(draft) {
 }
 
 /**
+ * backlog:3aabaea07bfe — loose customer-name comparison for the phrase
+ * draft: case, hyphens, underscores and repeated spaces never tell two
+ * names apart, so a serviceKey reading «prova-verifica-40-noteinvio» is
+ * the customer «Prova verifica 40 NoteInvio». Pure, shared with the tests.
+ * @param {unknown} value
+ */
+export function normalizeCustomerName(value) {
+  return String(value ?? '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * backlog:3aabaea07bfe — the customer the phrase books for, as stated in
+ * the draft (the name after «per»): trimmed text, else ''. A slug-shaped
+ * serviceKey is not a statement — the resolver checks that one against the
+ * customer list on its own. Pure, shared with the tests.
+ * @param {any} draft
+ */
+export function draftCustomerText(draft) {
+  const text = typeof draft?.customer === 'string' ? draft.customer.trim() : '';
+  return text;
+}
+
+/**
  * The Rome day a phrase draft names, or null: the slot search is bound to
  * it, so «giovedì» never proposes Monday first (production 07/11).
  * @param {any} draft
@@ -2089,6 +2112,8 @@ export function createCalendarioView(deps) {
     draftFill: null,
     /** backlog:913c61ec — the form values the last phrase draft wrote and the ones before it, for «Annulla». @type {{values: Record<string, string>, prior: Record<string, any>}|null} */
     draftWrote: null,
+    /** backlog:3aabaea07bfe — what the last phrase draft set for the customer ({id, prior} on a pick, {query} on a prefill), so «Annulla» restores it. @type {any} */
+    draftCustomer: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
@@ -4749,6 +4774,116 @@ export function createCalendarioView(deps) {
     return read.answer;
   }
 
+  /**
+   * backlog:3aabaea07bfe — the customer the phrase books for: the draft's
+   * customer text (the name after «per»), or a serviceKey that reads like
+   * one, is resolved against the customer list before anything paints. One
+   * exact visible name match proposes that customer in the customer field;
+   * several matches prefill the search so the operator chooses; a serviceKey
+   * that exactly names a known customer is dropped from the draft, so the
+   * name never reaches the service field. The list read is bounded (five
+   * pages of ten, like the manual search) and never paints; a stale or
+   * failed read changes nothing, while the deterministic text rule (the
+   * stated customer equal to the drafted service) still drops the service.
+   * @param {any} draft @param {number} seq @param {string} askedSpace
+   */
+  async function resolveDraftCustomer(draft, seq, askedSpace) {
+    if (!draft || typeof draft !== 'object') return draft;
+    const customerText = draftCustomerText(draft);
+    const serviceText = typeof draft.serviceKey === 'string' ? draft.serviceKey.trim() : '';
+    const normCustomer = normalizeCustomerName(customerText);
+    const normService = normalizeCustomerName(serviceText);
+    const names = [];
+    if (normCustomer !== '') names.push({ norm: normCustomer, query: customerText });
+    if (normService !== '' && normService !== normCustomer) {
+      names.push({ norm: normService, query: serviceText.replace(/[-_]+/g, ' ') });
+    }
+    if (names.length === 0) return draft;
+    /** @type {Array<any>} */
+    const rows = [];
+    try {
+      for (const { query } of names) {
+        if (seq !== phraseSeq || readSpace() !== askedSpace) return draft;
+        let page = 1;
+        let pages = 1;
+        for (; page <= Math.min(pages, 5); page += 1) {
+          const params = new URLSearchParams({ q: query, page: String(page), pageSize: '10' });
+          if (askedSpace) params.set('spaceId', askedSpace);
+          const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
+          if (seq !== phraseSeq || readSpace() !== askedSpace) return draft;
+          if (Array.isArray(answer?.items)) {
+            for (const item of answer.items) {
+              if (!customerResultVisible(item, Array.isArray(item?.searchMatch) ? item.searchMatch : null, query)) continue;
+              if (rows.some((seen) => seen?.resource === item?.resource && seen?.id === item?.id)) continue;
+              rows.push(item);
+            }
+          }
+          const totalPages = Number(answer?.pages ?? 1);
+          pages = Number.isFinite(totalPages) && totalPages >= 1 ? Math.floor(totalPages) : 1;
+          // backlog:3aabaea07bfe — no early break on the first exact match:
+          // homonyms may sit on later pages, and stopping early would
+          // auto-pick the first one instead of listing the candidates. The
+          // read stays bounded (five pages of ten, like the manual search).
+        }
+      }
+    } catch {
+      // A failed read never breaks the phrase: fall through to the text rule.
+    }
+    if (seq !== phraseSeq || readSpace() !== askedSpace) return draft;
+    const exact = (norm) => rows.filter((item) => normalizeCustomerName(item?.name) === norm);
+    const customerHits = normCustomer === '' ? [] : exact(normCustomer);
+    const serviceHits = normService === '' ? [] : exact(normService);
+    // backlog:3aabaea07bfe — a same-named customer drops the service only
+    // in the legacy service-only shape, or when the service reads as the
+    // stated customer itself: with a different customer stated, a real
+    // service survives the collision.
+    const dropService = serviceText !== ''
+      && ((customerText === '' && serviceHits.length > 0)
+        || (normCustomer !== '' && normService === normCustomer));
+    let fixed = draft;
+    if (dropService) {
+      fixed = { ...draft };
+      delete fixed.serviceKey;
+    }
+    // The stated customer wins; the legacy service-only shape still proposes
+    // the customer its service text names. Never a guess among homonyms.
+    const unique = customerText !== ''
+      ? (customerHits.length === 1 ? customerHits[0] : null)
+      : (serviceHits.length === 1 ? serviceHits[0] : null);
+    const prior = state.customerPick ?? null;
+    if (unique !== null) {
+      const id = typeof unique?.id === 'string' ? unique.id : '';
+      const resource = typeof unique?.resource === 'string' && unique.resource !== '' ? unique.resource : 'contact';
+      const name = typeof unique?.name === 'string' && unique.name !== '' ? unique.name : null;
+      if (id !== '' && name !== null) {
+        state.customerPick = { resource, id, name };
+        state.customerQuery = '';
+        state.customerItems = [];
+        state.customerError = null;
+        state.draftCustomer = { id, query: null, prior };
+        return fixed;
+      }
+    }
+    if (customerText !== '' && customerHits.length > 1) {
+      // Homonyms: no guess — the search box lists the candidates instead.
+      state.customerQuery = customerText;
+      state.customerItems = customerHits;
+      state.customerError = null;
+      state.draftCustomer = { id: null, query: customerText, prior };
+    } else if (customerText === '' && serviceHits.length > 1) {
+      // backlog:3aabaea07bfe — the legacy service-only shape naming a
+      // customer with homonyms: no guess either — the candidates ride the
+      // search box under the readable query, instead of dropping the
+      // service in silence with no list to pick from.
+      const readable = serviceText.replace(/[-_]+/g, ' ');
+      state.customerQuery = readable;
+      state.customerItems = serviceHits;
+      state.customerError = null;
+      state.draftCustomer = { id: null, query: readable, prior };
+    }
+    return fixed;
+  }
+
   /** @param {string} phrase @param {{resumeId?: string|null}} [options] */
   async function submitAi(phrase, { resumeId = null } = {}) {
     const seq = ++phraseSeq;
@@ -4765,6 +4900,7 @@ export function createCalendarioView(deps) {
     }
     state.aiLoading = true;
     state.draft = null;
+    state.draftCustomer = null;
     state.draftNote = '';
     state.proposals = [];
     state.aiNote = '';
@@ -4777,6 +4913,10 @@ export function createCalendarioView(deps) {
     // The space that asks it (review #664): a queued id is never read back
     // under another space.
     const askedSpace = readSpace();
+    // backlog:3aabaea07bfe — restores what the form held before this phrase
+    // when its draft is refused or fails; assigned before the customer
+    // resolves, so the catch below can use it too.
+    let dropPhraseCustomer = () => {};
     try {
       const answer = await phraseAnswer({ resumeId, seq });
       // e98e7a346b37: the asking space left while the answer was on its way
@@ -4789,15 +4929,38 @@ export function createCalendarioView(deps) {
       state.phrase = asked;
       // backlog:913c61ec: a timed draft without an end closes at its minutes,
       // so the card, the form's Fine and the search all read the same slot.
-      const draft = draftWithEnd(answer?.draft ?? null);
+      // backlog:3aabaea07bfe: the customer the sentence names is resolved
+      // before anything paints, so an existing customer lands in the
+      // customer field and their name never reaches the service field.
+      // backlog:3aabaea07bfe — what the form held before this phrase, so a
+      // refused or failed draft restores it: the next manual booking never
+      // inherits this phrase's customer.
+      const customerBefore = {
+        pick: state.customerPick ?? null,
+        query: state.customerQuery,
+        items: state.customerItems,
+        error: state.customerError,
+        draftCustomer: state.draftCustomer ?? null,
+      };
+      dropPhraseCustomer = () => {
+        state.customerPick = customerBefore.pick;
+        state.customerQuery = customerBefore.query;
+        state.customerItems = customerBefore.items;
+        state.customerError = customerBefore.error;
+        state.draftCustomer = customerBefore.draftCustomer;
+      };
+      const draft = await resolveDraftCustomer(draftWithEnd(answer?.draft ?? null), seq, askedSpace);
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = draft;
       if (!draft) {
+        dropPhraseCustomer();
         state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
         state.phraseNoDraft = true;
         return;
       }
       const member = typeof draft.teamMemberId === 'string' ? draft.teamMemberId : '';
       if (member === '') {
+        dropPhraseCustomer();
         state.draftNote = '';
         state.draft = null;
         state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
@@ -4824,6 +4987,7 @@ export function createCalendarioView(deps) {
       }
       const bounds = suggestBounds(dayKey, draft);
       if (!bounds) {
+        dropPhraseCustomer();
         state.aiNote = 'Settimana non valida.';
         return;
       }
@@ -4845,6 +5009,7 @@ export function createCalendarioView(deps) {
       const knownTeam = Array.isArray(state.members)
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
+        dropPhraseCustomer();
         state.draftNote = '';
         // backlog:a16726b5ea76 (follow-up, supervisor 18/11): a name the
         // known team does not hold was never «in the team» — the phrase did
@@ -4900,6 +5065,7 @@ export function createCalendarioView(deps) {
       }
       if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
+        dropPhraseCustomer();
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
       }
@@ -4945,6 +5111,7 @@ export function createCalendarioView(deps) {
       // e98e7a346b37: a late refusal from the space just left never locks or
       // labels the new space — it never refused anything.
       if (seq !== phraseSeq || readSpace() !== askedSpace) return;
+      dropPhraseCustomer();
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -5053,6 +5220,22 @@ export function createCalendarioView(deps) {
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
+    // backlog:3aabaea07bfe — a customer this draft proposed goes back too:
+    // the pick returns to what the form held before, a prefilled search
+    // clears only while the operator chose nobody since.
+    const draftedCustomer = state.draftCustomer;
+    state.draftCustomer = null;
+    if (draftedCustomer) {
+      if (draftedCustomer.id !== null && draftedCustomer.id !== undefined) {
+        if (state.customerPick !== null && state.customerPick?.id === draftedCustomer.id) {
+          state.customerPick = draftedCustomer.prior ?? null;
+        }
+      } else if (draftedCustomer.query && state.customerPick === null && state.customerQuery === draftedCustomer.query) {
+        state.customerQuery = '';
+        state.customerItems = [];
+        state.customerError = null;
+      }
+    }
     state.proposals = [];
     state.aiNote = '';
     state.phraseNoDraft = false;
@@ -5466,6 +5649,7 @@ export function createCalendarioView(deps) {
     state.draftNote = '';
     state.draftFill = null;
     state.draftWrote = null;
+    state.draftCustomer = null;
     state.proposals = [];
     state.aiNote = '';
     state.bookingNote = '';
@@ -6450,6 +6634,7 @@ export function createCalendarioView(deps) {
       state.customerItems = [];
       state.customerError = null;
       state.customerPartial = false;
+      state.draftCustomer = null;
       state.customerPick = null;
       // Review #805 giro 2: space B has its own bookable list — never
       // book or block with space A's.
@@ -6475,6 +6660,7 @@ export function createCalendarioView(deps) {
       state.manualTyped.clear();
       state.draftFill = null;
       state.draftWrote = null;
+      state.draftCustomer = null;
       state.customerPick = null;
       state.customerQuery = '';
       state.customerItems = [];
