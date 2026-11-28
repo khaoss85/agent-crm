@@ -220,6 +220,64 @@ export async function readProfile(client, log = () => {}) {
 }
 
 /**
+ * The same /api/profile answer, read once per app start (backlog:30f7ce51c87a:
+ * the heaviest pages asked it on every open even though the answer only
+ * changes on the next app start). One app means one session, so one kept
+ * answer is shared by every screen — keying it per client object never
+ * shared anything, because each view binds its own request wrapper.
+ * Concurrent opens share the one in-flight read; only a successful non-null
+ * answer is kept (review on #1088 P1: a transient 429/500 once stuck every
+ * screen on null until restart — a failed read is asked again on the next
+ * open). Display only: anything that decides access keeps reading its own
+ * fresh source (spine context, the injected session), never this kept answer.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {(...args: any[]) => void} [log]
+ */
+let keptProfileRead = null;
+export function readCachedProfile(client, log = () => {}) {
+  if (keptProfileRead === null) {
+    keptProfileRead = readProfile(client, log).then((answer) => {
+      // A failure (null) is never kept: the next open re-reads instead of
+      // repainting «non leggibile» forever from the first transient error.
+      if (answer === null) keptProfileRead = null;
+      return answer;
+    });
+  }
+  return keptProfileRead;
+}
+/**
+ * Drop the kept /api/profile answer (backlog:30f7ce51c87a). Writes go
+ * through this: after a PATCH the next read asks again, so a saved name
+ * never paints stale — and after a Collega/Scollega round trip, so the
+ * connection rows never paint the pre-link state. Reads never call it —
+ * the whole point of the kept answer is one read per app start, however
+ * many screens open it.
+ * @param {{ request: (path: string) => Promise<any> } | null} _client kept for the call sites, no longer keyed
+ */
+export function forgetCachedProfile(_client) {
+  keptProfileRead = null;
+}
+/**
+ * Collega and Scollega are full-page navigations (a link and a same-origin
+ * POST), so the app normally restarts with an empty cache on return. When
+ * the browser restores the page from its back-forward cache instead, the
+ * kept answer would paint the pre-link state: drop it on a restored
+ * `pageshow` (review on #1088 P1). No-op without a real window (tests).
+ * @param {{ defaultView?: any }} doc
+ * @param {{ request: (path: string) => Promise<any> }} client
+ */
+let profileReturnWatched = false;
+export function watchOAuthReturn(doc, client) {
+  const view = doc?.defaultView ?? null;
+  if (view === null || typeof view?.addEventListener !== 'function') return;
+  if (profileReturnWatched) return;
+  profileReturnWatched = true;
+  view.addEventListener('pageshow', (event) => {
+    if (event?.persisted === true) forgetCachedProfile(client);
+  });
+}
+
+/**
  * The «Collegamenti Google» card for the Connettori screens: same rows as
  * Profilo, painted first as «Leggo…» and again with the answer. `entries`
  * narrows it (the Email detail shows only Gmail).
@@ -227,6 +285,9 @@ export async function readProfile(client, log = () => {}) {
  *   entries?: ReadonlyArray<typeof PROFILO_CONNECTORS[number]>, log?: (...args: any[]) => void }} deps
  */
 export function googleConnectionsCard({ doc, client, entries = PROFILO_CONNECTORS, log = () => {} }) {
+  // A Collega/Scollega round trip leaves and comes back: on return the rows
+  // must paint the new link state, never the kept pre-link answer.
+  watchOAuthReturn(doc, client);
   const card = el(doc, 'section', 'panel bo-profilo-card bo-google-card');
   card.setAttribute('data-section', 'google-connections');
   const paint = (answer) => {
@@ -237,7 +298,7 @@ export function googleConnectionsCard({ doc, client, entries = PROFILO_CONNECTOR
     paintGoogleConnections(doc, card, answer, entries);
   };
   paint(undefined);
-  const answer = readProfile(client, log);
+  const answer = readCachedProfile(client, log);
   const ready = answer.then(paint);
   return { node: card, ready, answer };
 }
@@ -302,7 +363,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
-  const read = () => readProfile(client, log);
+  const read = () => readCachedProfile(client, log);
 
   function header(page, person, session) {
     const head = el(doc, 'header', 'bo-profilo-head');
@@ -387,6 +448,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
           async () => {
             // The write stays in flight until the reread lands: saving drops
             // only then, with uiBusy, so no second PATCH slips in meanwhile.
+            // The kept profile is dropped first, or the reread below would
+            // paint the name from before the save (backlog:30f7ce51c87a).
+            forgetCachedProfile(client);
             const mine = ++token;
             const fresh = await read();
             saving = false;

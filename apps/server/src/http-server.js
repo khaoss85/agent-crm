@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { Router } from './router.js';
 import {
   AppError,
-  ForbiddenError,
   NotFoundError,
   ValidationError,
   normalizeError,
@@ -514,11 +513,14 @@ export function buildRouter(app) {
       );
     }
   };
+  // A private booking answers 404 to anyone but its creator and the
+  // administrators — the same not-found answer as a missing row, like the
+  // package's own mutation paths (backlog:9aa5c073, `refuseUnlessSeesFull`).
+  // A 403 here would confirm the booking exists. One shared gate, so the
+  // generic PATCH and the generic action surface refuse identically.
   const refuseUnlessAppointmentVisible = (viewer, row) => {
-    if (viewerSeesFull(viewer, row)) return row;
-    throw new ForbiddenError('only its creator and the administrators may change a private booking', {
-      field: 'visibility',
-    });
+    if (row != null && viewerSeesFull(viewer, row)) return row;
+    throw new NotFoundError('appointment', typeof row?.id === 'string' ? row.id : 'unknown');
   };
 
   // Team calendar (BO-F3 \"07 Calendario\"). Reads and the booking flow over
@@ -1758,6 +1760,144 @@ export function buildRouter(app) {
     return await app.effectiveSpaceAiPermissions({ spaceId });
   });
 
+  // Spazi e accessi aggregate (backlog:30f7ce51c87a). One round trip for the
+  // screen's framework reads — context, team, agents, switches, connectors,
+  // customers and the fix-count inputs — instead of ten. Each section keeps
+  // the gate and the operation of its single route: a refused section turns
+  // into {unavailable: {code, status}}, never into rows, so the aggregate
+  // grants nothing the single routes would refuse. The shell prefers it and
+  // falls back to the single routes when the aggregate itself is missing or
+  // fails as a whole. The agents page mirrors readModulePage in
+  // apps/admin/public/admin-agenti.js (AGENTI_READ_LIMIT + 1 rows with
+  // filter.spaceId); the shell slices and detects the cap with its own
+  // constant, so the section returns the same raw page the single route
+  // would.
+  router.add('GET', '/api/spazi-accessi/summary', async ({ searchParams, actor, identity, organizationId }) => {
+    const spaceId = searchParams?.get?.('spaceId') ?? '';
+    if (typeof spaceId !== 'string' || spaceId.trim() === '') {
+      throw new ValidationError('a space id names the space to summarize', { field: 'spaceId' });
+    }
+    const sectionError = (error) => ({
+      code: error !== null && typeof error === 'object' && typeof error.code === 'string' && error.code !== ''
+        ? error.code
+        : 'UNKNOWN',
+      status: error !== null && typeof error === 'object' && typeof error.status === 'number'
+        ? error.status
+        : null,
+    });
+    const settledSection = async (read) => {
+      try {
+        return await read();
+      } catch (error) {
+        return { unavailable: sectionError(error) };
+      }
+    };
+    const [context, memberships, agents, switches, connectors, customers, fix] = await Promise.all([
+      settledSection(async () => {
+        if (!app.spine) throw new NotFoundError('Operation', 'production spine');
+        const organization = organizationId ? await app.spine.organizations.get(organizationId) : null;
+        const membership = (identity?.subject && organizationId)
+          ? await app.spine.memberships.find({ organizationId, subject: identity.subject })
+          : null;
+        return {
+          ...app.spine.describe(),
+          identity: app.spine.identityEvidence(identity),
+          // Same actor evidence as GET /api/spine/context: without it the
+          // summary context is a poorer answer than the single route.
+          actor: actor && typeof actor.id === 'string' ? { type: actor.type, id: actor.id } : null,
+          organization,
+          membership,
+          permissions: membership ? membership.permissions : [],
+        };
+      }),
+      settledSection(async () => {
+        if (!app.spine) throw new NotFoundError('Operation', 'production spine');
+        await gate(app, identity, organizationId, 'admin.memberships.manage');
+        return { items: await app.spine.memberships.listFor({ organizationId }) };
+      }),
+      settledSection(async () => {
+        await gate(app, identity, organizationId, 'records.read');
+        const params = new URLSearchParams({ limit: '201', 'filter.spaceId': spaceId });
+        const module = requireCapability(resolveGeneratedModule(app, 'teammate-agent'), 'list');
+        return {
+          items: await module.service.list({
+            limit: strictLimit(params),
+            where: strictCollectionFilter(params, module),
+          }),
+        };
+      }),
+      settledSection(async () => {
+        await gate(app, identity, organizationId, 'records.read');
+        if (typeof app.effectiveSpaceAiPermissions !== 'function') {
+          throw new NotFoundError('Operation', 'space AI permissions');
+        }
+        return await app.effectiveSpaceAiPermissions({ spaceId });
+      }),
+      settledSection(async () => {
+        await gate(app, identity, organizationId, 'records.read');
+        if (typeof app.readSyncState !== 'function') {
+          throw new NotFoundError('Operation', 'connector sync state');
+        }
+        return await app.readSyncState({ spaceId });
+      }),
+      settledSection(async () => {
+        await gate(app, identity, organizationId, 'records.read');
+        if (typeof app.listCustomers !== 'function') {
+          throw new NotFoundError('Operation', 'customer list');
+        }
+        return await app.listCustomers({
+          q: undefined,
+          canale: undefined,
+          stato: undefined,
+          sort: undefined,
+          vista: undefined,
+          page: undefined,
+          pageSize: undefined,
+          spaceId,
+          // Same actor as GET /api/customer-data/customers: each row's
+          // unreadCount answers for the signed-in member, never null here.
+          actor,
+        });
+      }),
+      settledSection(async () => {
+        await gate(app, identity, organizationId, 'records.read');
+        const issueParams = new URLSearchParams({ limit: '100' });
+        const candidateParams = new URLSearchParams({ limit: '100' });
+        const issueModule = requireCapability(resolveGeneratedModule(app, 'data-quality-issue'), 'list');
+        const candidateModule = requireCapability(resolveGeneratedModule(app, 'duplicate-candidate'), 'list');
+        const [issues, candidates] = await Promise.all([
+          issueModule.service.list({
+            limit: strictLimit(issueParams),
+            where: strictCollectionFilter(issueParams, issueModule),
+          }),
+          candidateModule.service.list({
+            limit: strictLimit(candidateParams),
+            where: strictCollectionFilter(candidateParams, candidateModule),
+          }),
+        ]);
+        // The sync half of the badge degrades like the single reads do: the
+        // quality count survives with needsFix 0 and the cause stays
+        // diagnosable through syncUnavailable, never silently dropped.
+        let needsFix = 0;
+        let syncUnavailable = null;
+        try {
+          if (typeof app.readSyncActivity !== 'function') {
+            throw new NotFoundError('Operation', 'connector sync activity');
+          }
+          const activity = await app.readSyncActivity({ spaceId, feedLimit: 1 });
+          if (activity !== null && typeof activity === 'object'
+            && Number.isInteger(activity.needsFix) && activity.needsFix > 0) {
+            needsFix = activity.needsFix;
+          }
+        } catch (error) {
+          syncUnavailable = sectionError(error);
+        }
+        return { issues, candidates, needsFix, syncUnavailable };
+      }),
+    ]);
+    return { spaceId, context, memberships, agents, switches, connectors, customers, fix };
+  });
+
   // Space AI permission flip (BO-F0-06, backoffice "08 Spazi e accessi"). The
   // same delegation shape as the space-package routes above: the kernel owns
   // the path, gates the write boundary, and delegates to the composed
@@ -1853,8 +1993,10 @@ export function buildRouter(app) {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
     // Someone else's private booking is unchangeable (backlog:9aa5c073):
-    // refused 403 before the update runs. Managed fields already refuse a
-    // direct write; this keeps the decision on the row, not on the field.
+    // answered 404 before the update runs — the same not-found as a missing
+    // row, so the answer never confirms the booking exists. Managed fields
+    // already refuse a direct write; this keeps the decision on the row,
+    // not on the field.
     if (params.module === APPOINTMENT_MODULE_NAME && typeof module.service.get === 'function') {
       refuseUnlessAppointmentVisible(
         await resolveAppointmentViewer(app, { actor, identity, organizationId }),
@@ -1876,7 +2018,8 @@ export function buildRouter(app) {
     const actionable = resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
     // Someone else's private booking stays untouchable here too
     // (backlog:9aa5c073): no appointment action exists today, and any
-    // future one meets the same 403 first.
+    // future one meets the same 404 first — never a 403 that would confirm
+    // the booking exists.
     if (params.module === APPOINTMENT_MODULE_NAME && typeof actionable?.service?.get === 'function') {
       refuseUnlessAppointmentVisible(
         await resolveAppointmentViewer(app, { actor, identity, organizationId }),

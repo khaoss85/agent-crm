@@ -4,7 +4,7 @@ import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './ad
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { activityReceived, channelState, countedChannel, identitySyncText } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
-import { readProfile } from './admin-profilo.js';
+import { readCachedProfile, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareShortLabel, offerShareUrl } from './admin-offer-panel.js';
@@ -1476,7 +1476,7 @@ export function createCustomerCardView(deps) {
       }
     };
     const promise = Promise.all([
-      readProfile(client, (_label, status) => warn('profile', { code: 'PROFILE_UNREADABLE', status })),
+      readCachedProfile(client, (_label, status) => warn('profile', { code: 'PROFILE_UNREADABLE', status })),
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`)
         .then((sync) => (Array.isArray(sync?.connectors) ? sync.connectors : []), (error) => {
           warn('channels', error);
@@ -2666,7 +2666,10 @@ export function createCustomerCardView(deps) {
     // Voce a935af6a6d19: Email also reads the space profile's Gmail link
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
-    // decide alone, like before.
+    // decide alone, like before. A fresh read per opening, never the kept
+    // one: each opening's own read is its load token, so a second opening
+    // while the first loads supersedes it instead of sharing its answer
+    // (backlog:30f7ce51c87a exception, test 8ce25b0f445f).
     readProfile(client).then((profile) => {
       if (generation !== composerGeneration) return;
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(

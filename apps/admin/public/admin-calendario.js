@@ -25,6 +25,7 @@ import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from '
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { readCachedProfile } from './admin-profilo.js';
 import { buildTeamRows, duplicateTeamHints, isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
@@ -2445,7 +2446,7 @@ export function createCalendarioView(deps) {
    */
   async function loadCalendar() {
     try {
-      const answer = await client.request('/api/profile');
+      const answer = await readCachedProfile(client);
       const items = answer?.connections?.available === true && Array.isArray(answer.connections.items)
         ? answer.connections.items
         : null;

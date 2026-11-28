@@ -1,6 +1,12 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { forgetCachedProfile } from '../apps/admin/public/admin-profilo.js';
+
+// backlog:30f7ce51c87a: /api/profile is kept once per app start, but each
+// test paints with its own mocked answer, so the kept answer is dropped
+// before every test — otherwise one test's profile leaks into the next.
+beforeEach(() => { forgetCachedProfile(); });
 import {
   createCustomerCardView,
   detailsRefusalText,
