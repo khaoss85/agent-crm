@@ -1205,6 +1205,9 @@ function buildTodayAgendaRows(appointments = [], now = new Date()) {
  * @param {Array<Record<string, any>>} [appointments]
  * @param {Date} [now]
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ * @param {Array<Record<string, any>>} [members] team roster
+ * (`/api/spine/memberships` items): a roster address never reads as
+ * customer data in the chi line
  */
 export function buildTodayAgenda(appointments = [], now = new Date(), names = {}, members = [], { pendingNames = false } = {}) {
   const today = buildTodayAgendaRows(appointments, now);
@@ -1220,13 +1223,35 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     // cue from the notes reads instead — the roster name of the slot
     // holder never does. Never invented when nothing exists, and never a
     // technical id (production 10/11 read «broker+…@accordo.invalid» and
-    // «google|…» here). A team mailbox is never a name either
+    // «google|…» here). A team mailbox is never customer data either
     // (backlog:57e3d1685e58: the operator's own address read under the
-    // contact).
+    // contact; backlog:1a8f1bff2086, production 13/11: the stored label
+    // carried the space owner address while the title read the customer
+    // profile name). The roster already rides along for the pending mark:
+    // its addresses stay out of the line — the label address reads only
+    // outside the roster, and a notes cue carrying one reads as nothing.
+    // Comparisons trim and ignore case, like every team screen.
+    const teamMails = new Set(
+      (Array.isArray(members) ? members : [])
+        .map((member) => (typeof member?.email === 'string' ? member.email.trim().toLowerCase() : ''))
+        .filter((mail) => mail.includes('@')),
+    );
+    const isTeamMail = (text) => {
+      if (typeof text !== 'string') return false;
+      const lowered = text.trim().toLowerCase();
+      if (lowered === '') return false;
+      return teamMails.has(lowered);
+    };
+    const cueHasTeamMail = (text) => {
+      if (typeof text !== 'string') return false;
+      const tokens = text.toLowerCase().match(/[^@\s<>()]+@[^@\s<>()]+\.[^@\s<>()]+/g) ?? [];
+      return tokens.some((token) => teamMails.has(token));
+    };
     const labelMail = memberText(row?.subjectLabel);
-    const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
-    const cue = contactMail
-      ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
+    const labelAddress = labelMail !== null && labelMail.includes('@') ? labelMail : null;
+    const contactMail = labelAddress !== null && !isTeamMail(labelAddress) ? labelAddress : null;
+    const notesCue = nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null;
+    const cue = contactMail ?? (notesCue !== null && !cueHasTeamMail(notesCue) ? notesCue : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
     const card = cardHrefForSubject(row);
