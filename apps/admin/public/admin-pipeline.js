@@ -156,11 +156,18 @@ export function customerOf(record) {
   const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
   if (contact !== '') return contact;
   const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  if (company === '') return null;
+  // The core placeholder flag (backlog:ac65e448fcb4): the server carries it
+  // on the row as companyPlaceholder, and a real company named
+  // «Senza azienda» stays a customer. The name check below is only the
+  // legacy fallback for rows without the flag — never the rule.
+  if (record?.companyPlaceholder === true || record?.companyPlaceholder === 1) return null;
+  if (record?.companyPlaceholder === false || record?.companyPlaceholder === 0) return company;
   // «Senza azienda» is the scheda's placeholder company, not a customer —
   // in any case or spacing, the same normalization as the scheda's
   // shownCompanyName (NFC, collapsed spaces, lower case; review #789, #799).
   const placeholder = company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
-  return company !== '' && !placeholder ? company : null;
+  return !placeholder ? company : null;
 }
 
 /**
