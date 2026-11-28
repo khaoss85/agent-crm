@@ -1733,3 +1733,98 @@ test('due append concorrenti allo stesso ordine: il secondo fallisce o rigioca',
     stepService.listWhere = realListWhere;
   }
 });
+
+test('la proposta mostra per ogni persona tutti i messaggi previsti (backlog:d1f18fcedd12)', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  // No override: send-without-approval defaults to off — nothing may send.
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:preview');
+  await enroll(ops, connectionKey, 'seq:preview', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:preview', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.advanced, 0);
+  assert.equal(gated.waitingApproval, 2);
+  assert.equal(composed.api.state.sendCalls, 0);
+
+  // One proposal per person, and each proposal shows every planned message
+  // of that person — before any send starts.
+  const proposals = composed.modules.get('space-ai-proposal').service;
+  const recorded = await proposals.listWhere({ spaceId: SPACE });
+  assert.equal(recorded.length, 2);
+  const byAction = new Map(recorded.map((row) => [row.actionKey, row]));
+  assert.equal(byAction.size, 2);
+  for (const row of recorded) assert.equal(row.status, 'proposed');
+  const guido = [...byAction.values()].find((row) => String(row.summary).includes('Guido'));
+  const maria = [...byAction.values()].find((row) => String(row.summary).includes('Maria'));
+  assert.ok(guido, 'una proposta per Guido');
+  assert.ok(maria, 'una proposta per Maria');
+  assert.match(String(guido.summary), /Ciao Guido/, 'il primo messaggio previsto di Guido');
+  assert.match(String(guido.summary), /ultimo posto/, 'il secondo messaggio previsto di Guido');
+  assert.match(String(maria.summary), /Ciao Maria/, 'il primo messaggio previsto di Maria');
+  assert.match(String(maria.summary), /ultimo posto/, 'il secondo messaggio previsto di Maria');
+  assert.ok(!String(guido.summary).includes('Maria'), 'la proposta di Guido non mostra Maria');
+  assert.ok(!String(maria.summary).includes('Guido'), 'la proposta di Maria non mostra Guido');
+});
+
+test('un messaggio corretto esce corretto e solo per quel destinatario (backlog:d1f18fcedd12)', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:correct');
+  await enroll(ops, connectionKey, 'seq:correct', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:correct', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.advanced, 0);
+  assert.equal(gated.waitingApproval, 2);
+
+  const sends = composed.modules.get('sequence-send').service;
+  const waiting = await sends.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:correct' });
+  assert.equal(waiting.length, 2);
+  const guidoRow = waiting.find((row) => String(row.messageKey).includes('c-guido'));
+  assert.ok(guidoRow, 'la riga in attesa di Guido');
+  assert.equal(JSON.parse(guidoRow.variables).length, 0, 'prima della correzione la riga è sul segnaposto');
+
+  const corrected = await ops.correctSequenceMessage({
+    spaceId: SPACE,
+    messageKey: guidoRow.messageKey,
+    variables: ['Ciao Guido, ti aspetto domani alle 17:00 in reception.'],
+    actor: USER,
+  });
+  assert.deepEqual(JSON.parse(corrected.send.variables), ['Ciao Guido, ti aspetto domani alle 17:00 in reception.']);
+
+  // A correction with the wrong variable count refuses: the provider
+  // template needs exactly its variables.
+  await assert.rejects(
+    () => ops.correctSequenceMessage({
+      spaceId: SPACE, messageKey: guidoRow.messageKey, variables: ['una', 'due'], actor: USER,
+    }),
+    (error) => error.code === 'VALIDATION_ERROR' || /variable count/.test(String(error.message)),
+  );
+
+  await allowSends(composed);
+  const approved = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(approved.advanced, 2);
+
+  const fired = await sends.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:correct' });
+  assert.equal(fired.length, 2);
+  const byRecipient = new Map(fired.map((row) => [row.enrollmentSourceKey, row]));
+  const guidoFired = byRecipient.get(guidoRow.enrollmentSourceKey);
+  assert.equal(JSON.parse(guidoFired.variables)[0], 'Ciao Guido, ti aspetto domani alle 17:00 in reception.',
+    'la correzione esce per Guido');
+  const mariaFired = [...byRecipient.values()].find((row) => row !== guidoFired);
+  assert.match(String(JSON.parse(mariaFired.variables)[0]), /Ciao Maria/,
+    'per Maria esce il testo normale, non la correzione di Guido');
+
+  // A decided row is never rewritten: correcting after the send refuses.
+  await assert.rejects(
+    () => ops.correctSequenceMessage({
+      spaceId: SPACE, messageKey: guidoRow.messageKey, variables: ['Troppo tardi.'], actor: USER,
+    }),
+    (error) => error.code === 'SEQUENCE_SEND_NOT_CORRECTABLE',
+  );
+});
