@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
-import { offerShareMessage, offerSharePath, offerShareShortLabel, offerShareUrl } from '../apps/admin/public/admin-offer-panel.js';
+import { offerShareMessage, offerSharePath, offerShareShortLabel, offerShareUrl, OFFER_SHARE_LIVE_LINK_LOST } from '../apps/admin/public/admin-offer-panel.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -455,4 +455,29 @@ test('78f79b0768ac: the short label never carries the whole token', () => {
   assert.equal(offerShareShortLabel(URL), 'spazio.example/q/aaaaaa…');
   assert.equal(offerShareShortLabel('non un link'), 'link dell’offerta');
   assert.equal(offerShareShortLabel(null), 'link dell’offerta');
+});
+
+test('e5de90ac5daf: a live link minted elsewhere reads the same words as the scheda, with no toast', async () => {
+  // backlog:e5de90ac5daf — NON PASSA in produzione 25/11: share-link answers
+  // alreadyExisted with no token on the very first press (the bearer left
+  // with another session), so no cache can cover it. Red before the cure:
+  // the page names «Crea un nuovo link» without saying it lives on this
+  // page. Green after: the single status line reads the shared sentence.
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount, toasts } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.equal(shareStatus(mount).length, 1, 'one status line, never two notices');
+  assert.equal(shareStatus(mount)[0].textContent, OFFER_SHARE_LIVE_LINK_LOST, 'the same words as the scheda');
+  assert.ok(!showsLink(mount, URL), 'no dead link is painted as ready');
+  assert.deepStrictEqual(toasts, [], 'no toast: the line is the one notice');
 });
