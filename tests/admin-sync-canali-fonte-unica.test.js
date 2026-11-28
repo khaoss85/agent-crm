@@ -69,7 +69,8 @@ test('6d0df351: Stato sync parla come Connettori (scritta, TG/↔, conteggio sul
   assert.equal(telegram.direction, '↔ bidirezionale', 'stessa direzione di Connettori');
   const sms = rows.find((row) => row.channel === 'sms');
   assert.ok(sms, 'SMS compare in tabella');
-  assert.equal(sms.mark, 'S', 'stessa sigla di Connettori');
+  assert.equal(sms.mark, 'SMS', 'stessa sigla di Connettori (backlog:58f27bf6e757)');
+  assert.equal(sms.direction, '↔ bidirezionale', 'stessa direzione del dettaglio Connettori');
 
   const doc = createFakeDocument();
   const mount = createMount();
