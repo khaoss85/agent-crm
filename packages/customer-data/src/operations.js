@@ -524,8 +524,15 @@ export function createCustomerDataOperations({ database, modules, events, config
       const receipt = await createCleanupProposals({
         database, modules, policy, names, followUpProvider,
       }).proposeDataCleanup(request);
+      // The proof a worker log line quotes (backlog:088b639d96a2): when the
+      // scan ran, on how many records, with how many proposals. The space id
+      // and the log line itself belong to the caller (the pilot worker).
       events.emit?.('customer-data.cleanup.proposed', {
-        complete: receipt.complete, counts: receipt.counts,
+        operation: receipt.operation,
+        at: receipt.at,
+        complete: receipt.complete,
+        scope: receipt.scope,
+        counts: receipt.counts,
       });
       return receipt;
     },
