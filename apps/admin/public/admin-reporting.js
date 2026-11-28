@@ -255,6 +255,60 @@ export function dashboardPath({ period, owner = null, currency = REPORTING_CURRE
 }
 
 /**
+ * backlog:766e9cf9469e: the AI summary request path for a filter state.
+ * Pure like dashboardPath, so periodo/persona change the request (ricalcolo),
+ * never a client-side slice of stale lines.
+ * @param {{period: string, owner?: string | null, spaceId?: string | null}} filters
+ */
+export function summaryPath({ period, owner = null, spaceId = null }) {
+  const params = new URLSearchParams({ period });
+  if (owner !== null && owner !== undefined && owner !== '') params.set('owner', owner);
+  if (typeof spaceId === 'string' && spaceId !== '') params.set('spaceId', spaceId);
+  return `/api/reporting/summary?${params.toString()}`;
+}
+
+/**
+ * backlog:766e9cf9469e: whether a summary answer may replace the computed
+ * header fallback — exactly two non-empty lines, never an error sentence.
+ * Anything else (null, empty, a wrapped payload, an error page) keeps the
+ * fallback of 526e1bf4bd28, silently: the header never shows an error.
+ * @param {unknown} lines
+ */
+export function isAiSummaryLines(lines) {
+  return Array.isArray(lines)
+    && lines.length === 2
+    && lines.every((line) => typeof line === 'string' && line.trim() !== '');
+}
+
+/**
+ * backlog:766e9cf9469e: whether the period has anything for the model to
+ * rewrite — at least one new customer or one pipeline movement, from the
+ * dashboard model the route already returns. It mirrors the server's
+ * no-data rule (`reportingSummaryHasData` on the same counts), so an
+ * empty period sends no summary request at all; the route stays the
+ * authority and still answers `{ lines: null, reason: 'empty' }` to any
+ * direct call. Missing or unreadable counts read as «no data», never as
+ * a reason to ask.
+ * @param {unknown} model the dashboard payload the screen just rendered
+ */
+export function hasSummaryData(model) {
+  const channels = model !== null && typeof model === 'object'
+    ? /** @type {Record<string, unknown>} */ (model).channels
+    : null;
+  const total = channels !== null && typeof channels === 'object'
+    && Number.isSafeInteger(/** @type {Record<string, unknown>} */ (channels).total)
+    ? /** @type {number} */ (/** @type {Record<string, unknown>} */ (channels).total)
+    : 0;
+  if (total > 0) return true;
+  const team = model !== null && typeof model === 'object' && Array.isArray(/** @type {Record<string, unknown>} */ (model).team)
+    ? /** @type {Array<Record<string, unknown>>} */ (/** @type {Record<string, unknown>} */ (model).team)
+    : [];
+  return team.some((entry) => ['openCount', 'wonCount', 'lostCount'].some((key) => (
+    Number.isSafeInteger(entry?.[key]) && /** @type {number} */ (entry?.[key]) > 0
+  )));
+}
+
+/**
  * Bar fill width for a value against the chart maximum. Zero/negative
  * maxima render empty, never NaN.
  * @param {number} value @param {number} max
@@ -468,10 +522,23 @@ export function reportingSummary(rows) {
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
  * Injecting `doc`, `client` and `nav` keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string, description?: string) => void, log?: (message: string, cause: unknown) => void, download?: (input: {doc: Document, filename: string, content: string}) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, spaceId?: string | (() => (string | null | undefined)), onAskAi?: (screenId: string, description?: string) => void, log?: (message: string, cause: unknown) => void, download?: (input: {doc: Document, filename: string, content: string}) => void}} deps
  */
 export function createReportingView(deps) {
   const { doc, mount, client, navigate } = deps;
+  // backlog:766e9cf9469e: the shell's active space, read late like the
+  // catalog view, so the summary request carries the space the AI spends on
+  // and follows the space switcher. Without one the route answers the
+  // computed fallback (ai-unavailable), never an error.
+  const readSpaceId = () => {
+    try {
+      const raw = deps.spaceId;
+      const id = typeof raw === 'function' ? raw() : raw;
+      return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
+    } catch {
+      return null;
+    }
+  };
   const onAskAi = deps.onAskAi ?? (() => {});
   const log = deps.log ?? ((message, cause) => console.error(message, cause));
   const download = deps.download ?? downloadCsv;
@@ -1042,9 +1109,45 @@ export function createReportingView(deps) {
     // the shared formatAmount helper, never as raw minor units.
     const grid = el(doc, 'div', { class: 'bo-rep-grid' });
     host.appendChild(grid);
+    // backlog:766e9cf9469e: the header first says the computed lines of
+    // 526e1bf4bd28 (never blank, never an error), then asks the model to
+    // rewrite the same period. Only an answer of exactly two lines replaces
+    // the fallback — anything else (AI off, capped, failing, empty period)
+    // keeps it, silently. The token guards a stale answer against a newer
+    // periodo/persona view, like renderReporting does.
     if (summaryHost !== null) {
+      const seen = renderToken;
       for (const text of channelsSummary(model.channels) ?? []) {
         summaryHost.appendChild(el(doc, 'p', { text }));
+      }
+      // backlog:766e9cf9469e: an empty period has nothing to rewrite — the
+      // computed fallback above already says so, so no request leaves the
+      // screen (the route would answer `empty` without touching a model).
+      // The cards below always render: only the AI request is skipped.
+      if (hasSummaryData(model)) {
+        const summaryRequest = summaryPath({
+          period: dashboard.period, owner: dashboard.owner || null, spaceId: readSpaceId(),
+        });
+        client.request(summaryRequest).then((answer) => {
+          if (seen !== renderToken) return;
+          if (!isAiSummaryLines(answer?.lines)) return;
+          while (summaryHost.firstChild) summaryHost.removeChild(summaryHost.firstChild);
+          for (const text of answer.lines) {
+            summaryHost.appendChild(el(doc, 'p', { text }));
+          }
+        }).catch((error) => {
+          // backlog:766e9cf9469e: the AI lines are best-effort — a failing
+          // summary keeps the computed fallback above, never an error state.
+          // But the failure is never silent (review Muse
+          // rev-agent-crm-1163-abb9b6b317dc P2, AGENTS.md: a swallowed
+          // exception without logging the cause blocks): name/status/code go
+          // to the injected log — never the body — so on-call can tell
+          // 'AI off' from 'summary route broken'.
+          const cause = error && typeof error === 'object'
+            ? { name: error.name ?? 'Error', status: error.status ?? null, code: error.code ?? null }
+            : { name: 'Error', status: null, code: null };
+          log('reporting summary request failed', cause);
+        });
       }
     }
     // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
