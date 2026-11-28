@@ -1282,7 +1282,7 @@ function syncShell(target) {
 }
 
 async function refreshShellCounts() {
-  if (!shellView || !shellCustomerData) return;
+  if (!shellView) return;
   // The Impostazioni badge counts what the Stato sync screen points at: the
   // data-quality rows plus the sync attention rows, both read live. Without
   // a selected space the sync half is unknown and the badge keeps the
@@ -1290,10 +1290,13 @@ async function refreshShellCounts() {
   // (BO-F6-03). The Clienti badge (BO-F6-01) is the live client count from
   // the same customer list the Clienti screen reads — unknown (never zero)
   // when the read fails, so the pill lights only from a real count.
+  // backlog:797922a0c15e: the fix half reads even when customer-data is not
+  // composed — a 404 there counts 0 (loadFixCount), never unknown — so the
+  // card can say «Niente da sistemare.» instead of the unreadable note.
   const spaceId = resolveBadgeSpaceId(shellActiveSpace, shellStorage);
   const [fixes, clients] = await Promise.all([
     loadFixCount(moduleClient, { spaceId }),
-    loadClientCount(moduleClient),
+    shellCustomerData ? loadClientCount(moduleClient) : null,
   ]);
   shellFixCount = fixes;
   shellView.update({
@@ -1301,6 +1304,11 @@ async function refreshShellCounts() {
     clientCount: clients == null ? null : clients.count,
     clientCountExact: clients == null ? true : clients.exact,
   });
+  // backlog:797922a0c15e: the Impostazioni index paints with the count known
+  // at paint time (null at cold load) and never re-reads: once the live
+  // count lands, repaint an open index, so the card never keeps the
+  // unreadable note for a count that has since arrived.
+  if (MOUNTED && targetForHash(window.location.hash || '#/').view === 'settings') route();
 }
 
 /**

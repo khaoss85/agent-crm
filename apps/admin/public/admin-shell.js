@@ -6,6 +6,7 @@ import { createCommandMenu } from './admin-cmdk.js';
 import { moduleScreenLabel } from './admin-labels.js';
 import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
 import { buildTeamRows, duplicateTeamHints } from './admin-labels.js'; // backlog:6563edf41aab (d): the Impostazioni count reads the same team rows the Spazi view paints.
+import { isNotComposedFailure } from './admin-core.js'; // backlog:797922a0c15e: the shared 404/NOT_FOUND predicate, so the badge reads "not composed" like every other screen.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -348,9 +349,36 @@ export async function loadTeamDuplicateCount(client, options = {}) {
 }
 
 /**
- * Read the real fix count for the badge. Returns null (unknown) when the
- * customer-data package is not composed or a read fails: an unknown count
- * must never light the badge, and it must never render as "none" either.
+ * Read one quality list for the badge. A 404/NOT_FOUND means the module is
+ * not composed here: there are no rows to fix, so that half counts 0 —
+ * never unknown (backlog:797922a0c15e). Any other failure still fails the
+ * caller, like before.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @param {string} path
+ * @returns {Promise<any>}
+ */
+async function readQualityItems(client, path) {
+  try {
+    return await client.request(path);
+  } catch (error) {
+    if (isNotComposedFailure(error)) {
+      try {
+        console.warn('bo-shell fix count not-composed:', path);
+      } catch {
+        // Logging must never break the badge read.
+      }
+      return { items: [] };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Read the real fix count for the badge. Returns null (unknown) when a
+ * read fails: an unknown count must never light the badge, and it must
+ * never render as "none" either. A 404/NOT_FOUND on a quality list is not
+ * a failure — the module is not composed here, so there is nothing to fix
+ * and that half counts 0 (backlog:797922a0c15e).
  * With a selected space the count also adds the sync attention rows the
  * Stato sync screen lists (quarantined inbox rows plus open dead letters,
  * read from the same activity payload); a failed or uncomposed sync read
@@ -368,8 +396,8 @@ export async function loadTeamDuplicateCount(client, options = {}) {
 export async function loadFixCount(client, options = {}) {
   try {
     const [issuesRead, candidatesRead] = await Promise.all([
-      client.request('/api/modules/data-quality-issue/records?limit=100'),
-      client.request('/api/modules/duplicate-candidate/records?limit=100'),
+      readQualityItems(client, '/api/modules/data-quality-issue/records?limit=100'),
+      readQualityItems(client, '/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
     const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
