@@ -35,6 +35,7 @@ import {
   createShellView,
   renderSettingsPanel,
 } from '../apps/admin/public/admin-shell.js';
+import { parseSessionProfile } from '../apps/admin/public/admin-session.js';
 import { shellNavInput } from '../apps/admin/public/admin-core.js';
 import { buildOggiLinks } from '../apps/admin/public/admin-oggi.js';
 import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
@@ -1524,4 +1525,53 @@ test('backlog:8e1092b95c8a: stesso spazio, stesso numero e stesse iniziali nel m
   assert.ok(addMenu, 'the add menu renders');
   assert.ok(!addMenu.textContent.toLowerCase().includes('bundle'), 'no bundle in the add menu');
   assert.ok(!addMenu.textContent.toLowerCase().includes('manifest'), 'no manifest in the add menu');
+});
+
+test('backlog:44f7bfe8 — la sigla non dipende dallo spazio aperto', () => {
+  // Prova del Mac del 18/11 sul pilota: lo spazio aperto leggeva sempre «PR».
+  const all = [
+    { id: 'spazio-arvo', name: 'Arvo Studio' },
+    { id: 'spazio-presti', name: 'Presti Group' },
+    { id: 'spazio-prova-b1', name: 'Prova Validazione B1' },
+  ];
+  const views = new Map();
+  for (const current of all) {
+    // Il profilo mette per primo lo spazio aperto (come la sessione live):
+    // la sigla deve venire dal nome, mai dall'ordine di elenco.
+    const profile = parseSessionProfile(JSON.stringify({
+      space: { id: current.id, name: current.name },
+      spaces: [current, ...all.filter((space) => space.id !== current.id)],
+      role: 'owner',
+      name: 'Operatore',
+      email: 'op@example.com',
+    }));
+    assert.ok(profile, 'il profilo della sessione resta leggibile');
+    views.set(current.id, spaceMenuItems(mergeSpaces(profile.spaces, []), current.id));
+  }
+  // La sigla è calcolata dal nome dello spazio, non dallo spazio aperto.
+  const expected = { 'spazio-arvo': 'AS', 'spazio-presti': 'PG', 'spazio-prova-b1': 'PV' };
+  for (const [id, initials] of Object.entries(expected)) {
+    for (const current of all) {
+      assert.equal(
+        views.get(current.id).find((row) => row.id === id).initials,
+        initials,
+        `${id}: sigla dal nome anche da ${current.id}`,
+      );
+    }
+  }
+  for (const space of all) {
+    const seen = all.map((view) => views.get(view.id).find((row) => row.id === space.id));
+    for (const row of seen) {
+      assert.equal(row.initials, seen[0].initials, `${space.name}: stessa sigla da ogni spazio`);
+      assert.equal(row.badgeClass, seen[0].badgeClass, `${space.name}: stesso colore da ogni spazio`);
+      assert.equal(row.color, seen[0].color, `${space.name}: stesso colore da ogni spazio`);
+    }
+  }
+  for (const current of all) {
+    assert.deepEqual(
+      views.get(current.id).filter((row) => row.active).map((row) => row.id),
+      [current.id],
+      'resta marcato lo spazio aperto',
+    );
+  }
 });

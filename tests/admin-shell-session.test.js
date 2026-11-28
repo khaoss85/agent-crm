@@ -44,8 +44,8 @@ const stubDoc = (jsonText) => ({
 test('a real session profile parses: space, role, name, email, logout', () => {
   const profile = parseSessionProfile(JSON.stringify(PROFILE));
   assert.deepEqual(profile, {
-    space: { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
-    spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PR' }],
+    space: { id: 'presti-group', name: 'Presti Group', initials: 'PG' },
+    spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PG' }],
     role: 'owner',
     name: 'Elena Rinaldi',
     email: 'elena@studioaurora.it',
@@ -76,7 +76,7 @@ test('missing, malformed or hostile profiles fall back to no session', () => {
   assert.equal(parseSessionProfile(JSON.stringify({ ...PROFILE, role: 'root' }))?.name, 'Elena Rinaldi');
   // Unknown extra keys are ignored, never fatal.
   assert.deepEqual(parseSessionProfile(JSON.stringify({ ...PROFILE, extra: 1 }))?.space, {
-    id: 'presti-group', name: 'Presti Group', initials: 'PR',
+    id: 'presti-group', name: 'Presti Group', initials: 'PG',
   });
   // A logout URL outside the host origin is refused, never followed.
   assert.equal(parseSessionProfile(JSON.stringify({ ...PROFILE, logoutUrl: 'https://evil.test/x' }))?.logoutUrl ?? null, null);
@@ -100,7 +100,7 @@ test('hostile profile values stay inert text (the mount escapes the script)', ()
 test('readSessionProfile reads the injected script, absent without a verifier', () => {
   assert.equal(BO_SESSION_SCRIPT_ID, 'bo-session');
   assert.deepEqual(readSessionProfile(stubDoc(JSON.stringify(PROFILE)))?.space, {
-    id: 'presti-group', name: 'Presti Group', initials: 'PR',
+    id: 'presti-group', name: 'Presti Group', initials: 'PG',
   });
   assert.equal(readSessionProfile(stubDoc(null)), null);
   assert.equal(readSessionProfile(stubDoc('{oops')), null);
@@ -126,7 +126,7 @@ test('backlog:029409ff — the profile carries every space the person can open',
     spaces: [{ id: 'b1', name: 'Prova Validazione B1' }, { id: 'presti', name: 'Presti' }],
   }));
   assert.deepEqual(both?.spaces, [
-    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PV' },
     { id: 'presti', name: 'Presti', initials: 'PR' },
   ]);
   // Blank entries and duplicates collapse; the current space leads even
@@ -142,19 +142,19 @@ test('backlog:029409ff — the profile carries every space the person can open',
     ],
   }));
   assert.deepEqual(messy?.spaces, [
-    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'presti-group', name: 'Presti Group', initials: 'PG' },
     { id: 'presti', name: 'Presti', initials: 'PR' },
-    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PV' },
   ]);
   // A host that only knows the current space changes nothing.
   assert.deepEqual(parseSessionProfile(JSON.stringify(PROFILE))?.spaces, [
-    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'presti-group', name: 'Presti Group', initials: 'PG' },
   ]);
   assert.deepEqual(parseSessionProfile(JSON.stringify({ ...PROFILE, spaces: [] }))?.spaces, [
-    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'presti-group', name: 'Presti Group', initials: 'PG' },
   ]);
   assert.deepEqual(parseSessionProfile(JSON.stringify({ ...PROFILE, spaces: 'presti' }))?.spaces, [
-    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'presti-group', name: 'Presti Group', initials: 'PG' },
   ]);
 });
 
