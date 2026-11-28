@@ -544,6 +544,33 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
+   * The grant gate behind the series link probe (backlog:6acf0a73bfc3):
+   * proven before any link is read, so a foreign space meets the same
+   * refusal for an exported key and a never-exported one. A deployment
+   * with no bound grant anywhere resolves globally, as on main — the gate
+   * only binds once grants exist. Otherwise the caller's space must hold
+   * at least one binding (else `CALENDAR_GRANT_UNKNOWN`), and when every
+   * binding it holds is revoked it answers `CALENDAR_GRANT_REVOKED`.
+   */
+  async function requireProbeGrant(space) {
+    const states = await stateService(context).listWhere({});
+    const bound = (Array.isArray(states) ? states : []).filter(
+      (row) => row && row.spaceId !== null && row.spaceId !== undefined && row.spaceId !== '',
+    );
+    if (bound.length === 0) return null;
+    const mine = bound.filter((row) => row.spaceId === space);
+    if (mine.length === 0) {
+      throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
+        'this space has no calendar grant: bind a calendar before probing linked series');
+    }
+    if (mine.every((row) => row.grantStatus === 'revoked')) {
+      throw syncError('CALENDAR_GRANT_REVOKED', 409,
+        'this space holds only revoked calendar grants: re-bind a calendar before probing linked series');
+    }
+    return mine;
+  }
+
+  /**
    * Resolve the calendar's space grant for one call, through the same
    * custody edge the channel connections use. Resolved per call into a
    * local only — never cached, never stored — so revoking the binding
@@ -1517,6 +1544,54 @@ export function createCalendarSyncOperations(options = {}) {
       }
       await linkService(context).applyManaged(link.id, { localFingerprint: fingerprint }, { actor: who });
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };
+    },
+
+    /**
+     * The BO-F3-01 event detail ("07 Calendario"): one appointment row with
+     * its origin and its sync state. Origin is the stored source package —
+     * `calendar-sync` rows were imported from Google, every other source
+     * package booked locally — never caller text, never a re-derived guess
+     * from the key shape. Sync state is the link row joined on the
+     * appointment's own source key: the calendar and Google event it tracks,
+     * whether a remote change is still pending, and the operator-facing
+     * conflict note, if any. A row with no link was never synced
+     * (`sync: null`): local-only, not unsynced. A purely local read: no
+     * provider call, no grant needed, so the detail renders while the grant
+     * is revoked. Exactly one of `id` / `sourceKey` names the row; an
+     * orphan link (a conflict kept pending before any row existed) has no
+     * appointment to detail — it already surfaces through the pull entries
+     * and `pendingConflicts`, never here.
+     */
+    /**
+     * The series link probe for scoped appointment writes
+     * (backlog:6acf0a73bfc3): read-only, never a provider call. A missing
+     * space refuses before any lookup. The link is read BEFORE any
+     * grant is proven: no link reads `{ linked: false }` with no grant
+     * check, so a local-only series converges grid-only from a space
+     * that holds no grant. Only an exported key proves the caller's
+     * grant (a space with no binding answers `CALENDAR_GRANT_UNKNOWN`,
+     * a space with only revoked grants answers `CALENDAR_GRANT_REVOKED`,
+     * a foreign space answers `CALENDAR_GRANT_UNKNOWN` on the linked
+     * calendar), so the grid cannot mutate alone while Google keeps
+     * the linked master. The appointments path proves the anchor's
+     * space before probing, so a foreign anchor never reaches this
+     * probe — the grant checks below guard direct handle callers on
+     * linked keys. Deployments with no bound grant resolve globally,
+     * as on main.
+     */
+    async seriesScopeLink(headSourceKey, { spaceId } = {}) {
+      if (typeof spaceId !== 'string' || spaceId.trim() === '') {
+        throw new ValidationError('spaceId is required: a scoped series probe is gated on the space switch', { field: 'spaceId' });
+      }
+      if (typeof headSourceKey !== 'string' || headSourceKey === '') {
+        throw new ValidationError('seriesScopeLink needs a head sourceKey', { field: 'headSourceKey' });
+      }
+      const space = canonicalSpaceIdOrAbsent(spaceId);
+      const link = await findLinkBySource(headSourceKey);
+      if (!link) return { linked: false };
+      await requireProbeGrant(space);
+      await requireLiveGrant(link.calendarId, space);
+      return { linked: true, calendarId: link.calendarId };
     },
 
     /**
