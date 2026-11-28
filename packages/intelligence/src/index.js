@@ -294,6 +294,14 @@ export function createIntelligenceDomainV2(options = {}) {
 }
 
 export { IntelligenceRegistries } from './registry.js';
+export {
+  CONTACT_FIT_MODEL,
+  contactFitFingerprint,
+  contactWords,
+  domainWords,
+  extractIdealCues,
+  scoreContactFit,
+} from './contact-fit.js';
 export { buildEnrichAction, buildRecordSignalAction, buildScoreAction, buildRouteAction } from './actions.js';
 export {
   CALL_INTELLIGENCE_MODULES,

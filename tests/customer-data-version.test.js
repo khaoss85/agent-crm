@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerDataPackage } from '../packages/customer-data/src/index.js';
+import { CUSTOMER_COLUMNS, CUSTOMER_SORTS } from '../packages/customer-data/src/customers.js';
 
 // backlog:d271d723: the GDPR erasure (erase-customer) joined customer-data's
 // declared surface, so the package moved to version 3 (the pilot registers each
@@ -18,9 +19,12 @@ import { createCustomerDataPackage } from '../packages/customer-data/src/index.j
 // note per separated member through the declared work follow-up@1 edge.
 // Version 9 (backlog:b50c2f9d06a1): #1077 joined archive/restore/remove to
 // the surface under the old version 8, so the package moves to 9.
-test('customer-data is version 9 since archive/restore/remove and the unmerge timeline note joined the surface', () => {
+// Version 10 (backlog:e80c6aee42c5): the contact-fit score joined the list
+// surface (punteggio column, fit sort, spaceId-scored reads), with the
+// scorer as the fitScorer composition option (review agent-crm#987 P1).
+test('customer-data is version 10 since the fit score joined the archive/restore/remove surface', () => {
   const pkg = createCustomerDataPackage();
-  assert.equal(pkg.version, 9);
+  assert.equal(pkg.version, 10);
   const policy = pkg.policies.find((entry) => entry.kind === 'customer-match-policy');
   assert.ok(policy, 'the package declares its customer-match-policy');
   assert.equal(policy.definition.version, 2,
@@ -35,4 +39,8 @@ test('customer-data is version 9 since archive/restore/remove and the unmerge ti
     'the surface declares the erasure inventory');
   assert.deepEqual(pkg.metadata().erasure.reasons, ['richiesta-interessato', 'fine-rapporto', 'dati-errati', 'altro'],
     'the version-5 surface declares the closed list of reason codes');
+  assert.ok(CUSTOMER_SORTS.some((sort) => sort.id === 'fit'),
+    'the version-7 surface carries the fit sort for the contact-fit score');
+  assert.ok(CUSTOMER_COLUMNS.some((column) => column.id === 'punteggio'),
+    'the version-7 surface carries the punteggio column for the contact-fit score');
 });

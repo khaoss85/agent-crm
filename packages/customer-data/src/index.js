@@ -136,6 +136,17 @@ export function createCustomerDataPackage(options = {}) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
     );
   }
+  // backlog:e80c6aee42c5: the contact-fit scorer (the intelligence-owned
+  // pure function over the space playbook). A display column adds no
+  // requires edge, so it arrives as a plain option like `interactions`: a
+  // wrong shape refuses at composition, an absent one reads unavailable.
+  const fitScorer = options.fitScorer ?? null;
+  if (fitScorer !== null && typeof fitScorer !== 'function') {
+    throw new AppError(
+      'The customer-data package was composed with a fitScorer edge that is not a function',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
+    );
+  }
   const offeredFollowUp = Array.isArray(options.work?.capabilities)
     ? options.work.capabilities.find((entry) => entry?.name === 'follow-up' && entry?.version === 1) ?? null
     : null;
@@ -181,7 +192,11 @@ export function createCustomerDataPackage(options = {}) {
     // to the surface under the old version 8, so the package moves to 9
     // with that surface; the match policy moves to version 2 with its
     // archived/removed `unresolved` rule in the same commit.
-    version: 9,
+    // Version 10 (backlog:e80c6aee42c5): the contact-fit score joined the
+    // list surface (punteggio column, fit sort, spaceId-scored reads). The
+    // scorer arrives as the fitScorer composition option (review
+    // agent-crm#987 P1), never as an intelligence import.
+    version: 10,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -516,17 +531,17 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'q', type: 'string', hint: 'Free-text search over name, email, company and phone. Channel words act as a channel filter.' },
           { name: 'canale', type: 'string', hint: 'Channel system, e.g. "whatsapp", or "all".' },
           { name: 'stato', type: 'string', hint: '"cliente", "contatto" or "all".' },
-          { name: 'sort', type: 'string', hint: 'One of recent, name, value, status.' },
+          { name: 'sort', type: 'string', hint: 'One of recent, name, value, status. Plus fit when a playbook is on file.' },
           { name: 'vista', type: 'string', hint: 'One of tutti, ricontattare-oggi, nuovi-lead, clienti-attivi, rinnovi-30-giorni, da-leggere.' },
           { name: 'page', type: 'integer', hint: '1-based page. Absent means 1.' },
           { name: 'pageSize', type: 'integer', hint: '10, 25 or 50. Absent means 10.' },
-          { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals. Absent means the budget column reads unavailable.' },
+          { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals and the contact-fit score. Absent means both read unavailable.' },
         ],
         create(runtime) {
           const operations = createCustomerDataOperations({
             database: runtime.database, modules: runtime.modules, events: runtime.events,
             config: runtime.config, core: runtime.core, policy, names,
-            interactions: readState, pipelines: runtime.pipelines ?? null,
+            interactions: readState, fitScorer, pipelines: runtime.pipelines ?? null,
           });
           return (request) => operations.listCustomerRecords(request);
         },

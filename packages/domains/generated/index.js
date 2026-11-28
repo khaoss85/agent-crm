@@ -23,6 +23,7 @@
  */
 
 import { createCustomerDataPackage } from '../../customer-data/src/index.js';
+import { scoreContactFit } from '../../intelligence/src/contact-fit.js';
 import { createSpacePermissionsDomain } from '../../space-permissions/src/index.js';
 import { createChannelsPackage } from '../../channels/src/index.js';
 import { createMagicLinkPackage, createMemoryMagicLinkStore } from '../../magic-link/src/index.js';
@@ -34,7 +35,11 @@ import { createAgentsPackage } from '../../agents/src/index.js';
 const workDefinition = createWorkPackage();
 
 export const generatedDomains = [
-  createCustomerDataPackage({ work: workDefinition }),
+  // backlog:e80c6aee42c5: the Clienti punteggio column scores through the
+  // intelligence-owned pure function, handed over as the fitScorer option
+  // (no requires edge: a composition without it still boots and lists, with
+  // every fit unavailable).
+  createCustomerDataPackage({ work: workDefinition, fitScorer: scoreContactFit }),
   createSpacePermissionsDomain(),
   createChannelsPackage(),
   // BO-F6-06 slice 1 (backlog:ed4bbd35883a): local composition only. The
