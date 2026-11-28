@@ -5866,7 +5866,10 @@ export function createCalendarioView(deps) {
   function recurrenceRuleFromState() {
     // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
     // la serie non si conferma — il form non ne manda mai una.
-    if (state.calendar?.connected === true) return null;
+    // Fail-closed (review giro 2): la serie parte solo quando il profilo
+    // dice esplicitamente che il calendario NON è collegato; con stato
+    // ignoto (profilo ancora in lettura o illeggibile) non parte mai.
+    if (state.calendar?.connected !== false) return null;
     const rec = state.manualRecurrence;
     if (rec === null || rec === undefined || typeof rec !== 'object') return null;
     const kind = String(rec.kind ?? 'none');
@@ -5899,28 +5902,10 @@ export function createCalendarioView(deps) {
     select.addEventListener('input', trackKind);
     select.addEventListener('change', trackKind);
     form.appendChild(fieldBox('Si ripete', wrap, { wide: true }));
-    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
-    // le ricorrenze arrivano presto — «Si ripete» resta su «Non si ripete»
-    // e disattivato, con la riga che dice perché.
-    if (state.calendar?.connected === true) {
-      state.manualRecurrence = { kind: 'none' };
-      select.value = 'none';
-      select.setAttribute('disabled', 'disabled');
-      const note = el(doc, 'div', { attrs: { 'data-role': 'recurrence-linked-note' } });
-      note.textContent = 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.';
-      form.appendChild(note);
-      return select;
-    }
-    // backlog:0f2ae629e09b — the end one click books is painted, not just
-    // sent: the operator sees how many appointments «Si ripete» creates
-    // before pressing Conferma. No end picker yet (follow-up).
-    if (String(select.value ?? 'none') !== 'none') {
-      const endNote = el(doc, 'div', { attrs: { 'data-role': 'recurrence-end-note' } });
-      endNote.textContent = 'La serie crea ' + String(MANUAL_RECURRENCE_DEFAULT_COUNT) + ' appuntamenti.';
-      form.appendChild(endNote);
-    }
     // The labels follow the chosen day: a day picked after the choice
     // renames «Ogni settimana di …» in place, without losing the choice.
+    // Registered before the fail-closed return below so the dated labels
+    // keep following the day even while the choice is disabled.
     const dayInput = form.querySelector?.('input[name="date"]') ?? null;
     if (dayInput && typeof dayInput.addEventListener === 'function') {
       dayInput.addEventListener('input', () => {
@@ -5931,6 +5916,30 @@ export function createCalendarioView(deps) {
           if (hit) option.textContent = hit.label;
         }
       });
+    }
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // le ricorrenze arrivano presto — «Si ripete» resta su «Non si ripete»
+    // e disattivato, con la riga che dice perché. Fail-closed (review giro
+    // 2): finché il profilo non dice esplicitamente che il calendario non
+    // è collegato, la scelta resta disattivata.
+    if (state.calendar?.connected !== false) {
+      state.manualRecurrence = { kind: 'none' };
+      select.value = 'none';
+      select.setAttribute('disabled', 'disabled');
+      const note = el(doc, 'div', { attrs: { 'data-role': 'recurrence-linked-note' } });
+      note.textContent = state.calendar?.connected === true
+        ? 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.'
+        : 'Le ricorrenze si attivano quando il profilo conferma che Google Calendar non è collegato.';
+      form.appendChild(note);
+      return select;
+    }
+    // backlog:0f2ae629e09b — the end one click books is painted, not just
+    // sent: the operator sees how many appointments «Si ripete» creates
+    // before pressing Conferma. No end picker yet (follow-up).
+    if (String(select.value ?? 'none') !== 'none') {
+      const endNote = el(doc, 'div', { attrs: { 'data-role': 'recurrence-end-note' } });
+      endNote.textContent = 'La serie crea ' + String(MANUAL_RECURRENCE_DEFAULT_COUNT) + ' appuntamenti.';
+      form.appendChild(endNote);
     }
     return select;
   }

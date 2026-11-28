@@ -39,6 +39,9 @@ const ACTOR = { type: 'user', id: 'e2e' };
 const SUBJECT = { resource: 'contact', id: 'c-presti', owner: 'host' };
 const SOURCE = { package: 'host', action: 'book' };
 const SPACE = 'spazio-1';
+// L'agente passa dal gate dei permessi (l'umano che preme Conferma è
+// l'approvazione e lo salta): solo così la proposta esiste davvero.
+const AGENT = { type: 'agent', id: 'agente-agenda' };
 
 const booking = (overrides = {}) => ({
   sourceKey: 'gym:series:1',
@@ -377,6 +380,71 @@ test('con il calendario collegato la serie non si conferma: 400 prima di ogni sc
   );
   assert.equal(plain.decision, 'booked');
   assert.equal(plain.occurrences.length, 2);
+});
+
+test('repro 0f2ae629 P2-2726: conferma con coda occupata e AI spenta, 409 prima di ogni proposta', async () => {
+  const busy = {
+    teamMemberId: 'coach-guido',
+    startsAt: '2026-11-24T16:00:00.000Z',
+    endsAt: '2026-11-24T17:00:00.000Z',
+    status: 'booked',
+  };
+  const service = fakeAppointments([busy]);
+  let proposals = 0;
+  const denyGate = {
+    async gate() { return { decision: 'deny' }; },
+    async propose() { proposals += 1; return { proposalId: 'p-junk', replayed: false }; },
+  };
+  const context = { ...contextFor(service), actor: AGENT, permissionGate: denyGate };
+  await assert.rejects(
+    confirmBooking(context, {
+      ...booking({ recurrence: { kind: 'weekly', count: 3 } }),
+      spaceId: SPACE,
+      confirmed: true,
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(error.status, 409);
+      assert.equal(error.details?.occurrenceIndex, 1);
+      assert.equal(error.details?.occurrenceCount, 3);
+      return true;
+    },
+  );
+  assert.equal(proposals, 0, 'nessuna proposta per una serie che non si può prenotare');
+  assert.equal(service.rows.length, 1, 'nessuna riga scritta');
+});
+
+test('la conferma pre-gate non vede le righe della serie: il retry rigioca, mai 409', async () => {
+  const service = fakeAppointments();
+  const context = { ...contextFor(service), actor: AGENT, permissionGate: allowGate() };
+  const request = { ...booking({ recurrence: { kind: 'weekly', count: 3 } }), spaceId: SPACE, confirmed: true };
+  const first = await confirmBooking(context, request);
+  assert.equal(first.decision, 'booked');
+  assert.equal(service.rows.length, 3);
+  const second = await confirmBooking(context, request);
+  assert.equal(second.decision, 'booked');
+  assert.equal(second.replayed, true, 'lo stesso tasto due volte rigioca, non raddoppia');
+  assert.equal(service.rows.length, 3, 'nessuna riga in più al retry');
+});
+
+test('repro 0f2ae629 P2-2726: conferma di serie vuota con AI spenta, 400 prima di ogni proposta', async () => {
+  const service = fakeAppointments();
+  let proposals = 0;
+  const denyGate = {
+    async gate() { return { decision: 'deny' }; },
+    async propose() { proposals += 1; return { proposalId: 'p-junk', replayed: false }; },
+  };
+  const context = { ...contextFor(service), actor: AGENT, permissionGate: denyGate };
+  await assert.rejects(
+    confirmBooking(context, {
+      ...booking({ recurrence: { kind: 'monthly', until: '2026-11-10' } }),
+      spaceId: SPACE,
+      confirmed: true,
+    }),
+    (error) => error instanceof ValidationError && error.details?.field === 'recurrence',
+  );
+  assert.equal(proposals, 0, 'nessuna proposta per una serie vuota');
+  assert.equal(service.rows.length, 0, 'nessuna riga scritta');
 });
 
 test('il link pubblico prenota un solo appuntamento: una serie dal link viene rifiutata', async () => {
