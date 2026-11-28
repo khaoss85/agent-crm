@@ -415,3 +415,80 @@ test('verifica Mac 19/11: only the written parts of the draft land in the note',
   assert.ok(saved, 'the note is written');
   assert.equal(saved.body.body, 'Riassunto: Vuole provare prima di Natale.', 'no empty «Decisioni:» or «Prossimi passi:»');
 });
+
+// Voce 8f1dbd7a3c5e (pannello «Detta nota vocale»): con il permesso del
+// microfono non concesso il pannello non dice solo «Dettato fermo» — dice
+// che il microfono è bloccato e come andare avanti (abilitarlo o scrivere
+// il testo). Il testo sulla privacy dell'audio è vero per il motore usato
+// (Web Speech API: l'audio va al servizio di trascrizione del browser).
+test('8f1dbd7a3c5e: a denied microphone says it is blocked and how to go on, never just «Dettato fermo»', async () => {
+  const hooksLog = [];
+  const { mount } = await open({ dictate: stubDictate(hooksLog) });
+  await openPanel(mount);
+  byAction(mount, 'dictate-start').listeners.click[0]();
+  await flush();
+  const hooks = hooksLog.find((entry) => typeof entry.onText === 'function');
+  assert.ok(hooks, 'dictation starts with text and end hooks');
+  hooks.onError('denied');
+  hooks.onEnd();
+  await flush();
+  assert.ok(mount.textContent.includes('Il microfono è bloccato'), 'the panel names the blocked microphone');
+  assert.ok(
+    mount.textContent.includes('oppure scrivi qui sotto'),
+    'the panel says how to go on: enable it or type',
+  );
+  assert.ok(!mount.textContent.includes('Dettato fermo'), 'no bare stopped message on a denied microphone');
+});
+
+test('8f1dbd7a3c5e: no microphone hardware says to type instead', async () => {
+  const hooksLog = [];
+  const { mount } = await open({ dictate: stubDictate(hooksLog) });
+  await openPanel(mount);
+  byAction(mount, 'dictate-start').listeners.click[0]();
+  await flush();
+  const hooks = hooksLog.find((entry) => typeof entry.onText === 'function');
+  assert.ok(hooks, 'dictation starts with text and end hooks');
+  hooks.onError('unavailable');
+  hooks.onEnd();
+  await flush();
+  assert.ok(
+    mount.textContent.includes('Nessun microfono disponibile: scrivi qui sotto.'),
+    'the panel names the missing microphone and the typed fallback',
+  );
+});
+
+test('8f1dbd7a3c5e: the privacy line is true for the dictation engine used', async () => {
+  const { mount } = await open();
+  await openPanel(mount);
+  assert.ok(
+    mount.textContent.includes('il browser manda l’audio al suo servizio di trascrizione'),
+    'the panel says the audio goes to the browser transcription service',
+  );
+  assert.ok(
+    !mount.textContent.includes('L’audio non lascia mai il dispositivo'),
+    'no false on-device promise for the Web Speech API engine',
+  );
+});
+
+test('8f1dbd7a3c5e: device dictation maps recognition errors to denied and unavailable', () => {
+  const errors = [];
+  const ended = [];
+  let captured = null;
+  class FakeRecognition {
+    constructor() { captured = this; }
+    start() {}
+    stop() {}
+  }
+  const docNode = { defaultView: { SpeechRecognition: FakeRecognition, webkitSpeechRecognition: null } };
+  const handle = defaultDeviceDictate(docNode, {
+    onError: (kind) => errors.push(kind),
+    onEnd: () => ended.push(true),
+  });
+  assert.ok(handle && typeof handle.stop === 'function', 'recognition starts where the browser offers it');
+  captured.onerror({ error: 'not-allowed' });
+  captured.onerror({ error: 'audio-capture' });
+  captured.onerror({ error: 'no-speech' });
+  assert.deepEqual(errors, ['denied', 'unavailable'], 'only a refused or missing microphone reports a kind');
+  assert.deepEqual(ended, [true, true, true], 'every recognition error still ends the dictation');
+  handle.stop();
+});

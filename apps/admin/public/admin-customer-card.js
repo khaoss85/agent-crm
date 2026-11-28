@@ -1113,11 +1113,14 @@ const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri
 
 /**
  * Device dictation for the post-call voice note (voce 5036bc435465): the
- * browser's own speech recognition transcribes on the device, so no audio
- * ever leaves the phone. Answers null (like the probe) where the browser
- * has no recognition; otherwise a `{ stop }` handle delivering said text
- * to `hooks.onText` and the end to `hooks.onEnd`.
- * @param {any} docNode @param {{ onText?: (text: string) => void, onEnd?: () => void, probe?: boolean }} [hooks]
+ * browser's own speech recognition (voce 8f1dbd7a3c5e: the Web Speech API
+ * sends the audio to the browser's recognition service for transcription,
+ * so the panel privacy line says so). Answers null (like the probe) where
+ * the browser has no recognition; otherwise a `{ stop }` handle delivering
+ * said text to `hooks.onText`, recognition errors to `hooks.onError`
+ * ('denied' for a refused microphone, 'unavailable' where no microphone
+ * can be opened) and the end to `hooks.onEnd`.
+ * @param {any} docNode @param {{ onText?: (text: string) => void, onEnd?: () => void, onError?: (kind: string) => void, probe?: boolean }} [hooks]
  */
 export function defaultDeviceDictate(docNode, hooks = {}) {
   const view = docNode?.defaultView ?? null;
@@ -1148,7 +1151,14 @@ export function defaultDeviceDictate(docNode, hooks = {}) {
     }
   };
   instance.onend = () => hooks?.onEnd?.();
-  instance.onerror = () => hooks?.onEnd?.();
+  instance.onerror = (event) => {
+    // Voce 8f1dbd7a3c5e: a refused microphone is not a silent stop — the
+    // panel must say the microphone is blocked and how to go on.
+    const code = typeof event?.error === 'string' ? event.error : '';
+    if (code === 'not-allowed' || code === 'service-not-allowed') hooks?.onError?.('denied');
+    else if (code === 'audio-capture') hooks?.onError?.('unavailable');
+    hooks?.onEnd?.();
+  };
   try {
     instance.start();
   } catch {
@@ -5324,14 +5334,16 @@ export function createCustomerCardView(deps) {
       composerSlot.appendChild(noteForm);
       // Voce 5036bc435465: «Detta nota vocale» — after a call from any
       // phone (CRM-logged or tel: fallback) the operator dictates how it
-      // went. The browser transcribes on the device (the `dictate` seam,
-      // so tests dictate without a microphone); where the browser cannot
-      // dictate the same field is typed. «Ordina con l'AI» structures the
-      // text into riassunto, decisioni and prossimi passi through POST
+      // went. The browser's recognition service transcribes (the `dictate`
+      // seam, so tests dictate without a microphone; voce 8f1dbd7a3c5e:
+      // the Web Speech API sends the audio to that service, so the panel
+      // privacy line says so); where the browser cannot dictate the same
+      // field is typed. «Ordina con l'AI» structures the text into
+      // riassunto, decisioni and prossimi passi through POST
       // /api/call-intelligence/voice-note: the three fields stay editable
       // and «Salva in cronologia» writes them through the existing
-      // subject-note write, signed like every note. No audio ever leaves
-      // the device, so retention has nothing to erase; the spend lands
+      // subject-note write, signed like every note. Only the transcript
+      // text is kept, so retention has no audio to erase; the spend lands
       // through the workspace LLM caps. With the AI off the option says so
       // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
       // still be saved as-is.
@@ -5391,8 +5403,11 @@ export function createCustomerCardView(deps) {
       const buildVoicePanel = () => {
         const voiceHead = el('div', 'bo-voice-head');
         voiceHead.appendChild(el('p', 'bo-voice-kicker', 'Nota della chiamata'));
+        // Voce 8f1dbd7a3c5e: the privacy line is true for the engine used —
+        // the Web Speech API sends the audio to the browser's recognition
+        // service, so the panel says so instead of promising on-device.
         voiceHead.appendChild(el('p', 'bo-muted bo-voice-privacy',
-          'Dopo la chiamata detta com’è andata: la trascrizione resta su questo dispositivo finché non la salvi. L’audio non lascia mai il dispositivo.'));
+          'Dopo la chiamata detta com’è andata: il browser manda l’audio al suo servizio di trascrizione e ti ridà il testo, che resta qui finché non lo salvi.'));
         voicePanel.appendChild(voiceHead);
         const composer = el('div', 'bo-voice-composer');
         const voiceBar = el('div', 'bo-voice-bar');
@@ -5438,8 +5453,12 @@ export function createCustomerCardView(deps) {
           dictateState.textContent = 'Detto… premi Stop quando hai finito.';
           dictateButton.textContent = 'Stop';
           setRecording(true);
+          // Voce 8f1dbd7a3c5e: a refused microphone must read as refused —
+          // the error kind lands here before the end that follows it.
+          let dictateError = null;
           try {
             voiceDictation = startDictate(doc, {
+              onError: (kind) => { dictateError = kind; },
               onText: (chunk) => {
                 const said = typeof chunk === 'string' ? chunk : '';
                 if (said === '') return;
@@ -5450,7 +5469,11 @@ export function createCustomerCardView(deps) {
                 voiceDictation = null;
                 setRecording(false);
                 dictateButton.textContent = 'Detta';
-                if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
+                if (dictateError === 'denied') {
+                  dictateState.textContent = 'Il microfono è bloccato: abilitalo per questo sito nelle impostazioni del browser, oppure scrivi qui sotto.';
+                } else if (dictateError === 'unavailable') {
+                  dictateState.textContent = 'Nessun microfono disponibile: scrivi qui sotto.';
+                } else if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
                   dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
                 }
               },
