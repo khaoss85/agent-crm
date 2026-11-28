@@ -1838,9 +1838,22 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // under the sticky top bar (f06d06f242d6).
       if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') {
         form.nameError = AGENT_NAME_MISSING_NOTE;
+        // Review rev-agent-crm-1144-1f32e02ea8 (P2): a stale server refusal
+        // is cleared in state too, or the next repaint rebuilt from state
+        // restores the 409 banner over the empty Nome. Narrowly guarded to
+        // the taken-with-no-field shape: Crea on an empty Nome never posts
+        // (the client check blocks it), so TAKEN here is always stale — a
+        // fresh Crea refusal (c9c266c352d2 blur race) is never wiped.
+        if (form.error === AGENT_NAME_TAKEN_NOTE && form.field === null) form.error = '';
         const cleared = fieldErrorOf(form, 'name');
         if (cleared !== '') showFieldError(nameRow, name, cleared);
         else clearFieldError(nameRow, name);
+        for (const child of [...(panel.childNodes ?? [])]) {
+          if (child?.getAttribute?.('class') !== 'bo-seq-create-error') continue;
+          if (child?.getAttribute?.('data-field-error') === 'true') continue;
+          if (child?.textContent !== AGENT_NAME_TAKEN_NOTE) continue;
+          if (typeof panel.removeChild === 'function') panel.removeChild(child);
+        }
         return;
       }
       const checked = checkNewAgent({ name: form.name, role: 'x', instructions: 'x' }, state.agents);
