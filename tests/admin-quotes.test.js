@@ -64,14 +64,14 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], components = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], components = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false, schema = SCHEMA } = {}) {
   const calls = [];
   return {
     calls,
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
-      if (path === '/api/schema') return SCHEMA;
+      if (path === '/api/schema') return schema;
       if (path.startsWith('/api/opportunities?')) {
         if (failOffers) throw Object.assign(new Error('Service Unavailable'), { status: 503 });
         return { items: opportunities };
@@ -204,6 +204,34 @@ test('submitting posts the selected policy version; a failure shows the server m
   assert.deepEqual(JSON.parse(post.body), { policy: 'standard-sales-discount', version: 1, expectedRevision: 3 });
   const error = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
   assert.match(error.textContent, /Stale draft revision/);
+});
+
+test('backlog:89166bcf2a84: with v1 and v2 of the same rule the send starts from v2', async () => {
+  const twoVersions = {
+    commercial: {
+      ...SCHEMA.commercial,
+      discountPolicies: [
+        { name: 'presti-sales-discount', version: 1, label: 'Sconto Presti', fingerprint: 'a'.repeat(64) },
+        { name: 'presti-sales-discount', version: 2, label: 'Sconto Presti', fingerprint: 'b'.repeat(64) },
+      ],
+    },
+  };
+  for (const schema of [twoVersions, {
+    commercial: { ...twoVersions.commercial, discountPolicies: [...twoVersions.commercial.discountPolicies].reverse() },
+  }]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ lines: [LINE], entries: [ENTRY], schema });
+    const view = createQuoteView({ doc, mount, client });
+    await view.renderQuoteDetail('q1');
+
+    const submitPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-submit');
+    const select = submitPanel.findAll('select')[0];
+    assert.equal(select.value, 'presti-sales-discount@2', 'the menu starts from v2, in either list order');
+    await submitPanel.__submit();
+    const post = client.calls.find((call) => call.method === 'POST');
+    assert.deepEqual(JSON.parse(post.body), { policy: 'presti-sales-discount', version: 2, expectedRevision: 3 });
+  }
 });
 
 test('pending approval shows human decision controls; approved and rejected show their own', async () => {
