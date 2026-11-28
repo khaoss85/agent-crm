@@ -97,7 +97,12 @@ export function offerShareMessage({ offerName, url, expiresAt } = {}) {
   if (typeof url !== 'string' || url.trim() === '') return null;
   const name = typeof offerName === 'string' && offerName.trim() !== '' ? `l’offerta «${offerName.trim()}»` : 'la tua offerta';
   const day = italianDay(typeof expiresAt === 'string' ? expiresAt : null);
-  const expiry = day !== null ? ` Il link scade il ${day}.` : '';
+  // backlog:30323bca: i giorni che iniziano per vocale (1, 8, 11) vogliono
+  // l’elisione («scade l’8 dic»), gli altri tengono «il».
+  const dayNumber = day !== null ? day.split(' ')[0] : null;
+  const expiry = day !== null
+    ? (dayNumber !== null && ['1', '8', '11'].includes(dayNumber) ? ` Il link scade l’${day}.` : ` Il link scade il ${day}.`)
+    : '';
   return `Ciao, ecco ${name}: ${url.trim()}.${expiry} Aprilo senza account: vedi righe e totali, e puoi accettare o rifiutare.`;
 }
 
