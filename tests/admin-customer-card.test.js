@@ -1112,9 +1112,11 @@ test('the channel filter narrows the timeline to one channel', async () => {
   assert.ok(!text.includes('vorrei prenotare una prova'), 'the WhatsApp passage is filtered out');
 });
 
-test('a hub the server does not compose renders an honest error, never blank', async () => {
+test('a hub the server does not compose names the missing customer, never a retry', async () => {
   const mount = await renderCard(stubClient({ failHub: true }));
-  assert.ok(mount.textContent.includes('Scheda non disponibile'));
+  assert.ok(mount.textContent.includes('Cliente non trovato'));
+  assert.ok(mount.textContent.includes('Questo cliente non esiste più'));
+  assert.ok(!mount.textContent.includes('Riprova'), 'a 404 never invites a retry that cannot succeed');
 });
 
 test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeline and other sections, with the error on every profile section', async () => {
@@ -1757,12 +1759,12 @@ test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27
     },
   }));
   const text = mount.textContent;
-  // backlog:82235e46e3e9: the field below writes a note, not a message —
-  // the empty state names «Scrivi» for messages and the note below.
+  // backlog:06457e5c9717: the field below writes a note, not a message —
+  // the empty state names no button and no «qui sotto».
   assert.ok(text.includes('Ancora nessun contatto'), 'the empty title is exact');
-  assert.ok(text.includes('Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'),
+  assert.ok(text.includes('Le conversazioni e le note del cliente compariranno qui.'),
     'the empty hint is exact');
-  assert.ok(!text.includes('primo messaggio qui sotto'), 'never a message «qui sotto»: below is the note');
+  assert.ok(!text.includes('qui sotto'), 'never «qui sotto» and never a named button');
   assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
 });
 

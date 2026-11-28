@@ -172,10 +172,11 @@ test('2883ef12f233: a note naming its author reads that name even when the roste
   assert.ok(!mount.textContent.includes('google|999'));
 });
 
-test('82235e46e3e9: the empty state names the quick-action buttons and the note field below', async () => {
+test('82235e46e3e9: the empty state names no button and no «qui sotto»', async () => {
   const { mount } = await open(fakeClient({ timeline: entries([]) }));
   assert.ok(mount.textContent.includes('Ancora nessun contatto'));
-  assert.ok(mount.textContent.includes('Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'));
+  assert.ok(mount.textContent.includes('Le conversazioni e le note del cliente compariranno qui.'));
+  assert.ok(!mount.textContent.includes('qui sotto'));
   assert.ok(!mount.textContent.includes('primo messaggio qui sotto'));
 });
 
