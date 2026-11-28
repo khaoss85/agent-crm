@@ -33,6 +33,9 @@ import {
   readSchedule,
   readTeamWeek,
   rescheduleAppointment,
+  SERIES_SCOPES,
+  seriesScopeRows,
+  validateSeriesScope,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
@@ -134,6 +137,9 @@ export {
   reminderHistoryBody,
   reminderMessageKey,
   reminderSourceKey,
+  SERIES_SCOPES,
+  seriesScopeRows,
+  validateSeriesScope,
   reminderThreadKey,
   seedReminderSweep,
   suggestSlots,
@@ -259,7 +265,11 @@ export function createAppointmentsPackage(options = {}) {
     // the public link books singles only. Yearly, weekdays and custom are
     // follow-ups, refused naming `recurrence`.
     // Additive: singles book exactly as before.
-    version: 8,
+    // 9 (backlog:573a1e85942f): cancel/reschedule take a `scope` (single,
+    // following, all); a Google-linked series refuses single/following with
+    // 409 before any write, only `all` moves or cancels. Additive: server
+    // seam only for holds and singles book, move and cancel exactly as before.
+    version: 9,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -466,7 +476,8 @@ export function createAppointmentsPackage(options = {}) {
         ],
         recurrence: 'a series is one validated rule (daily, weekly, monthly) expanded to one row '
           + 'per occurrence with the series key and index; each occurrence is conflict-checked before the first write, '
-          + 'only the head carries the reminder; a series with a linked calendar is refused, the public link books singles only',
+          + 'only the head carries the reminder; a series with a linked calendar is refused, the public link books singles only, '
+          + 'and cancel/reschedule take a scope (single, following, all)',
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
           'free-text notifications or sends', 'package credits or payments', 'waitlists'],
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
